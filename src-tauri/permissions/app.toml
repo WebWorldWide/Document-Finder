@@ -1,0 +1,24 @@
+[[permission]]
+identifier = "allow-app-access"
+description = "Grants full access to the Document Finder library and core app commands."
+commands.allow = [
+  "default_library_dir",
+  "start_run",
+  "cancel_run",
+  "list_libraries",
+  "open_library",
+  "export_library_zip",
+  "reveal_in_finder",
+  "run_log_info",
+  "run_log_tail",
+  "read_file",
+  "write_file",
+  "read_dir",
+  "mkdir",
+  "exists",
+  "remove_file"
+]
+
+[[scope.allow]]
+path = "$DOCUMENT/Document Finder"
+recursive = true
