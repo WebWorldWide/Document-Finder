@@ -4,8 +4,8 @@ use std::path::Path;
 pub fn init_db(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
 
-    // Enable WAL mode for better concurrency
-    conn.execute("PRAGMA journal_mode = WAL", [])?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "busy_timeout", 5000)?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS runs (

@@ -1,9 +1,13 @@
 //! arXiv — STEM preprints. Atom XML API. ≥3s pagination delay required by ToS.
+//!
+//! Uses quick-xml's event reader directly. The serde adapter can't handle the
+//! repeated <link> elements, namespace-prefixed elements (arxiv:comment,
+//! opensearch:totalResults, etc.), or <title type="html"> attributes in the feed.
 
 use async_trait::async_trait;
 use futures::stream::{self, BoxStream, StreamExt};
-use quick_xml::de::from_str;
-use serde::Deserialize;
+use quick_xml::events::Event;
+use quick_xml::Reader;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,98 +26,188 @@ impl ArxivSource {
     }
 }
 
-// Atom feeds carry top-level <link>, <id>, <title>, <updated> elements (for
-// self / next / last navigation). quick-xml's serde adapter doesn't silently
-// ignore them — it errors with `duplicate field 'link'` if the struct doesn't
-// declare them. Declare and discard.
-#[derive(Debug, Deserialize)]
-struct Feed {
-    #[serde(rename = "entry", default)]
-    entries: Vec<Entry>,
-    #[serde(rename = "link", default)]
-    #[allow(dead_code)]
-    feed_links: Vec<Link>,
-    #[serde(default)]
-    #[allow(dead_code)]
+#[derive(Default)]
+struct EntryBuilder {
     id: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    title: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    updated: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Entry {
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    summary: Option<String>,
-    #[serde(default)]
+    title: String,
+    summary: String,
     published: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    updated: Option<String>,
-    #[serde(rename = "author", default)]
-    authors: Vec<Author>,
-    #[serde(rename = "link", default)]
-    links: Vec<Link>,
-    // arXiv attaches multiple <category term="..."> elements per entry.
-    #[serde(rename = "category", default)]
-    #[allow(dead_code)]
-    categories: Vec<Category>,
+    authors: Vec<String>,
+    links: Vec<(Option<String>, Option<String>, Option<String>)>,
 }
 
-#[derive(Debug, Deserialize)]
-struct Author {
-    #[serde(default)]
-    name: Option<String>,
+fn strip_ns(bytes: &[u8]) -> &[u8] {
+    bytes
+        .iter()
+        .rposition(|&b| b == b':')
+        .map(|i| &bytes[i + 1..])
+        .unwrap_or(bytes)
 }
 
-#[derive(Debug, Deserialize)]
-struct Link {
-    #[serde(rename = "@href", default)]
-    href: Option<String>,
-    #[serde(rename = "@title", default)]
-    title: Option<String>,
-    #[serde(rename = "@type", default)]
-    type_: Option<String>,
+fn attr_val(e: &quick_xml::events::BytesStart, name: &[u8]) -> Option<String> {
+    e.attributes().flatten().find_map(|a| {
+        if strip_ns(a.key.as_ref()) == name {
+            a.unescape_value().ok().map(|v| v.into_owned())
+        } else {
+            None
+        }
+    })
 }
 
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct Category {
-    #[serde(rename = "@term", default)]
-    term: Option<String>,
-    #[serde(rename = "@scheme", default)]
-    scheme: Option<String>,
+fn collect_links(e: &quick_xml::events::BytesStart) -> (Option<String>, Option<String>, Option<String>) {
+    (
+        attr_val(e, b"href"),
+        attr_val(e, b"title"),
+        attr_val(e, b"type"),
+    )
 }
 
-fn entry_to_doc(entry: Entry) -> Option<Document> {
-    let title = entry.title.unwrap_or_default().trim().to_string();
-    let summary = entry.summary.unwrap_or_default().trim().to_string();
+/// Parse an arXiv Atom feed into entry builders using the event-based reader.
+/// This handles: repeated <link> elements, namespace-prefixed elements,
+/// attributed <title type="html">, and nested markup in <summary>.
+fn parse_feed(xml: &str) -> Vec<EntryBuilder> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(false);
+
+    let mut entries: Vec<EntryBuilder> = Vec::new();
+    let mut current: Option<EntryBuilder> = None;
+    let mut active_field: Option<&'static str> = None;
+    let mut field_depth: usize = 0;
+    let mut current_depth: usize = 0;
+    let mut text_buf = String::new();
+    let mut buf = Vec::new();
+
+    loop {
+        buf.clear();
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) => {
+                current_depth += 1;
+                let qname = e.name();
+                let local = strip_ns(qname.as_ref());
+
+                if active_field.is_none() {
+                    if current.is_none() {
+                        if local == b"entry" {
+                            current = Some(EntryBuilder::default());
+                        }
+                    } else {
+                        match local {
+                            b"link" => {
+                                if let Some(entry) = &mut current {
+                                    entry.links.push(collect_links(e));
+                                }
+                            }
+                            b"id" => {
+                                text_buf.clear();
+                                active_field = Some("id");
+                                field_depth = current_depth;
+                            }
+                            b"title" => {
+                                text_buf.clear();
+                                active_field = Some("title");
+                                field_depth = current_depth;
+                            }
+                            b"summary" => {
+                                text_buf.clear();
+                                active_field = Some("summary");
+                                field_depth = current_depth;
+                            }
+                            b"published" => {
+                                text_buf.clear();
+                                active_field = Some("published");
+                                field_depth = current_depth;
+                            }
+                            b"name" => {
+                                text_buf.clear();
+                                active_field = Some("name");
+                                field_depth = current_depth;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            Ok(Event::Empty(ref e)) => {
+                let qname = e.name();
+                if strip_ns(qname.as_ref()) == b"link" {
+                    if let Some(entry) = &mut current {
+                        entry.links.push(collect_links(e));
+                    }
+                }
+            }
+
+            Ok(Event::Text(ref e)) => {
+                if active_field.is_some() {
+                    if let Ok(t) = e.unescape() {
+                        text_buf.push_str(&t);
+                    }
+                }
+            }
+
+            Ok(Event::CData(ref e)) => {
+                if active_field.is_some() {
+                    if let Ok(t) = std::str::from_utf8(e.as_ref()) {
+                        text_buf.push_str(t);
+                    }
+                }
+            }
+
+            Ok(Event::End(ref e)) => {
+                let qname = e.name();
+                let local = strip_ns(qname.as_ref());
+
+                if let Some(field) = active_field {
+                    if current_depth == field_depth {
+                        let value = text_buf.trim().to_string();
+                        if let Some(entry) = &mut current {
+                            match field {
+                                "id" => entry.id = Some(value),
+                                "title" => entry.title = value,
+                                "summary" => entry.summary = value,
+                                "published" => entry.published = Some(value),
+                                "name" if !value.is_empty() => entry.authors.push(value),
+                                _ => {}
+                            }
+                        }
+                        active_field = None;
+                        text_buf.clear();
+                    }
+                } else if local == b"entry" {
+                    if let Some(builder) = current.take() {
+                        entries.push(builder);
+                    }
+                }
+
+                current_depth = current_depth.saturating_sub(1);
+            }
+
+            Ok(Event::Eof) => break,
+            Err(e) => {
+                tracing::warn!("arXiv XML read error: {}", e);
+                break;
+            }
+            _ => {}
+        }
+    }
+    entries
+}
+
+fn builder_to_doc(entry: EntryBuilder) -> Option<Document> {
+    let title = entry.title.trim().to_string();
+    let summary = entry.summary.trim().to_string();
     let year = entry
         .published
         .as_deref()
         .and_then(|s| s.get(..4))
         .map(|s| s.to_string());
-    let authors: Vec<String> = entry
-        .authors
-        .into_iter()
-        .filter_map(|a| a.name)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
 
     let mut pdf_url: Option<String> = None;
-    for link in &entry.links {
-        let is_pdf = link.title.as_deref() == Some("pdf")
-            || link.type_.as_deref() == Some("application/pdf");
+    for (href, title_attr, type_attr) in &entry.links {
+        let is_pdf = title_attr.as_deref() == Some("pdf")
+            || type_attr.as_deref() == Some("application/pdf");
         if is_pdf {
-            pdf_url = link.href.clone();
+            pdf_url = href.clone();
             break;
         }
     }
@@ -124,19 +218,15 @@ fn entry_to_doc(entry: Entry) -> Option<Document> {
             }
         }
     }
-    let url = pdf_url?;
 
+    let url = pdf_url?;
     Some(Document {
         title,
         url,
         source: "arxiv".to_string(),
-        authors,
+        authors: entry.authors,
         year: year.filter(|s| !s.is_empty()),
-        abstract_: if summary.is_empty() {
-            None
-        } else {
-            Some(summary)
-        },
+        abstract_: if summary.is_empty() { None } else { Some(summary) },
         identifier: entry.id,
     })
 }
@@ -166,11 +256,15 @@ impl Source for ArxivSource {
                     .map(|k| format!("all:{}", k))
                     .collect::<Vec<_>>()
                     .join("+AND+");
-                let url = format!(
-                    "{}?search_query={}&start={}&max_results={}",
-                    BASE, q, start, per_page
-                );
-                let body = match client.get(&url).send().await {
+                let body = match client
+                    .get(BASE)
+                    .query(&[
+                        ("search_query", q.as_str()),
+                        ("start", &start.to_string()),
+                        ("max_results", &per_page.to_string()),
+                    ])
+                    .send()
+                    .await {
                     Ok(r) => match r.error_for_status() {
                         Ok(r) => match r.text().await {
                             Ok(t) => t,
@@ -180,26 +274,21 @@ impl Source for ArxivSource {
                     },
                     Err(e) => return Some((Err(e.into()), (start, yielded, true))),
                 };
-                let feed: Feed = match from_str(&body) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        return Some((Err(anyhow::anyhow!("xml: {}", e)), (start, yielded, true)));
-                    }
-                };
-                let n_entries = feed.entries.len();
-                if n_entries == 0 {
+
+                let builders = parse_feed(&body);
+                let n = builders.len();
+                if n == 0 {
                     return None;
                 }
                 let docs: Vec<Document> =
-                    feed.entries.into_iter().filter_map(entry_to_doc).collect();
-                let next_done = n_entries < per_page;
+                    builders.into_iter().filter_map(builder_to_doc).collect();
+                let next_done = n < per_page;
                 if !next_done {
                     tokio::time::sleep(PAGINATION_DELAY).await;
                 }
-                Some((Ok(docs), (start + per_page, yielded + n_entries, next_done)))
+                Some((Ok(docs), (start + per_page, yielded + n, next_done)))
             }
         })
-        // Flatten: each step yields a Vec<Document> (or single Err).
         .flat_map(|res: anyhow::Result<Vec<Document>>| match res {
             Ok(docs) => stream::iter(docs.into_iter().map(Ok).collect::<Vec<_>>()).boxed(),
             Err(e) => stream::iter(vec![Err(e)]).boxed(),

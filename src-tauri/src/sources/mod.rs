@@ -4,6 +4,7 @@ pub mod duckduckgo;
 pub mod gutenberg;
 pub mod internet_archive;
 pub mod openalex;
+pub mod searxng;
 pub mod semantic_scholar;
 
 use async_trait::async_trait;
@@ -28,6 +29,7 @@ pub const SOURCE_IDS: &[&str] = &[
     "doaj",
     "gutenberg",
     "web",
+    "searxng",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -103,6 +105,17 @@ pub fn build_source(
         "doaj" => Some(Box::new(doaj::DOAJSource::new(client))),
         "gutenberg" => Some(Box::new(gutenberg::GutenbergSource::new(client))),
         "web" => Some(Box::new(duckduckgo::DuckDuckGoSource::new(client))),
+        "searxng" => {
+            let raw = _options.instance_url
+                .unwrap_or_else(|| "http://localhost:8080".to_string());
+            // Only allow http/https — reject file://, internal SSRF attempts, etc.
+            let url = url::Url::parse(&raw)
+                .ok()
+                .filter(|u| u.scheme() == "http" || u.scheme() == "https")
+                .map(|u| u.to_string())
+                .unwrap_or_else(|| "http://localhost:8080".to_string());
+            Some(Box::new(searxng::SearXNGSource::new(client, url)))
+        }
         _ => None,
     }
 }

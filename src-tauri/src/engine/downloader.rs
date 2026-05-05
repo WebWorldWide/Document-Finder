@@ -25,6 +25,9 @@ pub struct ProgressEvent {
 /// document URLs are almost always error pages.
 const MIN_DOC_BYTES: u64 = 4 * 1024;
 
+/// Hard cap per file — prevents a malicious or runaway server from exhausting disk.
+const MAX_FILE_BYTES: u64 = 500 * 1024 * 1024;
+
 pub fn ext_from(url: &str, content_type: &str) -> &'static str {
     let ct = content_type.to_lowercase();
     let u = url.to_lowercase();
@@ -211,14 +214,26 @@ where
         Err(e) => return DownloadOutcome::Failed(e.to_string()),
     };
 
+    // Pre-reject oversized files declared in Content-Length before writing anything.
+    if total > 0 && total > MAX_FILE_BYTES {
+        return DownloadOutcome::Failed(format!(
+            "file too large ({} bytes declared in Content-Length)",
+            total
+        ));
+    }
+
     let mut downloaded: u64 = 0;
     let mut stream = resp.bytes_stream();
-    while let Some(chunk_res) = stream.next().await {
-        if cancel.is_cancelled() {
-            drop(file);
-            let _ = tokio::fs::remove_file(&out).await;
-            return DownloadOutcome::Cancelled;
-        }
+    loop {
+        let chunk_res = tokio::select! {
+            c = stream.next() => c,
+            _ = cancel.cancelled() => {
+                drop(file);
+                let _ = tokio::fs::remove_file(&out).await;
+                return DownloadOutcome::Cancelled;
+            }
+        };
+        let Some(chunk_res) = chunk_res else { break };
         let chunk = match chunk_res {
             Ok(c) => c,
             Err(e) => {
@@ -236,6 +251,14 @@ where
             return DownloadOutcome::Failed(e.to_string());
         }
         downloaded += chunk.len() as u64;
+        if downloaded > MAX_FILE_BYTES {
+            drop(file);
+            let _ = tokio::fs::remove_file(&out).await;
+            return DownloadOutcome::Failed(format!(
+                "file too large (exceeded {} MB limit)",
+                MAX_FILE_BYTES / 1024 / 1024
+            ));
+        }
         on_progress(ProgressEvent { downloaded, total });
     }
 

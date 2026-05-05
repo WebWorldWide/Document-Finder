@@ -6,90 +6,113 @@
 
 ---
 
-Document Finder v2 is a complete rewrite of the original Python-based tool, now powered by **Tauri 2**, a high-performance **Rust** backend, and a modern **React/Vite** frontend. It enables you to concurrently search multiple open-access platforms, download documents, extract text, and instantly package them into clean, AI-ready datasets.
+Document Finder v2 is a complete rewrite of the original Python-based tool, now powered by **Tauri 2**, a high-performance **Rust** backend, and a **Solid.js/Vite** frontend. It enables you to concurrently search multiple open-access platforms, download documents, extract text, and instantly package them into clean, AI-ready datasets.
 
 ## Key Features
 
-- **Unified Discovery (Find Tab)**: Search across a multitude of open-access sources simultaneously. Split sub-queries easily using natural language (e.g., using commas, "and", or "&").
-- **Live Download Stream**: Watch documents stream in as they are fetched and processed by the asynchronous Rust backend with exponential backoff and silent retries for high reliability.
-- **Library Management**: Manage your gathered collections in the Library tab. View metadata, extracted texts, and total dataset sizes with zero-latency background scanning.
-- **Streaming AI-Ready Exports**: Export your libraries as consolidated `.zip` files. Uses high-performance streaming I/O to handle massive datasets without memory overhead.
-- **Enterprise-Grade Security**: Built with strict Content Security Policy (CSP) and granular filesystem scopes to ensure your local data remains protected.
-- **Blazing Fast & Lightweight**: The Rust backend handles parallel downloads, PDF/EPUB extraction, and file management natively with incredibly low resource usage.
+- **Unified Discovery**: Search across multiple open-access sources simultaneously. Natural-language query expansion splits your query into sub-queries automatically.
+- **Live Download Stream**: Watch documents stream in as they are fetched and processed by the asynchronous Rust backend with exponential backoff and silent retries.
+- **Library Management**: Manage your collections in the Library tab. View metadata, doc counts, and total sizes.
+- **AI-Ready Exports**: Export libraries as `.zip` files containing PDFs, EPUBs, and extracted plain text — ready to drop into any AI context window.
+- **Blazing Fast**: Rust handles parallel downloads, PDF/EPUB text extraction, and SQLite persistence natively.
+- **Privacy-First Search**: Optionally integrate SearXNG for privacy-respecting web search across dozens of engines.
 
 ## Supported Sources
+
 *No API keys required. All sources are open-access.*
 
-- [arXiv](https://arxiv.org/)
-- [OpenAlex](https://openalex.org/)
-- [Semantic Scholar](https://www.semanticscholar.org/)
-- [Internet Archive](https://archive.org/)
-- [Directory of Open Access Journals (DOAJ)](https://doaj.org/)
-- [Project Gutenberg](https://www.gutenberg.org/)
-- **DuckDuckGo** *(via permissive document discovery)*
+| Source | Description |
+|--------|-------------|
+| [arXiv](https://arxiv.org/) | Preprints in CS, physics, math, and more |
+| [OpenAlex](https://openalex.org/) | ~250M scholarly works with open-access filter |
+| [Semantic Scholar](https://www.semanticscholar.org/) | ~200M papers with PDF links |
+| [Internet Archive](https://archive.org/) | Millions of books, papers, and media |
+| [DOAJ](https://doaj.org/) | Directory of Open Access Journals |
+| [Project Gutenberg](https://www.gutenberg.org/) | 70,000+ free ebooks |
+| **Web** | DuckDuckGo document search (PDF/EPUB discovery) |
+| **SearXNG** *(optional)* | Self-hosted metasearch engine via Docker |
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
-- [Rust](https://rustup.rs/) (`rustup-init`)
-- [Node.js](https://nodejs.org/) (v20+)
-- [pnpm](https://pnpm.io/)
+
+- [Rust](https://rustup.rs/) (installed via `rustup`)
+- [Node.js](https://nodejs.org/) v20+
+
+> **pnpm** is installed automatically by `run.sh` if not present.
 
 ### One-Click Launch
-For convenience, you can run the following script from the root directory. It will check for prerequisites, install dependencies, and launch the app:
 
 ```bash
 ./run.sh
 ```
 
-### Running from Source manually
-Clone the repository and run the development environment:
+This checks prerequisites, installs dependencies, and starts the Tauri dev server. The Rust backend compiles on first run (~30s).
+
+### Manual Setup
 
 ```bash
 # Install Node dependencies
 pnpm install
 
-# Start the Tauri development server
+# Start development server
 pnpm tauri dev
 ```
 
-### Building Native Installers
-
-You can compile native standalone installers for your specific platform using Tauri:
+### Build Native Installer
 
 ```bash
-# Build for your current platform (macOS/Windows/Linux)
-cargo tauri build                                      
-
-# Cross-build for Windows (if configured)
-cargo tauri build --target x86_64-pc-windows-msvc      
-
-# Cross-build for Linux (if configured)
-cargo tauri build --target x86_64-unknown-linux-gnu    
+pnpm tauri build
 ```
 
-Compiled binaries and installers will be generated under `src-tauri/target/release/bundle/`.
+This produces platform-native installers in `src-tauri/target/release/bundle/`.
 
 ---
 
-## Data Architecture
+## SearXNG (Optional)
 
-Document Finder organizes downloads into isolated library folders. 
+For privacy-preserving web search, Document Finder can connect to a local [SearXNG](https://searxng.org/) instance.
 
-```text
-~/Documents/Document Finder/<query-slug>/
-├── manifest.json          # Metadata and provenance for all documents
-├── _text/                 # Extracted plaintext (.txt) for each document
-└── [original files]       # Source documents (PDF, EPUB, HTML, etc.)
+**Requirements:** Docker
+
+**Setup:** In the app's Settings tab, click **Setup SearXNG with Docker**. This pulls the container and starts it on `localhost:8080`. The SearXNG source will then appear in the Discover tab.
+
+You can also point to a remote instance by entering its URL in Settings.
+
+---
+
+## Data Storage
+
+Each search creates a folder under your configured library root:
+
+```
+~/Documents/DocumentFinder/
+└── your-query-slug/
+    ├── library.db        ← SQLite database (metadata, run history)
+    ├── _text/            ← Extracted plain text files
+    ├── paper-title-abc123.pdf
+    └── ...
 ```
 
-### Security & Isolation
-Document Finder v2 adheres to the principle of least privilege. Filesystem access is strictly scoped to the `Documents/Document Finder` directory. All network requests are governed by a strict Content Security Policy to prevent unauthorized data exfiltration or script execution.
+The `library.db` file contains full metadata for all downloaded documents and can be queried directly with any SQLite client.
 
-> **Note on Backwards Compatibility:** The `bundle.json.gz` schema is identical to the v1 Python app. Libraries created with v1 will seamlessly open in v2 without needing to be re-bundled.
+---
 
-## License & Ethical Usage
+## Tech Stack
 
-All integrated sources are open-access by policy. This application **does not** bypass paywalls, implement DRM circumvention, or scrape copyrighted, restricted material. Please respect the rate limits and terms of service of the respective indexing platforms. 
+| Layer | Technology |
+|-------|------------|
+| Desktop shell | [Tauri 2](https://tauri.app/) |
+| Backend | Rust (tokio async runtime) |
+| Frontend | [Solid.js](https://www.solidjs.com/) + TypeScript |
+| Bundler | [Vite 6](https://vitejs.dev/) |
+| Styling | [Tailwind CSS v4](https://tailwindcss.com/) |
+| Database | SQLite via rusqlite (bundled) |
+
+---
+
+## Contributing
+
+Contributions welcome. The Rust sources live in `src-tauri/src/sources/` — each source is a self-contained module implementing the `Source` trait with a `search()` method that returns a stream of `Document`s.

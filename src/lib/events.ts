@@ -1,3 +1,5 @@
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
 export interface FoundPayload {
   title: string;
   source: string;
@@ -52,8 +54,15 @@ export interface DownloadProgressPayload {
   total: number;
 }
 
+// Rust uses #[serde(flatten)] on doc: Document — fields appear at top level
 export interface DownloadDonePayload {
-  doc: any;
+  url: string;
+  title: string;
+  source: string;
+  authors: string[];
+  year?: string;
+  abstract?: string;
+  identifier?: string;
   local_path: string;
   absolute_path: string;
   text_path?: string;
@@ -63,7 +72,13 @@ export interface DownloadDonePayload {
 }
 
 export interface DownloadFailedPayload {
-  doc: any;
+  url: string;
+  title: string;
+  source: string;
+  authors: string[];
+  year?: string;
+  abstract?: string;
+  identifier?: string;
   error: string;
   done: number;
   failed: number;
@@ -98,3 +113,34 @@ export type DfEvent =
   | { type: "complete"; payload: CompletePayload }
   | { type: "cancelled"; payload: CompletePayload }
   | { type: "error"; payload: ErrorPayload };
+
+const EVENTS = [
+  "keywords",
+  "subquery_start",
+  "source_start",
+  "source_done",
+  "source_error",
+  "found",
+  "found_total",
+  "download_started",
+  "download_progress",
+  "download_done",
+  "download_failed",
+  "cancelled",
+  "complete",
+  "filtered",
+  "error",
+] as const;
+
+export async function listenAll(
+  handler: (e: DfEvent) => void
+): Promise<UnlistenFn> {
+  const unsubs: UnlistenFn[] = [];
+  for (const name of EVENTS) {
+    const u = await listen(`df:${name}`, (ev) =>
+      handler({ type: name, payload: ev.payload as never })
+    );
+    unsubs.push(u);
+  }
+  return () => unsubs.forEach((u) => u());
+}

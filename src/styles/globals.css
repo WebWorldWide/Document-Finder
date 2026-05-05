@@ -30,14 +30,24 @@
   --color-source-doaj: oklch(0.5 0.18 140);
   --color-source-gutenberg: oklch(0.5 0.18 50);
   --color-source-web: oklch(0.5 0.18 250);
-  --color-source-searxng: oklch(0.5 0.18 250);
+  --color-source-searxng: oklch(0.5 0.18 290);
+
+  --color-success: oklch(0.55 0.16 145);
+  --color-success-fg: oklch(0.35 0.12 145);
+  --color-success-bg: oklch(0.97 0.04 145);
 
   --radius: 0.625rem;
 }
 
-html, body, #root {
+html, body, #app {
   height: 100%;
   margin: 0;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius);
 }
 
 body {
@@ -59,8 +69,8 @@ textarea, input, [contenteditable] {
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
@@ -68,3 +78,38 @@ textarea, input, [contenteditable] {
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover { background: oklch(0.75 0 0); }
+
+/* Animations */
+@keyframes slide-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.animate-slide-in { animation: slide-in 0.15s ease-out; }
+.animate-fade-in  { animation: fade-in 0.2s ease-out; }
+.animate-spin     { animation: spin 1s linear infinite; }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Progress bar shimmer */
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+.progress-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-primary) 25%,
+    oklch(0.65 0.18 270) 50%,
+    var(--color-primary) 75%
+  );
+  background-size: 200% auto;
+  animation: shimmer 2s linear infinite;
+}

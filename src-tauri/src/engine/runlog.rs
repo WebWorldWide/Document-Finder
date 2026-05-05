@@ -96,7 +96,7 @@ pub fn log(event: Event<'_>) {
         Ok(s) => s,
         Err(_) => return,
     };
-    let _guard = LOG_LOCK.lock().ok();
+    let _guard = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
