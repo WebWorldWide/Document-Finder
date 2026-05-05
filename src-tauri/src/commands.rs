@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 use tokio_util::sync::CancellationToken;
 
-use crate::engine::manifest::Manifest;
+use crate::engine::db::init_db;
 use crate::engine::runlog;
 use crate::engine::{run_pipeline, RunRequest};
 use crate::events::{ErrorPayload, EV_ERROR};
@@ -126,30 +126,65 @@ pub async fn list_libraries(root: String) -> Result<Vec<LibraryInfo>, String> {
         if !path.is_dir() {
             continue;
         }
+        let db_path = path.join("library.db");
         let manifest_path = path.join("manifest.json");
-        if !manifest_path.exists() {
+
+        if !db_path.exists() && manifest_path.exists() {
+            // Migration logic: JSON to SQLite
+            if let Ok(raw) = std::fs::read(&manifest_path) {
+                if let Ok(m) = serde_json::from_slice::<crate::engine::manifest::Manifest>(&raw) {
+                    if let Ok(mgr) = crate::engine::db::DbManager::new(&db_path) {
+                        if let Ok(run_id) = mgr.insert_run(&m.query, &path.to_string_lossy()) {
+                            for e in m.documents {
+                                let _ = mgr.insert_document(
+                                    run_id,
+                                    &e.doc.title,
+                                    &e.doc.url,
+                                    &e.doc.source,
+                                    &e.doc.authors.join(", "),
+                                    e.doc.year.as_deref(),
+                                    e.doc.abstract_.as_deref(),
+                                    &e.local_path,
+                                    e.text_path.as_deref(),
+                                    e.extract_error.as_deref(),
+                                    0, // size unknown
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !db_path.exists() {
             continue;
         }
-        let m: Manifest = match std::fs::read_to_string(&manifest_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-        {
-            Some(m) => m,
-            None => continue,
-        };
+
         let path_clone = path.clone();
-        let info = tokio::task::spawn_blocking(move || LibraryInfo {
-            name: path_clone
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            path: path_clone.to_string_lossy().to_string(),
-            query: m.query,
-            n_docs: m.documents.len(),
-            size_bytes: folder_size_bytes(&path_clone),
+        let info = tokio::task::spawn_blocking(move || -> Result<LibraryInfo, String> {
+            let conn = init_db(&db_path).map_err(|e| e.to_string())?;
+            let (query, n_docs): (String, usize) = conn
+                .query_row(
+                    "SELECT r.query, (SELECT COUNT(*) FROM documents WHERE run_id = r.id)
+                 FROM runs r ORDER BY r.created_at DESC LIMIT 1",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(|e| e.to_string())?;
+
+            Ok(LibraryInfo {
+                name: path_clone
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                path: path_clone.to_string_lossy().to_string(),
+                query,
+                n_docs,
+                size_bytes: folder_size_bytes(&path_clone),
+            })
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())??;
         out.push(info);
     }
     out.sort_by(|a, b| b.name.cmp(&a.name));
@@ -159,25 +194,38 @@ pub async fn list_libraries(root: String) -> Result<Vec<LibraryInfo>, String> {
 #[tauri::command]
 pub async fn open_library(path: String) -> Result<LibraryInfo, String> {
     let p = PathBuf::from(&path);
-    let manifest_path = p.join("manifest.json");
-    let raw = std::fs::read_to_string(&manifest_path).map_err(|e| e.to_string())?;
-    let m: Manifest = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    let db_path = p.join("library.db");
+    if !db_path.exists() {
+        return Err("library.db not found".into());
+    }
 
     let p_clone = p.clone();
-    let size_bytes = tokio::task::spawn_blocking(move || folder_size_bytes(&p_clone))
-        .await
-        .map_err(|e| e.to_string())?;
+    let info = tokio::task::spawn_blocking(move || -> Result<LibraryInfo, String> {
+        let conn = init_db(&db_path).map_err(|e| e.to_string())?;
+        let (query, n_docs): (String, usize) = conn
+            .query_row(
+                "SELECT r.query, (SELECT COUNT(*) FROM documents WHERE run_id = r.id)
+             FROM runs r ORDER BY r.created_at DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|e| e.to_string())?;
 
-    Ok(LibraryInfo {
-        name: p
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default(),
-        path: p.to_string_lossy().to_string(),
-        query: m.query,
-        n_docs: m.documents.len(),
-        size_bytes,
+        Ok(LibraryInfo {
+            name: p_clone
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            path: p_clone.to_string_lossy().to_string(),
+            query,
+            n_docs,
+            size_bytes: folder_size_bytes(&p_clone),
+        })
     })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    Ok(info)
 }
 
 #[derive(Debug, Deserialize)]
@@ -318,6 +366,44 @@ pub fn run_log_info() -> Result<LogInfo, String> {
 #[tauri::command]
 pub fn run_log_tail(max: Option<usize>) -> Result<Vec<serde_json::Value>, String> {
     Ok(runlog::read_tail(max.unwrap_or(200)))
+}
+
+#[tauri::command]
+pub async fn setup_searxng(app: AppHandle) -> Result<String, String> {
+    let resource_path = app
+        .path()
+        .resource_dir()
+        .map_err(|e| e.to_string())?
+        .join("scripts")
+        .join("setup_searxng.sh");
+
+    // Fallback for development where scripts might be in the project root
+    let script_path = if resource_path.exists() {
+        resource_path
+    } else {
+        std::env::current_dir()
+            .map_err(|e| e.to_string())?
+            .join("scripts")
+            .join("setup_searxng.sh")
+    };
+
+    if !script_path.exists() {
+        return Err(format!(
+            "Setup script not found at {}",
+            script_path.display()
+        ));
+    }
+
+    let output = std::process::Command::new("bash")
+        .arg(script_path)
+        .output()
+        .map_err(|e| format!("failed to execute script: {}", e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
 }
 
 #[tauri::command]

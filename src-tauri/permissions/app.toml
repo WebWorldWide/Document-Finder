@@ -11,6 +11,7 @@ commands.allow = [
   "reveal_in_finder",
   "run_log_info",
   "run_log_tail",
+  "setup_searxng",
   "read_file",
   "write_file",
   "read_dir",

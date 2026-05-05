@@ -67,4 +67,5 @@ export const api = {
   runLogInfo: () => invoke<LogInfo>("run_log_info"),
   runLogTail: (max?: number) =>
     invoke<unknown[]>("run_log_tail", max != null ? { max } : {}),
+  setupSearXNG: () => invoke<string>("setup_searxng"),
 };

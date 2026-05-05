@@ -6,55 +6,48 @@ use std::io::Read;
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 
-pub fn extract_text(path: &Path) -> Option<String> {
+pub fn extract_text(path: &Path) -> anyhow::Result<String> {
     let suffix = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
     match suffix.as_str() {
-        "txt" => std::fs::read_to_string(path).ok(),
+        "txt" => std::fs::read_to_string(path).map_err(anyhow::Error::from),
         "pdf" => extract_pdf(path),
         "epub" => extract_epub(path),
-        "html" | "htm" => std::fs::read_to_string(path).ok().map(|h| strip_html(&h)),
-        _ => None,
+        "html" | "htm" => std::fs::read_to_string(path)
+            .map(|h| strip_html(&h))
+            .map_err(anyhow::Error::from),
+        _ => Err(anyhow::anyhow!("Unsupported file extension: .{}", suffix)),
     }
 }
 
 // `pdf_extract` (and its `lopdf` backing) regularly panics on malformed PDFs.
 // Catch the unwind so a single bad file never aborts the run.
-fn extract_pdf(path: &Path) -> Option<String> {
+fn extract_pdf(path: &Path) -> anyhow::Result<String> {
     let p: PathBuf = path.to_path_buf();
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| pdf_extract::extract_text(&p)));
     match result {
-        Ok(Ok(s)) if !s.trim().is_empty() => Some(s),
-        Ok(Ok(_)) => None,
-        Ok(Err(e)) => {
-            tracing::debug!("pdf extraction failed for {}: {}", p.display(), e);
-            None
-        }
-        Err(_) => {
-            tracing::warn!("pdf_extract panicked on {}", p.display());
-            None
-        }
+        Ok(Ok(s)) if !s.trim().is_empty() => Ok(s),
+        Ok(Ok(_)) => Err(anyhow::anyhow!("PDF is empty")),
+        Ok(Err(e)) => Err(anyhow::anyhow!("pdf extraction failed: {}", e)),
+        Err(_) => Err(anyhow::anyhow!("pdf_extract panicked")),
     }
 }
 
-fn extract_epub(path: &Path) -> Option<String> {
+fn extract_epub(path: &Path) -> anyhow::Result<String> {
     let p: PathBuf = path.to_path_buf();
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| extract_epub_inner(&p)));
     match result {
-        Ok(opt) => opt,
-        Err(_) => {
-            tracing::warn!("epub extraction panicked on {}", p.display());
-            None
-        }
+        Ok(res) => res,
+        Err(_) => Err(anyhow::anyhow!("epub extraction panicked")),
     }
 }
 
-fn extract_epub_inner(path: &Path) -> Option<String> {
-    let file = std::fs::File::open(path).ok()?;
-    let mut zip = zip::ZipArchive::new(file).ok()?;
+fn extract_epub_inner(path: &Path) -> anyhow::Result<String> {
+    let file = std::fs::File::open(path)?;
+    let mut zip = zip::ZipArchive::new(file)?;
     let mut chunks: Vec<String> = Vec::new();
     for i in 0..zip.len() {
         let mut entry = match zip.by_index(i) {
@@ -71,9 +64,9 @@ fn extract_epub_inner(path: &Path) -> Option<String> {
         }
     }
     if chunks.is_empty() {
-        None
+        Err(anyhow::anyhow!("EPUB contains no text content"))
     } else {
-        Some(chunks.join("\n\n"))
+        Ok(chunks.join("\n\n"))
     }
 }
 

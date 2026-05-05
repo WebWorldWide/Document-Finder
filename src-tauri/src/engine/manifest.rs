@@ -19,6 +19,8 @@ pub struct ManifestEntry {
     pub local_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extract_error: Option<String>,
 }
 
 /// Same shape as `Document` but with an `abstract` JSON key (not `abstract_`).

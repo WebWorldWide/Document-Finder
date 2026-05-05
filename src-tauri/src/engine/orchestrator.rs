@@ -10,9 +10,9 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
+use super::db::DbManager;
 use super::downloader::{download, DownloadOutcome};
 use super::extract::extract_text;
-use super::manifest::{self, DocumentExt, ManifestEntry};
 use super::query::{expand_query, parse_query, relevance_score, safe_folder};
 use super::runlog;
 use crate::events::*;
@@ -75,13 +75,14 @@ pub async fn run_pipeline(
         tokio::fs::create_dir_all(&text_dir).await?;
     }
 
-    let manifest_path = folder.join("manifest.json");
-    let manifest_state = manifest::load(&manifest_path, &req.query);
-    let seen_urls: DashSet<String> = manifest_state
-        .documents
-        .iter()
-        .map(|e| e.doc.url.clone())
-        .collect();
+    let db_path = folder.join("library.db");
+    let db_manager =
+        Arc::new(DbManager::new(&db_path).map_err(|e| anyhow::anyhow!("DB init failed: {}", e))?);
+    let run_id = db_manager
+        .insert_run(&req.query, &folder.to_string_lossy())
+        .map_err(|e| anyhow::anyhow!("failed to insert run: {}", e))?;
+
+    let seen_urls: DashSet<String> = DashSet::new();
 
     // -------- Phase 1: discovery (sequential per sub-query × source, but stream-driven) --------
     let mut candidates: Vec<Document> = Vec::new();
@@ -231,7 +232,6 @@ pub async fn run_pipeline(
     // -------- Phase 2: parallel downloads --------
     let total = candidates.len();
     let counters = Arc::new(tokio::sync::Mutex::new((0usize, 0usize))); // (done, failed)
-    let manifest_arc = Arc::new(tokio::sync::Mutex::new(manifest_state));
     let semaphore = Arc::new(Semaphore::new(req.concurrency.max(1)));
 
     let mut handles = Vec::with_capacity(candidates.len());
@@ -241,10 +241,9 @@ pub async fn run_pipeline(
         let cancel = cancel.clone();
         let semaphore = semaphore.clone();
         let counters = counters.clone();
-        let manifest_arc = manifest_arc.clone();
+        let db_manager = db_manager.clone();
         let folder = folder.clone();
         let text_dir = text_dir.clone();
-        let manifest_path = manifest_path.clone();
         let extract_flag = req.extract;
 
         let handle = tokio::spawn(async move {
@@ -305,35 +304,42 @@ pub async fn run_pipeline(
                         bytes,
                     });
                     let mut text_path: Option<String> = None;
+                    let mut extract_error: Option<String> = None;
                     if extract_flag {
                         let extract_path = path.clone();
-                        let text =
+                        let extract_res =
                             match tokio::task::spawn_blocking(move || extract_text(&extract_path))
                                 .await
                             {
-                                Ok(opt) => opt,
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "extraction task failed for {}: {}",
-                                        path.display(),
-                                        e
-                                    );
-                                    None
-                                }
+                                Ok(res) => res,
+                                Err(e) => Err(anyhow::anyhow!("extraction task panicked: {}", e)),
                             };
-                        if let Some(text) = text {
-                            if !text.trim().is_empty() {
-                                let stem = path
-                                    .file_stem()
-                                    .and_then(|s| s.to_str())
-                                    .unwrap_or("doc")
-                                    .to_string();
-                                let tpath = text_dir.join(format!("{stem}.txt"));
-                                if tokio::fs::write(&tpath, text).await.is_ok() {
-                                    if let Ok(rel) = tpath.strip_prefix(&folder) {
-                                        text_path = Some(rel.to_string_lossy().to_string());
+                        match extract_res {
+                            Ok(text) => {
+                                if !text.trim().is_empty() {
+                                    let stem = path
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("doc")
+                                        .to_string();
+                                    let tpath = text_dir.join(format!("{stem}.txt"));
+                                    if tokio::fs::write(&tpath, text).await.is_ok() {
+                                        if let Ok(rel) = tpath.strip_prefix(&folder) {
+                                            text_path = Some(rel.to_string_lossy().to_string());
+                                        }
                                     }
+                                } else {
+                                    extract_error = Some("extracted text is empty".into());
                                 }
+                            }
+                            Err(e) => {
+                                let err_msg = e.to_string();
+                                tracing::warn!(
+                                    "extraction failed for {}: {}",
+                                    path.display(),
+                                    err_msg
+                                );
+                                extract_error = Some(err_msg);
                             }
                         }
                     }
@@ -343,21 +349,20 @@ pub async fn run_pipeline(
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_else(|_| path.to_string_lossy().to_string());
 
-                    let entry = ManifestEntry {
-                        doc: DocumentExt::from(&doc),
-                        local_path: local_path.clone(),
-                        text_path: text_path.clone(),
-                    };
-
-                    {
-                        let mut m = manifest_arc.lock().await;
-                        m.documents.push(entry);
-                        let n = m.documents.len();
-                        // Batch saves to every 10 files to reduce I/O pressure.
-                        if n == 1 || n % 10 == 0 {
-                            let _ = manifest::save(&manifest_path, &m);
-                        }
-                    }
+                    // Persist to SQLite
+                    let _ = db_manager.insert_document(
+                        run_id,
+                        &doc.title,
+                        &doc.url,
+                        &doc.source,
+                        &doc.authors.join(", "),
+                        doc.year.as_deref(),
+                        doc.abstract_.as_deref(),
+                        &local_path,
+                        text_path.as_deref(),
+                        extract_error.as_deref(),
+                        bytes,
+                    );
 
                     let (done, failed) = {
                         let mut c = counters.lock().await;
@@ -419,12 +424,6 @@ pub async fn run_pipeline(
         }
     }
 
-    // Final manifest save to ensure any batched records are flushed.
-    {
-        let m = manifest_arc.lock().await;
-        let _ = manifest::save(&manifest_path, &m);
-    }
-
     let (done, failed) = {
         let c = counters.lock().await;
         *c
@@ -442,7 +441,7 @@ pub async fn run_pipeline(
         failed,
         total,
         folder: folder_str,
-        manifest: manifest_path.to_string_lossy().to_string(),
+        manifest: db_path.to_string_lossy().to_string(),
     };
     let _ = app.emit(
         if cancel.is_cancelled() {

@@ -3,6 +3,7 @@ pub mod engine;
 pub mod events;
 pub mod sources;
 
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -20,6 +21,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_sql::Builder::default().build())
         .manage(commands::AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::default_library_dir,
@@ -31,6 +33,7 @@ pub fn run() {
             commands::reveal_in_finder,
             commands::run_log_info,
             commands::run_log_tail,
+            commands::setup_searxng,
         ])
         .setup(|_app| {
             #[cfg(debug_assertions)]
