@@ -76,11 +76,13 @@ pub async fn run_pipeline(
     }
 
     let db_path = folder.join("library.db");
-    let db_manager =
-        Arc::new(DbManager::new(&db_path).map_err(|e| anyhow::anyhow!("DB init failed: {}", e))?);
-    let run_id = db_manager
-        .insert_run(&req.query, &folder.to_string_lossy())
-        .map_err(|e| anyhow::anyhow!("failed to insert run: {}", e))?;
+    let run_id = {
+        let mgr = DbManager::new(&db_path)
+            .map_err(|e| anyhow::anyhow!("DB init failed: {}", e))?;
+        mgr.insert_run(&req.query, &folder.to_string_lossy())
+            .map_err(|e| anyhow::anyhow!("failed to insert run: {}", e))?
+        // mgr (and its !Send Connection) is dropped here before any .await
+    };
 
     let seen_urls: DashSet<String> = DashSet::new();
 
@@ -216,7 +218,7 @@ pub async fn run_pipeline(
             failed: 0,
             total: 0,
             folder: folder.to_string_lossy().to_string(),
-            manifest: manifest_path.to_string_lossy().to_string(),
+            manifest: db_path.to_string_lossy().to_string(),
         };
         let _ = app.emit(
             if cancel.is_cancelled() {
@@ -232,7 +234,7 @@ pub async fn run_pipeline(
     // -------- Phase 2: parallel downloads --------
     let total = candidates.len();
     let counters = Arc::new(tokio::sync::Mutex::new((0usize, 0usize))); // (done, failed)
-    let semaphore = Arc::new(Semaphore::new(req.concurrency.max(1)));
+    let semaphore = Arc::new(Semaphore::new(req.concurrency.clamp(1, 32)));
 
     let mut handles = Vec::with_capacity(candidates.len());
     for doc in candidates {
@@ -241,8 +243,8 @@ pub async fn run_pipeline(
         let cancel = cancel.clone();
         let semaphore = semaphore.clone();
         let counters = counters.clone();
-        let db_manager = db_manager.clone();
         let folder = folder.clone();
+        let db_path = db_path.clone();
         let text_dir = text_dir.clone();
         let extract_flag = req.extract;
 
@@ -349,20 +351,36 @@ pub async fn run_pipeline(
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_else(|_| path.to_string_lossy().to_string());
 
-                    // Persist to SQLite
-                    let _ = db_manager.insert_document(
-                        run_id,
-                        &doc.title,
-                        &doc.url,
-                        &doc.source,
-                        &doc.authors.join(", "),
-                        doc.year.as_deref(),
-                        doc.abstract_.as_deref(),
-                        &local_path,
-                        text_path.as_deref(),
-                        extract_error.as_deref(),
-                        bytes,
-                    );
+                    // Persist to SQLite (open a fresh connection on the blocking thread
+                    // because rusqlite::Connection is !Send and cannot cross .await points)
+                    let db_path_for_task = db_path.clone();
+                    let title_for_db = doc.title.clone();
+                    let url_for_db = doc.url.clone();
+                    let source_for_db = doc.source.clone();
+                    let authors_for_db = doc.authors.join(", ");
+                    let year_for_db = doc.year.clone();
+                    let abstract_for_db = doc.abstract_.clone();
+                    let lp_for_db = local_path.clone();
+                    let tp_for_db = text_path.clone();
+                    let ee_for_db = extract_error.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        if let Ok(mgr) = DbManager::new(&db_path_for_task) {
+                            let _ = mgr.insert_document(
+                                run_id,
+                                &title_for_db,
+                                &url_for_db,
+                                &source_for_db,
+                                &authors_for_db,
+                                year_for_db.as_deref(),
+                                abstract_for_db.as_deref(),
+                                &lp_for_db,
+                                tp_for_db.as_deref(),
+                                ee_for_db.as_deref(),
+                                bytes,
+                            );
+                        }
+                    })
+                    .await;
 
                     let (done, failed) = {
                         let mut c = counters.lock().await;

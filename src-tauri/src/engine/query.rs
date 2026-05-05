@@ -35,8 +35,6 @@ static STOPWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "text",
         "be",
         "how",
-        "learning",
-        "learn",
         "can",
         "you",
         "me",
@@ -64,7 +62,7 @@ static STOPWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     .collect()
 });
 
-static WORD_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[A-Za-z][A-Za-z'-]+").unwrap());
+static WORD_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?:[A-Za-z][A-Za-z'-]+|\b\d{4}\b)").unwrap());
 static SPLIT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)[,;]|\s+and\s+|\s+&\s+").unwrap());
 
 /// Strip filler words from a natural-language query.
@@ -115,18 +113,21 @@ pub fn relevance_score(keywords: &[String], text: &str) -> usize {
 }
 
 /// Folder-safe slug derived from a query string.
+/// A short Unix timestamp suffix is appended so concurrent or repeated runs
+/// with similar queries never collide on the same output directory.
 pub fn safe_folder(query: &str) -> String {
     static NON_ALNUM: Lazy<Regex> = Lazy::new(|| Regex::new(r"[^\w\s-]").unwrap());
     static HYPHEN_RUNS: Lazy<Regex> = Lazy::new(|| Regex::new(r"[-\s]+").unwrap());
     let cleaned = NON_ALNUM.replace_all(query, "");
     let trimmed = cleaned.trim().to_lowercase();
     let with_hyphens = HYPHEN_RUNS.replace_all(&trimmed, "-");
-    let slug: String = with_hyphens.chars().take(60).collect();
-    if slug.is_empty() {
-        "library".to_string()
-    } else {
-        slug
-    }
+    let slug: String = with_hyphens.chars().take(48).collect();
+    let base = if slug.is_empty() { "library".to_string() } else { slug };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{}-{}", base, ts)
 }
 
 #[cfg(test)]

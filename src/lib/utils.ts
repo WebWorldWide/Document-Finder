@@ -1,10 +1,3 @@
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
-
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
-
 export function formatBytes(bytes: number): string {
   if (!bytes) return "—";
   const units = ["B", "KB", "MB", "GB"];
@@ -43,6 +36,7 @@ export const ALL_SOURCES = [
   "doaj",
   "gutenberg",
   "web",
+  "searxng",
 ] as const;
 
 export type SourceId = (typeof ALL_SOURCES)[number];

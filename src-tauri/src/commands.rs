@@ -1,5 +1,6 @@
-//! Tauri commands invoked from the React frontend.
+//! Tauri commands invoked from the Solid.js frontend.
 
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -51,9 +52,8 @@ pub async fn start_run(
         *cur = Some(token.clone());
         drop(cur);
         let app2 = app.clone();
-        let state_handle = app.state::<AppState>();
-        let _ = state_handle; // keep types
         tokio::spawn(async move {
+            use tauri::Emitter;
             let result = run_pipeline(app2.clone(), req, token).await;
             // Clear token regardless of outcome.
             if let Some(state) = app2.try_state::<AppState>() {
@@ -64,12 +64,7 @@ pub async fn start_run(
                 *cur = None;
             }
             if let Err(e) = result {
-                let _ = app2.emit_event(
-                    EV_ERROR,
-                    ErrorPayload {
-                        message: e.to_string(),
-                    },
-                );
+                let _ = app2.emit(EV_ERROR, ErrorPayload { message: e.to_string() });
             }
         });
     }
@@ -103,7 +98,11 @@ fn folder_size_bytes(path: &Path) -> u64 {
         return 0;
     };
     for entry in entries.flatten() {
-        let Ok(meta) = entry.metadata() else { continue };
+        // Use symlink_metadata so we never follow symlinks (avoids cycles / traversal).
+        let Ok(meta) = entry.path().symlink_metadata() else { continue };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
         if meta.is_file() {
             total += meta.len();
         } else if meta.is_dir() {
@@ -161,18 +160,23 @@ pub async fn list_libraries(root: String) -> Result<Vec<LibraryInfo>, String> {
         }
 
         let path_clone = path.clone();
-        let info = tokio::task::spawn_blocking(move || -> Result<LibraryInfo, String> {
+        let info = tokio::task::spawn_blocking(move || -> Result<Option<LibraryInfo>, String> {
             let conn = init_db(&db_path).map_err(|e| e.to_string())?;
-            let (query, n_docs): (String, usize) = conn
+            let row = conn
                 .query_row(
                     "SELECT r.query, (SELECT COUNT(*) FROM documents WHERE run_id = r.id)
                  FROM runs r ORDER BY r.created_at DESC LIMIT 1",
                     [],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?)),
                 )
+                .optional()
                 .map_err(|e| e.to_string())?;
 
-            Ok(LibraryInfo {
+            let Some((query, n_docs)) = row else {
+                return Ok(None); // empty db — skip
+            };
+
+            Ok(Some(LibraryInfo {
                 name: path_clone
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
@@ -181,11 +185,13 @@ pub async fn list_libraries(root: String) -> Result<Vec<LibraryInfo>, String> {
                 query,
                 n_docs,
                 size_bytes: folder_size_bytes(&path_clone),
-            })
+            }))
         })
         .await
         .map_err(|e| e.to_string())??;
-        out.push(info);
+        if let Some(info) = info {
+            out.push(info);
+        }
     }
     out.sort_by(|a, b| b.name.cmp(&a.name));
     Ok(out)
@@ -202,14 +208,17 @@ pub async fn open_library(path: String) -> Result<LibraryInfo, String> {
     let p_clone = p.clone();
     let info = tokio::task::spawn_blocking(move || -> Result<LibraryInfo, String> {
         let conn = init_db(&db_path).map_err(|e| e.to_string())?;
-        let (query, n_docs): (String, usize) = conn
+        let row = conn
             .query_row(
                 "SELECT r.query, (SELECT COUNT(*) FROM documents WHERE run_id = r.id)
              FROM runs r ORDER BY r.created_at DESC LIMIT 1",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?)),
             )
+            .optional()
             .map_err(|e| e.to_string())?;
+
+        let (query, n_docs) = row.unwrap_or_else(|| ("(no runs)".to_string(), 0));
 
         Ok(LibraryInfo {
             name: p_clone
@@ -256,9 +265,16 @@ pub struct ExportResult {
 /// (Claude Projects, ChatGPT, etc.). Skips the BM25 index and OS junk.
 #[tauri::command]
 pub fn export_library_zip(args: ExportArgs) -> Result<ExportResult, String> {
-    let src = PathBuf::from(&args.folder);
+    let src = PathBuf::from(&args.folder)
+        .canonicalize()
+        .map_err(|e| format!("invalid folder: {}", e))?;
     if !src.is_dir() {
         return Err(format!("not a folder: {}", args.folder));
+    }
+    // Confirm the folder is inside the user's Documents directory.
+    let docs = dirs::document_dir().ok_or("cannot resolve Documents directory")?;
+    if !src.starts_with(&docs) {
+        return Err("folder must be inside your Documents directory".to_string());
     }
     let dest_path = PathBuf::from(&args.dest);
     if let Some(parent) = dest_path.parent() {
@@ -311,6 +327,12 @@ fn write_zip_recursive(
 
         // Skip OS junk and the (now-removed) BM25 index dir if it exists from older runs.
         if name_str == ".DS_Store" || name_str == "_index" || name_str.starts_with('.') {
+            continue;
+        }
+
+        // Never follow symlinks — prevents traversal out of the library folder.
+        let sym_meta = std::fs::symlink_metadata(&path)?;
+        if sym_meta.file_type().is_symlink() {
             continue;
         }
 
@@ -369,46 +391,95 @@ pub fn run_log_tail(max: Option<usize>) -> Result<Vec<serde_json::Value>, String
 }
 
 #[tauri::command]
-pub async fn setup_searxng(app: AppHandle) -> Result<String, String> {
-    let resource_path = app
-        .path()
-        .resource_dir()
-        .map_err(|e| e.to_string())?
-        .join("scripts")
-        .join("setup_searxng.sh");
-
-    // Fallback for development where scripts might be in the project root
-    let script_path = if resource_path.exists() {
-        resource_path
-    } else {
-        std::env::current_dir()
-            .map_err(|e| e.to_string())?
-            .join("scripts")
-            .join("setup_searxng.sh")
-    };
-
-    if !script_path.exists() {
-        return Err(format!(
-            "Setup script not found at {}",
-            script_path.display()
-        ));
-    }
-
-    let output = std::process::Command::new("bash")
-        .arg(script_path)
+pub async fn setup_searxng(_app: AppHandle) -> Result<String, String> {
+    // Verify Docker is installed and running.
+    let docker_info = tokio::process::Command::new("docker")
+        .arg("info")
         .output()
-        .map_err(|e| format!("failed to execute script: {}", e))?;
+        .await
+        .map_err(|_| "Docker is not installed. Install Docker Desktop from https://www.docker.com/products/docker-desktop/".to_string())?;
 
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    if !docker_info.status.success() {
+        return Err("Docker is not running. Please start Docker Desktop and try again.".to_string());
     }
+
+    // Short-circuit if container is already running.
+    if let Ok(out) = tokio::process::Command::new("docker")
+        .args(["inspect", "--format", "{{.State.Running}}", "document-finder-searxng"])
+        .output()
+        .await
+    {
+        if String::from_utf8_lossy(&out.stdout).trim() == "true" {
+            return Ok("SearXNG is already running.\nSEARXNG_URL=http://localhost:8080".to_string());
+        }
+    }
+
+    // Pull the image.
+    let pull = tokio::process::Command::new("docker")
+        .args(["pull", "searxng/searxng:latest"])
+        .output()
+        .await
+        .map_err(|e| format!("docker pull failed: {}", e))?;
+
+    if !pull.status.success() {
+        let stderr = String::from_utf8_lossy(&pull.stderr).to_string();
+        return Err(format!("docker pull failed: {}", stderr.trim()));
+    }
+
+    // Remove any stale container.
+    let _ = tokio::process::Command::new("docker")
+        .args(["rm", "-f", "document-finder-searxng"])
+        .output()
+        .await;
+
+    // Start the container.
+    let run = tokio::process::Command::new("docker")
+        .args([
+            "run", "-d",
+            "--name", "document-finder-searxng",
+            "--restart", "unless-stopped",
+            "-p", "8080:8080",
+            "searxng/searxng:latest",
+        ])
+        .output()
+        .await
+        .map_err(|e| format!("docker run failed: {}", e))?;
+
+    if !run.status.success() {
+        let stderr = String::from_utf8_lossy(&run.stderr).to_string();
+        return Err(format!("docker run failed: {}", stderr.trim()));
+    }
+
+    // Wait up to 30 s for SearXNG to respond using reqwest (avoids curl PATH dependency).
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .unwrap_or_default();
+    for _ in 0..15 {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let ok = http.get("http://localhost:8080/")
+            .send()
+            .await
+            .map(|r| r.status().is_success() || r.status().as_u16() < 500)
+            .unwrap_or(false);
+        if ok {
+            return Ok("SearXNG started successfully.\nSEARXNG_URL=http://localhost:8080".to_string());
+        }
+    }
+
+    Ok("SearXNG container started — it may need a few more seconds to be fully ready.\nSEARXNG_URL=http://localhost:8080".to_string())
 }
 
 #[tauri::command]
 pub fn reveal_in_finder(path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
+    // Reject relative paths and URI-scheme strings (e.g. "file:///etc").
+    if !p.is_absolute() {
+        return Err("path must be absolute".to_string());
+    }
+    if path.contains("://") {
+        return Err("path must not be a URI".to_string());
+    }
     if !p.exists() {
         return Err(format!("not found: {}", path));
     }
@@ -423,8 +494,11 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
+        // Pass /select and the path as two separate args so commas in the
+        // path cannot split the argument and confuse Explorer's parser.
         std::process::Command::new("explorer")
-            .arg(format!("/select,{}", p.display()))
+            .arg("/select,")
+            .arg(&p)
             .spawn()
             .map_err(|e| e.to_string())?;
         Ok(())
@@ -437,28 +511,5 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| e.to_string())?;
         Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helper: emit_event extension trait so we can call .emit_event without manager::Emitter import
-// ---------------------------------------------------------------------------
-
-trait EmitterExt {
-    fn emit_event<S: serde::Serialize + Clone>(
-        &self,
-        event: &str,
-        payload: S,
-    ) -> Result<(), tauri::Error>;
-}
-
-impl EmitterExt for AppHandle {
-    fn emit_event<S: serde::Serialize + Clone>(
-        &self,
-        event: &str,
-        payload: S,
-    ) -> Result<(), tauri::Error> {
-        use tauri::Emitter;
-        Emitter::emit(self, event, payload)
     }
 }
