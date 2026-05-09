@@ -27,6 +27,9 @@ export const SOURCE_LABELS: Record<string, string> = {
   web: "DuckDuckGo",
   brave: "Brave",
   bing: "Bing",
+  mojeek: "Mojeek",
+  marginalia: "Marginalia",
+  startpage: "Startpage",
   searxng: "SearXNG",
 };
 
@@ -40,6 +43,9 @@ export const ALL_SOURCES = [
   "web",
   "brave",
   "bing",
+  "mojeek",
+  "marginalia",
+  "startpage",
   "searxng",
 ] as const;
 

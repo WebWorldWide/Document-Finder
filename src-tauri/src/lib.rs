@@ -35,6 +35,7 @@ pub fn run() {
             commands::download_model,
             commands::cancel_model_download,
             commands::delete_model,
+            commands::delete_library,
         ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())

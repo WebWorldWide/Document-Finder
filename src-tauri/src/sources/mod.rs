@@ -5,9 +5,12 @@ pub mod doaj;
 pub mod duckduckgo;
 pub mod gutenberg;
 pub mod internet_archive;
+pub mod marginalia_html;
+pub mod mojeek_html;
 pub mod openalex;
 pub mod searxng;
 pub mod semantic_scholar;
+pub mod startpage_html;
 pub mod web_common;
 
 use async_trait::async_trait;
@@ -34,6 +37,9 @@ pub const SOURCE_IDS: &[&str] = &[
     "web",
     "brave",
     "bing",
+    "mojeek",
+    "marginalia",
+    "startpage",
     "searxng",
 ];
 
@@ -112,6 +118,9 @@ pub fn build_source(
         "web" => Some(Box::new(duckduckgo::DuckDuckGoSource::new(client))),
         "brave" => Some(Box::new(brave_html::BraveHtmlSource::new(client))),
         "bing" => Some(Box::new(bing_html::BingHtmlSource::new(client))),
+        "mojeek" => Some(Box::new(mojeek_html::MojeekHtmlSource::new(client))),
+        "marginalia" => Some(Box::new(marginalia_html::MarginaliaHtmlSource::new(client))),
+        "startpage" => Some(Box::new(startpage_html::StartpageHtmlSource::new(client))),
         "searxng" => {
             let raw = _options.instance_url
                 .unwrap_or_else(|| "http://localhost:8080".to_string());

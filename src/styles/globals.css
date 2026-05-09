@@ -3,43 +3,45 @@
 @custom-variant dark (&:is(.dark *));
 
 /* =============================================================================
- * Neumorphic / Skeumorphic design system.
+ * Neumorphic / Skeumorphic design system — logo-aligned.
  *
- * Single warm-cream canvas. Surfaces never separate by hue — only by paired
- * shadows (light from top-left, dark from bottom-right). Buttons depress
- * visibly when active. Inputs look milled into the surface. Typography
- * stays Inter for now; refined sizes per the plan.
+ * Palette derives from the app icon: a yellow-green→emerald→sky-blue
+ * gradient over a white document with pale aqua accents. Canvas is a pale
+ * mint pulled from the gradient's mid-stop, lightened heavily so it reads
+ * as "very light" without going white. Brand primary is the emerald.
  *
- * Palette migration notes: the older flat tokens (--color-card,
- * --color-border, --color-accent) are kept as aliases that resolve to the
- * new canvas/surface values so existing components don't break — the
- * per-component sweep gradually replaces them with the new utility classes.
+ * Surfaces never separate by hue — only by paired shadows (light from
+ * top-left, dark from bottom-right). Shadow offsets are intentionally
+ * tight (<= 6px) so adjacent raised siblings don't blot into each other.
+ * For dense lists, raise the *container* and use `.surface-raised-subtle`
+ * (or flat with dividers) for the rows inside.
  * ========================================================================= */
 
 @theme {
-  /* ---- Canvas + surfaces ------------------------------------------------ */
-  --color-canvas:       oklch(0.94 0.012 80);
-  --color-surface:      oklch(0.94 0.012 80);
-  --color-surface-soft: oklch(0.96 0.010 80);
-  --color-surface-deep: oklch(0.91 0.014 80);
+  /* ---- Canvas + surfaces (logo mint) ----------------------------------- */
+  --color-canvas:       oklch(0.97 0.018 145);
+  --color-surface:      oklch(0.97 0.018 145);   /* same as canvas — invariant */
+  --color-surface-soft: oklch(0.985 0.014 145);
+  --color-surface-deep: oklch(0.94 0.022 145);
 
   /* ---- Text ------------------------------------------------------------ */
-  --color-foreground:         oklch(0.22 0.020 80);
-  --color-foreground-muted:   oklch(0.50 0.018 80);
+  --color-foreground:         oklch(0.22 0.020 165);
+  --color-foreground-muted:   oklch(0.50 0.025 165);
 
-  /* ---- Brand + accent -------------------------------------------------- */
-  --color-primary:            oklch(0.58 0.16 270);
+  /* ---- Brand: emerald (#52C86F) + accents from the gradient ----------- */
+  --color-primary:            oklch(0.66 0.18 148);
   --color-primary-foreground: oklch(0.99 0 0);
-  --color-accent-warm:        oklch(0.70 0.12 60);
+  --color-accent-warm:        oklch(0.86 0.13 110);   /* #D2E468 yellow-green */
+  --color-accent-cool:        oklch(0.88 0.06 220);   /* #B1E6FF pale aqua */
 
-  /* ---- Status colors (semantic; unchanged from prior design) ----------- */
-  --color-destructive:           oklch(0.55 0.21 27);
+  /* ---- Status colors retuned for the mint canvas ---------------------- */
+  --color-destructive:           oklch(0.58 0.20 25);
   --color-destructive-foreground: oklch(0.99 0 0);
-  --color-success:               oklch(0.55 0.16 145);
-  --color-success-fg:            oklch(0.32 0.10 145);
-  --color-success-bg:            oklch(0.96 0.04 145);
+  --color-success:               oklch(0.62 0.16 148);
+  --color-success-fg:            oklch(0.30 0.10 148);
+  --color-success-bg:            oklch(0.95 0.04 148);
 
-  /* ---- Source colors (unchanged: encode meaning) ----------------------- */
+  /* ---- Source colors (unchanged: encode source identity) -------------- */
   --color-source-arxiv:            oklch(0.5 0.18 30);
   --color-source-openalex:         oklch(0.5 0.18 200);
   --color-source-semantic_scholar: oklch(0.5 0.18 320);
@@ -50,62 +52,66 @@
   --color-source-brave:            oklch(0.55 0.20 30);
   --color-source-bing:             oklch(0.5 0.16 180);
   --color-source-searxng:          oklch(0.5 0.18 290);
+  --color-source-mojeek:           oklch(0.55 0.18 240);
+  --color-source-marginalia:       oklch(0.5 0.18 100);
+  --color-source-startpage:        oklch(0.5 0.18 220);
 
-  /* ---- Backwards-compatible aliases.
-   *      Existing components reference these; the per-component sweep
-   *      gradually swaps them out. -------------------------------------- */
-  --color-background:           oklch(0.94 0.012 80);
-  --color-card:                 oklch(0.94 0.012 80);
-  --color-card-foreground:      oklch(0.22 0.020 80);
-  --color-popover:              oklch(0.94 0.012 80);
-  --color-popover-foreground:   oklch(0.22 0.020 80);
-  --color-secondary:            oklch(0.92 0.014 80);
-  --color-secondary-foreground: oklch(0.25 0.020 80);
-  --color-muted:                oklch(0.93 0.012 80);
-  --color-muted-foreground:     oklch(0.50 0.018 80);
-  --color-accent:               oklch(0.92 0.018 60);
-  --color-accent-foreground:    oklch(0.22 0.020 80);
-  --color-border:               oklch(0.86 0.014 80);
-  --color-input:                oklch(0.96 0.010 80);
-  --color-ring:                 oklch(0.58 0.16 270);
+  /* ---- Backwards-compatible aliases (resolve to canvas hue) ----------- */
+  --color-background:           oklch(0.97 0.018 145);
+  --color-card:                 oklch(0.97 0.018 145);
+  --color-card-foreground:      oklch(0.22 0.020 165);
+  --color-popover:              oklch(0.97 0.018 145);
+  --color-popover-foreground:   oklch(0.22 0.020 165);
+  --color-secondary:            oklch(0.94 0.020 145);
+  --color-secondary-foreground: oklch(0.25 0.020 165);
+  --color-muted:                oklch(0.95 0.018 145);
+  --color-muted-foreground:     oklch(0.50 0.025 165);
+  --color-accent:               oklch(0.93 0.025 130);
+  --color-accent-foreground:    oklch(0.22 0.020 165);
+  --color-border:               oklch(0.88 0.020 145);
+  --color-input:                oklch(0.985 0.014 145);
+  --color-ring:                 oklch(0.66 0.18 148);
 
   /* ---- Geometry -------------------------------------------------------- */
   --radius:    1rem;
   --radius-sm: 0.625rem;
   --radius-pill: 9999px;
 
-  /* ---- Depth shadows (the heart of the neumorphic look) --------------- */
-  /* Standard raised: light from top-left, dark from bottom-right */
+  /* ---- Depth shadows: tighter offsets so adjacent siblings don't blot. */
   --shadow-raised:
-    8px 8px 16px oklch(0.84 0.020 80 / 0.7),
-    -8px -8px 16px oklch(1 0 0 / 0.85);
+    6px 6px 12px oklch(0.86 0.022 145 / 0.55),
+    -6px -6px 12px oklch(1 0 0 / 0.95);
 
   --shadow-raised-sm:
-    4px 4px 8px oklch(0.84 0.020 80 / 0.6),
-    -4px -4px 8px oklch(1 0 0 / 0.85);
+    3px 3px 6px oklch(0.86 0.022 145 / 0.5),
+    -3px -3px 6px oklch(1 0 0 / 0.9);
 
   --shadow-raised-xs:
-    2px 2px 4px oklch(0.84 0.020 80 / 0.55),
-    -2px -2px 4px oklch(1 0 0 / 0.85);
+    2px 2px 3px oklch(0.86 0.022 145 / 0.45),
+    -1px -1px 2px oklch(1 0 0 / 0.85);
 
-  /* Pressed: same shadows but inset */
+  /* Subtle raise — for items inside an already-raised container.
+   * Keeps depth perception without compounding shadows on the parent. */
+  --shadow-raised-subtle:
+    2px 2px 4px oklch(0.86 0.022 145 / 0.32),
+    -1px -1px 2px oklch(1 0 0 / 0.6);
+
   --shadow-pressed:
-    inset 4px 4px 8px oklch(0.82 0.022 80 / 0.85),
-    inset -4px -4px 8px oklch(1 0 0 / 0.95);
+    inset 3px 3px 6px oklch(0.82 0.025 145 / 0.85),
+    inset -3px -3px 6px oklch(1 0 0 / 0.95);
 
   --shadow-pressed-sm:
-    inset 2px 2px 4px oklch(0.82 0.022 80 / 0.75),
-    inset -2px -2px 4px oklch(1 0 0 / 0.85);
+    inset 1.5px 1.5px 3px oklch(0.82 0.025 145 / 0.7),
+    inset -1.5px -1.5px 3px oklch(1 0 0 / 0.85);
 
-  /* Floating: deeper, for modals + the active library card */
+  /* Floating — modals + the most prominent surfaces */
   --shadow-floating:
-    20px 20px 40px oklch(0.78 0.024 80 / 0.55),
-    -10px -10px 30px oklch(1 0 0 / 0.85);
+    16px 16px 32px oklch(0.78 0.025 145 / 0.5),
+    -8px -8px 24px oklch(1 0 0 / 0.85);
 
-  /* Soft hover lift */
   --shadow-hover:
-    10px 10px 20px oklch(0.83 0.022 80 / 0.7),
-    -10px -10px 20px oklch(1 0 0 / 0.9);
+    8px 8px 14px oklch(0.84 0.022 145 / 0.6),
+    -8px -8px 14px oklch(1 0 0 / 0.92);
 }
 
 /* =============================================================================
@@ -142,8 +148,14 @@ input:focus-visible,
 textarea:focus-visible,
 [role="button"]:focus-visible {
   outline: 2px solid var(--color-primary);
-  outline-offset: 3px;
-  border-radius: var(--radius-sm);
+  outline-offset: 2px;
+}
+/* Inset variant — used by depth-aware components so the ring sits inside
+ * the shadow halo instead of clashing with it. Apply via .focus-ring-inset. */
+.focus-ring-inset:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-pressed-sm),
+              inset 0 0 0 2px var(--color-primary);
 }
 
 /* Headings — slightly tighter than body */
@@ -182,6 +194,13 @@ h1, h2, h3, h4 {
   box-shadow: var(--shadow-raised-sm);
   border-radius: var(--radius-sm);
 }
+/* Use for items nested inside an already-raised container — the parent's
+ * shadow does the heavy lifting; this is a whisper of depth on top. */
+.surface-raised-subtle {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-raised-subtle);
+  border-radius: var(--radius-sm);
+}
 .surface-pressed {
   background: var(--color-surface);
   box-shadow: var(--shadow-pressed);
@@ -205,7 +224,24 @@ h1, h2, h3, h4 {
 }
 .surface-input:focus, .surface-input:focus-within {
   box-shadow: var(--shadow-pressed-sm),
-              0 0 0 2px oklch(0.58 0.16 270 / 0.3);
+              0 0 0 2px oklch(0.66 0.18 148 / 0.32);
+}
+
+/* Flat outline pill — used for source/example tags in dense wraps where
+ * per-pill shadows would blot. Active state fills with a tint. */
+.tag-pill {
+  background: transparent;
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  transition: background-color 100ms ease-out, border-color 100ms ease-out, color 100ms ease-out;
+  cursor: pointer;
+}
+.tag-pill:hover:not(:disabled) {
+  border-color: var(--color-foreground-muted);
+}
+.tag-pill.is-active {
+  border-color: transparent;
+  /* background + color set inline per-source */
 }
 
 /* Tactile button: subtle press feedback in 80ms */

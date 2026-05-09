@@ -1,6 +1,6 @@
 import { createSignal, createEffect, onCleanup, Show, For } from "solid-js";
-import { Archive, FolderOpen, Loader2, X, RefreshCw } from "lucide-solid";
-import { save } from "@tauri-apps/plugin-dialog";
+import { Archive, FolderOpen, Loader2, X, RefreshCw, Trash2 } from "lucide-solid";
+import { ask, save } from "@tauri-apps/plugin-dialog";
 import { api, type LibraryInfo } from "@/lib/tauri";
 import { uiStore } from "@/stores/ui";
 import { settings } from "@/stores/settings";
@@ -58,6 +58,24 @@ export default function LibraryView() {
       setExportError(String(e));
     } finally {
       setExportingPath(null);
+    }
+  }
+
+  async function handleDelete(lib: LibraryInfo) {
+    setExportError(null);
+    const ok = await ask(
+      `Delete library "${lib.query ?? lib.name}"? This permanently removes ${lib.n_docs} document${lib.n_docs === 1 ? "" : "s"} and ${formatBytes(lib.size_bytes)} from disk. This cannot be undone.`,
+      { title: "Delete Library", kind: "warning" }
+    );
+    if (!ok) return;
+    try {
+      await api.deleteLibrary(lib.path);
+      if (uiStore.activeLibrary?.path === lib.path) {
+        uiStore.setActiveLibrary(null);
+      }
+      setLoadTick((n) => n + 1);
+    } catch (e) {
+      setExportError(String(e));
     }
   }
 
@@ -158,7 +176,7 @@ export default function LibraryView() {
                     <p class="mb-4 text-xs text-[var(--color-foreground-muted)]">
                       {lib.n_docs} documents · {formatBytes(lib.size_bytes)}
                     </p>
-                    <div class="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                    <div class="flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => handleExport(lib)}
                         disabled={isExporting()}
@@ -175,6 +193,14 @@ export default function LibraryView() {
                       >
                         <FolderOpen size={12} />
                         Show
+                      </button>
+                      <button
+                        onClick={() => handleDelete(lib)}
+                        title="Delete library"
+                        class="btn-tactile ml-auto flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium"
+                        style={{ color: "var(--color-destructive)" }}
+                      >
+                        <Trash2 size={12} />
                       </button>
                     </div>
                   </div>

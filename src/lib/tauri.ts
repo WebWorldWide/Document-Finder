@@ -98,4 +98,5 @@ export const api = {
   cancelModelDownload: (modelId: string) =>
     invoke<void>("cancel_model_download", { modelId }),
   deleteModel: (modelId: string) => invoke<void>("delete_model", { modelId }),
+  deleteLibrary: (path: string) => invoke<void>("delete_library", { path }),
 };

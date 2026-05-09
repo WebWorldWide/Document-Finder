@@ -216,13 +216,16 @@ function FoundLane(props: {
 
   return (
     <Show when={sorted().length > 0} fallback={<EmptyState msg="Waiting for results…" />}>
-      <ul class="space-y-1.5">
+      {/* Single raised container — rows inside are flat with accent strips,
+        * eliminating the per-row shadow halo that was making the list look
+        * blotchy at high density. */}
+      <div class="surface-raised divide-y divide-[var(--color-border)]/50 overflow-hidden">
         <For each={visible()}>
           {(c) => <CandidateRow c={c} onOverrideHint={props.onOverrideHint} />}
         </For>
-      </ul>
+      </div>
       <Show when={sorted().length > visible().length}>
-        <p class="mt-3 text-center text-[10px] text-[var(--color-muted-foreground)]">
+        <p class="mt-3 text-center text-[10px] text-[var(--color-foreground-muted)]">
           Showing {visible().length} of {sorted().length} candidates. Filter or
           narrow the query to see more.
         </p>
@@ -238,10 +241,15 @@ function CandidateRow(props: {
   const isRejected = () => props.c.status !== "kept";
   return (
     <li
-      class="animate-slide-in flex items-start gap-2 p-2.5 transition-all duration-150"
+      class="animate-slide-in flex items-start gap-2 p-2.5 transition-colors duration-100"
       classList={{
-        "surface-raised-sm hover:translate-y-[-1px]": !isRejected(),
-        "surface-pressed-sm opacity-60": isRejected(),
+        "hover:bg-[var(--color-foreground)]/3": !isRejected(),
+        "opacity-55 bg-[var(--color-foreground)]/2": isRejected(),
+      }}
+      style={{
+        "border-left": isRejected()
+          ? "3px solid var(--color-foreground-muted)"
+          : "3px solid var(--color-primary)",
       }}
       title={
         props.c.reject_reason ??
@@ -331,13 +339,13 @@ function DownloadingLane(props: { items: InFlight[] }) {
       when={props.items.length > 0}
       fallback={<EmptyState msg="Nothing downloading." />}
     >
-      <ul class="space-y-2">
+      <div class="surface-raised divide-y divide-[var(--color-border)]/50 overflow-hidden">
         <For each={props.items}>
           {(item) => {
             const pct = () =>
               item.total > 0 ? Math.round((item.downloaded / item.total) * 100) : 0;
             return (
-              <li class="surface-raised-sm p-3">
+              <div class="p-3" style={{ "border-left": "3px solid var(--color-primary)" }}>
                 <div class="mb-2 flex items-center gap-2">
                   <SourceBadge source={item.source} />
                   <span class="line-clamp-1 flex-1 text-[12px]">{item.title}</span>
@@ -361,11 +369,11 @@ function DownloadingLane(props: { items: InFlight[] }) {
                       : formatBytes(item.downloaded)}
                   </span>
                 </div>
-              </li>
+              </div>
             );
           }}
         </For>
-      </ul>
+      </div>
     </Show>
   );
 }
@@ -376,10 +384,10 @@ function CompletedLane(props: { items: CompletedItem[] }) {
       when={props.items.length > 0}
       fallback={<EmptyState msg="No completed downloads yet." />}
     >
-      <ul class="space-y-1.5">
+      <div class="surface-raised divide-y divide-[var(--color-border)]/50 overflow-hidden">
         <For each={props.items.slice(0, MAX_VISIBLE_ROWS)}>
           {(item) => (
-            <li class="surface-raised-xs flex items-center gap-2 px-3 py-2" style={{ "border-radius": "var(--radius-sm)" }}>
+            <div class="flex items-center gap-2 px-3 py-2 hover:bg-[var(--color-foreground)]/3" style={{ "border-left": "3px solid var(--color-success)" }}>
               <CheckCircle2
                 size={13}
                 class="shrink-0"
@@ -395,10 +403,10 @@ function CompletedLane(props: { items: CompletedItem[] }) {
                   reveal
                 </button>
               </Show>
-            </li>
+            </div>
           )}
         </For>
-      </ul>
+      </div>
     </Show>
   );
 }
@@ -409,10 +417,10 @@ function FailedLane(props: { items: CompletedItem[] }) {
       when={props.items.length > 0}
       fallback={<EmptyState msg="No failures." />}
     >
-      <ul class="space-y-1.5">
+      <div class="surface-raised divide-y divide-[var(--color-border)]/50 overflow-hidden">
         <For each={props.items.slice(0, MAX_VISIBLE_ROWS)}>
           {(item) => (
-            <li class="surface-pressed-sm flex items-start gap-2 px-3 py-2" style={{ "border-radius": "var(--radius-sm)" }}>
+            <div class="flex items-start gap-2 px-3 py-2" style={{ "border-left": "3px solid var(--color-destructive)" }}>
               <XCircle
                 size={13}
                 class="mt-0.5 shrink-0 text-[var(--color-destructive)]"
@@ -426,10 +434,10 @@ function FailedLane(props: { items: CompletedItem[] }) {
                   </p>
                 </Show>
               </div>
-            </li>
+            </div>
           )}
         </For>
-      </ul>
+      </div>
     </Show>
   );
 }
