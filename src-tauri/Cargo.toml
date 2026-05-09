@@ -63,19 +63,26 @@ sha2 = "0.10"
 # rustls variants match our reqwest TLS stack — avoids pulling in openssl-sys.
 fastembed = { version = "5", default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls"], optional = true }
 
+# AI: local LLM (E3 — optional, default on via "ai-llm" feature). Builds
+# llama.cpp from source; needs cmake + clang on the build machine. On macOS
+# Metal GPU support is on by default.
+llama-cpp-2 = { version = "0.1", optional = true }
+# Re-exported by llama-cpp-2 for token piece decoding.
+encoding_rs = { version = "0.8", optional = true }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 tempfile = "3"
 wiremock = "0.6"
 
 [features]
-default = ["custom-protocol", "ai-embeddings"]
+default = ["custom-protocol", "ai-embeddings", "ai-llm"]
 custom-protocol = ["tauri/custom-protocol"]
 # Tier 2 — semantic reranking via local ONNX embedding model.
 # Disable for fast dev rebuilds: `cargo build --no-default-features --features=custom-protocol`
 ai-embeddings = ["dep:fastembed"]
-# Tier 3 — local LLM via llama.cpp. Off by default (see E3 commit).
-ai-llm = []
+# Tier 3 — local LLM via llama.cpp. Heavy first-build (cmake + clang).
+ai-llm = ["dep:llama-cpp-2", "dep:encoding_rs"]
 
 [profile.dev]
 opt-level = 0

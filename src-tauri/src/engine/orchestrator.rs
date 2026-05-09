@@ -55,6 +55,9 @@ pub struct RunRequest {
     /// Currently a no-op when the LLM model isn't loaded.
     #[serde(default = "default_use_llm_filter")]
     pub use_llm_filter: bool,
+    /// LLM model id from the registry. If None, uses the registry default.
+    #[serde(default)]
+    pub llm_model_id: Option<String>,
     #[serde(default)]
     pub source_options: HashMap<String, SourceOptions>,
 }
@@ -88,7 +91,41 @@ pub async fn run_pipeline(
     cancel: CancellationToken,
 ) -> anyhow::Result<()> {
     let client = Arc::new(make_client());
-    let sub_queries = expand_query(&req.query);
+    let mut sub_queries = expand_query(&req.query);
+
+    // Tier 3a: LLM query expansion (best-effort, gracefully no-op if model
+    // isn't loaded). Runs before discovery so the new sub-queries hit every
+    // source on the same parallel pass as the original.
+    #[cfg(feature = "ai-llm")]
+    if req.use_llm_expansion && !cancel.is_cancelled() {
+        if let Some(llm) = ensure_llm_loaded(&app).await {
+            let _ = app.emit(
+                crate::events::EV_MODEL_STATUS,
+                crate::events::ModelStatusPayload {
+                    model_id: req.llm_model_id.clone().unwrap_or_else(|| "llm".into()),
+                    status: "llm_expanding".to_string(),
+                    detail: None,
+                },
+            );
+            let prompt = crate::ai::llm::expansion_prompt(&req.query);
+            let original = req.query.clone();
+            let llm_for_task = llm.clone();
+            let raw = tokio::task::spawn_blocking(move || {
+                // Async mutex inside a blocking thread — use blocking_lock.
+                let guard = llm_for_task.blocking_lock();
+                guard.generate(&prompt, 200)
+            })
+            .await;
+            if let Ok(Ok(text)) = raw {
+                let extras = crate::ai::llm::parse_expansion(&text, &original);
+                if !extras.is_empty() {
+                    tracing::info!("LLM expanded query into {} extras", extras.len());
+                    sub_queries.extend(extras);
+                }
+            }
+        }
+    }
+
     runlog::log(runlog::Event::RunStart {
         query: &req.query,
         sub_queries: &sub_queries,
@@ -333,6 +370,57 @@ pub async fn run_pipeline(
                 tracing::warn!("rerank task panicked: {}", e);
                 // ranked is empty here because of std::mem::take — that's fine
                 // because the task only panics after taking ownership.
+            }
+        }
+    }
+
+    // Tier 3b: LLM borderline filter. Asks the LLM yes/no whether each
+    // candidate in the 50–70th percentile band actually addresses the
+    // query. Bounded scope = bounded latency.
+    #[cfg(feature = "ai-llm")]
+    if req.use_llm_filter && !cancel.is_cancelled() && ranked.len() >= 4 {
+        if let Some(llm) = ensure_llm_loaded(&app).await {
+            // Determine the borderline band on the kept set only.
+            let kept_indices: Vec<usize> = ranked
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| r.reject_reason.is_none())
+                .map(|(i, _)| i)
+                .collect();
+            if kept_indices.len() >= 4 {
+                let lower = kept_indices.len() * 50 / 100;
+                let upper = kept_indices.len() * 70 / 100;
+                let borderline: Vec<usize> = kept_indices[lower..upper.max(lower + 1)].to_vec();
+
+                let _ = app.emit(
+                    crate::events::EV_MODEL_STATUS,
+                    crate::events::ModelStatusPayload {
+                        model_id: "llm".to_string(),
+                        status: "llm_filtering".to_string(),
+                        detail: Some(format!("{} borderline candidates", borderline.len())),
+                    },
+                );
+
+                for idx in borderline {
+                    if cancel.is_cancelled() {
+                        break;
+                    }
+                    let prompt = crate::ai::llm::filter_prompt(
+                        &req.query,
+                        &ranked[idx].doc.doc.title,
+                        ranked[idx].doc.doc.abstract_.as_deref().unwrap_or(""),
+                    );
+                    let llm_clone = llm.clone();
+                    let keep = tokio::task::spawn_blocking(move || {
+                        let guard = llm_clone.blocking_lock();
+                        guard.yes_no(&prompt).unwrap_or(true)
+                    })
+                    .await
+                    .unwrap_or(true);
+                    if !keep {
+                        ranked[idx].reject_reason = Some("LLM judged off-topic".to_string());
+                    }
+                }
             }
         }
     }
@@ -636,4 +724,45 @@ pub async fn run_pipeline(
     );
 
     Ok(())
+}
+
+// =============================================================================
+// LLM helpers (Tier 3) — only compiled when the ai-llm feature is enabled.
+// =============================================================================
+
+#[cfg(feature = "ai-llm")]
+async fn ensure_llm_loaded(
+    app: &AppHandle,
+) -> Option<std::sync::Arc<tokio::sync::Mutex<crate::ai::llm::LlmModel>>> {
+    if let Some(m) = crate::ai::llm::try_get() {
+        return Some(m);
+    }
+    // Pick the registry's default LLM. UI-driven model selection would
+    // override this via RunRequest.llm_model_id but that's an E4 concern.
+    let entry = crate::ai::registry::default_for(crate::ai::ModelKind::Llm)?;
+    let model_path = crate::ai::storage::model_file(app, entry).ok()?;
+    if !model_path.exists() {
+        return None;
+    }
+
+    let _ = app.emit(
+        crate::events::EV_MODEL_STATUS,
+        crate::events::ModelStatusPayload {
+            model_id: entry.id.to_string(),
+            status: "llm_warming".to_string(),
+            detail: None,
+        },
+    );
+
+    let path_clone = model_path.clone();
+    let res = tokio::task::spawn_blocking(move || crate::ai::llm::load_blocking(&path_clone))
+        .await
+        .ok()?;
+    match res {
+        Ok(m) => Some(m),
+        Err(e) => {
+            tracing::warn!("LLM load failed: {}", e);
+            None
+        }
+    }
 }
