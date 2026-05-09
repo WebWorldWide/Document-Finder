@@ -100,9 +100,9 @@ export default function FindTab() {
 
       {/* Optional collapsed-options panel */}
       <Show when={showOptions()}>
-        <div class="border-b border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 space-y-2">
-          <div class="flex flex-wrap items-center gap-1">
-            <span class="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)] mr-2">
+        <div class="surface-pressed-sm mx-4 mb-2 px-4 py-3 space-y-2">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-foreground-muted)] mr-2">
               Sources
             </span>
             <For each={ALL_SOURCES}>
@@ -111,15 +111,11 @@ export default function FindTab() {
                 return (
                   <button
                     onClick={() => toggleSource(src)}
-                    class="rounded-full border px-2.5 py-0.5 text-[10px] font-medium transition-colors"
-                    classList={{
-                      "border-transparent text-white": active(),
-                      "border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]":
-                        !active(),
-                    }}
+                    class="pill-toggle px-2.5 py-0.5 text-[10px] font-medium"
+                    classList={{ "is-active": active() }}
                     style={
                       active()
-                        ? { "background-color": `var(--color-source-${src})` }
+                        ? { color: `var(--color-source-${src})` }
                         : {}
                     }
                   >
@@ -148,18 +144,18 @@ export default function FindTab() {
           }
         >
           <div class="flex h-full flex-col">
-            {/* Status row + post-run actions */}
-            <div class="flex flex-wrap items-center gap-3 border-b border-[var(--color-border)] px-4 py-2 text-[12px]">
-              <span class="text-[var(--color-muted-foreground)]">
+            {/* Status row + post-run actions — raised pills on canvas */}
+            <div class="flex flex-wrap items-center gap-2 px-4 py-3 text-[12px]">
+              <span class="surface-raised-xs px-2.5 py-1 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
                 <strong class="text-[var(--color-foreground)]">{rs().found}</strong>{" "}
                 found
               </span>
-              <span class="text-[var(--color-muted-foreground)]">
-                <strong class="text-[var(--color-success)]">{rs().done}</strong>{" "}
+              <span class="surface-raised-xs px-2.5 py-1 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
+                <strong style={{ color: "var(--color-success)" }}>{rs().done}</strong>{" "}
                 saved
               </span>
               <Show when={rs().failed > 0}>
-                <span class="text-[var(--color-muted-foreground)]">
+                <span class="surface-raised-xs px-2.5 py-1 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
                   <strong class="text-[var(--color-destructive)]">
                     {rs().failed}
                   </strong>{" "}
@@ -169,10 +165,10 @@ export default function FindTab() {
               <ModelStatusBadge />
 
               <Show when={rs().total > 0}>
-                <span class="ml-auto text-[10px] font-mono text-[var(--color-muted-foreground)]">
+                <span class="ml-auto text-[10px] font-mono text-[var(--color-foreground-muted)]">
                   {runStore.overallPct}%
                 </span>
-                <div class="h-1 w-32 overflow-hidden rounded-full bg-[var(--color-border)]">
+                <div class="surface-pressed-sm h-1.5 w-32 overflow-hidden">
                   <div
                     class="h-full rounded-full bg-[var(--color-primary)] transition-all duration-500"
                     style={{ width: `${runStore.overallPct}%` }}
@@ -185,7 +181,7 @@ export default function FindTab() {
                   <button
                     onClick={handleExport}
                     disabled={exporting()}
-                    class="flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-[11px] font-medium hover:bg-[var(--color-accent)] transition-colors disabled:opacity-50"
+                    class="btn-tactile flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
                   >
                     <Show when={exporting()} fallback={<Archive size={11} />}>
                       <Loader2 size={11} class="animate-spin" />
@@ -194,14 +190,14 @@ export default function FindTab() {
                   </button>
                   <button
                     onClick={handleOpenLibrary}
-                    class="flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-[11px] font-medium hover:bg-[var(--color-accent)] transition-colors"
+                    class="btn-tactile flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
                   >
                     <BookOpen size={11} />
                     Library
                   </button>
                   <button
                     onClick={() => rs().folder && api.revealInFinder(rs().folder!)}
-                    class="flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-[11px] font-medium hover:bg-[var(--color-accent)] transition-colors"
+                    class="btn-tactile flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
                   >
                     <FolderOpen size={11} />
                     Folder
@@ -212,14 +208,14 @@ export default function FindTab() {
 
             {/* Fatal error banner */}
             <Show when={rs().fatalError}>
-              <div class="flex items-start justify-between gap-2 border-b border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 px-4 py-2 text-[12px] text-[var(--color-destructive)]">
+              <div class="surface-raised-sm mx-4 mb-2 flex items-start justify-between gap-2 px-3 py-2 text-[12px] text-[var(--color-destructive)]">
                 <span>
                   <strong>Error:</strong> {rs().fatalError}
                 </span>
                 <button
                   onClick={() => runStore.clearFatalError()}
                   aria-label="Dismiss"
-                  class="shrink-0 rounded p-0.5 hover:bg-[var(--color-destructive)]/10"
+                  class="btn-tactile shrink-0 p-1"
                 >
                   <X size={11} />
                 </button>
@@ -229,18 +225,20 @@ export default function FindTab() {
             {/* Export status banners */}
             <Show when={exportedTo()}>
               <div
-                class="flex items-start justify-between gap-2 border-b px-4 py-2 text-[12px]"
+                class="surface-raised-sm mx-4 mb-2 flex items-start justify-between gap-2 px-3 py-2 text-[12px]"
                 style={{
-                  "border-color":
-                    "color-mix(in oklch, var(--color-success) 30%, transparent)",
-                  "background-color": "var(--color-success-bg)",
                   color: "var(--color-success-fg)",
+                  "background-color": "var(--color-success-bg)",
                 }}
               >
                 <span>
                   Exported to <code class="text-[11px]">{exportedTo()}</code>
                 </span>
-                <button onClick={() => setExportedTo(null)} aria-label="Dismiss">
+                <button
+                  onClick={() => setExportedTo(null)}
+                  aria-label="Dismiss"
+                  class="btn-tactile shrink-0 p-1"
+                >
                   <X size={11} />
                 </button>
               </div>
@@ -251,33 +249,33 @@ export default function FindTab() {
               <LiveResultsView />
             </div>
 
-            {/* Source-issue panel — collapsed by default */}
+            {/* Source-issue panel — pressed pill at the bottom of the canvas */}
             <Show when={hasIssues()}>
-              <div class="border-t border-[var(--color-border)]">
+              <div class="surface-pressed-sm mx-4 mb-3 px-3">
                 <button
                   onClick={() => setShowIssues((v) => !v)}
                   aria-expanded={showIssues()}
-                  class="flex w-full items-center justify-between px-4 py-2 text-[12px] font-medium"
+                  class="flex w-full items-center justify-between py-2 text-[12px] font-medium"
                 >
                   <span class="flex items-center gap-2">
                     <AlertTriangle size={12} class="text-amber-500" />
                     {issueCount() === 1 ? "1 issue" : `${issueCount()} issues`}
                   </span>
-                  <span class="text-[var(--color-muted-foreground)]">
+                  <span class="text-[var(--color-foreground-muted)]">
                     <Show when={showIssues()} fallback={<ChevronDown size={12} />}>
                       <ChevronUp size={12} />
                     </Show>
                   </span>
                 </button>
                 <Show when={showIssues()}>
-                  <div class="space-y-1 border-t border-[var(--color-border)] px-4 pb-3 pt-2">
+                  <div class="space-y-1 pb-3 pt-1">
                     <For each={rs().sourceIssues}>
                       {(issue) => (
                         <div class="flex gap-2 text-[11px]">
                           <span class="shrink-0 font-medium text-amber-600">
                             {issue.source}
                           </span>
-                          <span class="text-[var(--color-muted-foreground)]">
+                          <span class="text-[var(--color-foreground-muted)]">
                             {issue.error}
                           </span>
                         </div>
@@ -289,7 +287,7 @@ export default function FindTab() {
                           <span class="shrink-0 font-medium text-[var(--color-destructive)]">
                             {item.title.slice(0, 40)}
                           </span>
-                          <span class="text-[var(--color-muted-foreground)]">
+                          <span class="text-[var(--color-foreground-muted)]">
                             {item.error}
                           </span>
                         </div>
@@ -317,10 +315,11 @@ function FullHeader(props: {
   setShowOptions: (v: boolean) => void;
 }) {
   return (
-    <div class="border-b border-[var(--color-border)] p-5 pt-10 space-y-4">
+    <div class="p-6 pt-10 space-y-5">
+      {/* Inset query input */}
       <div class="relative">
         <textarea
-          class="w-full resize-none rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 pr-12 text-sm leading-relaxed outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors placeholder:text-[var(--color-muted-foreground)]"
+          class="surface-input w-full resize-none px-4 py-3 pr-12 text-sm leading-relaxed outline-none placeholder:text-[var(--color-foreground-muted)]"
           placeholder="What are you looking for? (Ctrl+Enter to search)"
           rows={2}
           value={props.query}
@@ -332,17 +331,18 @@ function FullHeader(props: {
             }
           }}
         />
-        <div class="absolute right-3 top-3 text-[var(--color-muted-foreground)]">
+        <div class="absolute right-3 top-3 text-[var(--color-foreground-muted)]">
           <Search size={16} />
         </div>
       </div>
 
+      {/* Example pills */}
       <div class="flex flex-wrap gap-1.5">
         <For each={EXAMPLES}>
           {(ex) => (
             <button
               onClick={() => props.setQuery(ex)}
-              class="rounded-full border border-[var(--color-border)] px-3 py-1 text-[11px] text-[var(--color-muted-foreground)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors"
+              class="pill-toggle px-3 py-1 text-[11px] text-[var(--color-foreground-muted)] hover:text-[var(--color-primary)]"
             >
               {ex}
             </button>
@@ -350,6 +350,7 @@ function FullHeader(props: {
         </For>
       </div>
 
+      {/* Source toggles — pressed when active with source color tint */}
       <div class="flex flex-wrap gap-1.5">
         <For each={ALL_SOURCES}>
           {(src) => {
@@ -357,14 +358,16 @@ function FullHeader(props: {
             return (
               <button
                 onClick={() => toggleSource(src)}
-                class="rounded-full border px-3 py-1 text-[11px] font-medium transition-colors"
+                class="pill-toggle px-3 py-1 text-[11px] font-medium"
                 classList={{
-                  "border-transparent text-white": active(),
-                  "border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]":
-                    !active(),
+                  "is-active": active(),
                 }}
                 style={
-                  active() ? { "background-color": `var(--color-source-${src})` } : {}
+                  active()
+                    ? {
+                        color: `var(--color-source-${src})`,
+                      }
+                    : {}
                 }
               >
                 {SOURCE_LABELS[src]}
@@ -380,6 +383,7 @@ function FullHeader(props: {
         </p>
       </Show>
 
+      {/* Primary action — raised, depresses on click */}
       <div class="flex items-center gap-3">
         <button
           onClick={props.onSearch}
@@ -388,7 +392,11 @@ function FullHeader(props: {
             settings.selectedSources.length === 0 ||
             props.running
           }
-          class="flex items-center gap-2 rounded-lg bg-[var(--color-primary)] px-5 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+          class="btn-tactile flex items-center gap-2 px-6 py-2.5 text-sm font-semibold"
+          style={{
+            background: "var(--color-primary)",
+            color: "white",
+          }}
         >
           <Search size={14} />
           Find Documents
@@ -407,11 +415,11 @@ function CompactHeader(props: {
   setShowOptions: (v: boolean) => void;
 }) {
   return (
-    <div class="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-card)] px-4 py-2">
+    <div class="flex items-center gap-2 px-4 py-3">
       <div class="relative flex-1">
         <input
           type="text"
-          class="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-1.5 pr-8 text-[13px] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors"
+          class="surface-input w-full px-3 py-1.5 pr-8 text-[13px] outline-none"
           placeholder="Refine query…"
           value={props.query}
           onInput={(e) => props.setQuery(e.currentTarget.value)}
@@ -422,7 +430,7 @@ function CompactHeader(props: {
             }
           }}
         />
-        <div class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-muted-foreground)]">
+        <div class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-foreground-muted)]">
           <Search size={12} />
         </div>
       </div>
@@ -431,7 +439,8 @@ function CompactHeader(props: {
         onClick={() => props.setShowOptions(!props.showOptions)}
         aria-expanded={props.showOptions}
         title="Sources & options"
-        class="rounded-md border border-[var(--color-border)] p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] transition-colors"
+        class="btn-tactile p-1.5 text-[var(--color-foreground-muted)]"
+        classList={{ "is-active": props.showOptions }}
       >
         <Sliders size={12} />
       </button>
@@ -441,7 +450,7 @@ function CompactHeader(props: {
         fallback={
           <button
             onClick={() => api.cancelRun()}
-            class="flex items-center gap-1 rounded-md border border-[var(--color-destructive)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-destructive)] hover:bg-[var(--color-destructive)] hover:text-white transition-colors"
+            class="btn-tactile flex items-center gap-1 px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-destructive)]"
           >
             <X size={11} />
             Cancel
@@ -453,7 +462,8 @@ function CompactHeader(props: {
           disabled={
             !props.query.trim() || settings.selectedSources.length === 0
           }
-          class="flex items-center gap-1 rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-[12px] font-medium text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+          class="btn-tactile flex items-center gap-1 px-3 py-1.5 text-[12px] font-semibold"
+          style={{ background: "var(--color-primary)", color: "white" }}
         >
           <Search size={11} />
           New Search
@@ -466,8 +476,8 @@ function CompactHeader(props: {
 function WelcomeBody(props: { onPickExample: (ex: string) => void }) {
   return (
     <div class="flex h-full items-center justify-center p-6">
-      <div class="max-w-md text-center space-y-4">
-        <p class="text-sm text-[var(--color-muted-foreground)]">
+      <div class="surface-raised max-w-md text-center space-y-4 p-8">
+        <p class="text-sm text-[var(--color-foreground-muted)]">
           Pick a source set above and run a search. Live results, ranking, and
           downloads will fill this view.
         </p>
@@ -476,7 +486,7 @@ function WelcomeBody(props: { onPickExample: (ex: string) => void }) {
             {(ex) => (
               <button
                 onClick={() => props.onPickExample(ex)}
-                class="rounded-full border border-[var(--color-border)] px-3 py-1 text-[11px] text-[var(--color-muted-foreground)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                class="pill-toggle px-3 py-1 text-[11px] text-[var(--color-foreground-muted)] hover:text-[var(--color-primary)]"
               >
                 {ex}
               </button>

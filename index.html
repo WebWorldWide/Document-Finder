@@ -4,7 +4,13 @@
         <meta charset="UTF-8" />
         <link rel="icon" type="image/svg+xml" href="/vite.svg" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="theme-color" content="#ece8df" />
         <title>Document Finder</title>
+        <style>
+            /* Avoid white-flash before the app's stylesheet loads. Matches
+               --color-canvas in src/styles/globals.css. */
+            html, body { background: oklch(0.94 0.012 80); }
+        </style>
     </head>
     <body>
         <div id="app"></div>

@@ -74,8 +74,8 @@ export default function LiveResultsView() {
   return (
     <div class="flex h-full flex-col">
       {/* Header — counters + bulk actions */}
-      <div class="flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3">
-        <div class="flex items-center gap-1">
+      <div class="flex items-center justify-between gap-3 px-4 py-3">
+        <div class="surface-raised-sm flex items-center gap-1 p-1">
           <LaneTab
             id="found"
             label="All Found"
@@ -108,14 +108,14 @@ export default function LiveResultsView() {
 
         <div class="flex items-center gap-2">
           <Show when={runStore.state.rankingDone}>
-            <span class="text-[10px] text-[var(--color-muted-foreground)]">
+            <span class="text-[10px] text-[var(--color-foreground-muted)]">
               {runStore.state.rankingKept} kept · {runStore.state.rankingRejected} rejected
             </span>
           </Show>
           <Show when={runStore.state.running}>
             <button
               onClick={cancelAll}
-              class="rounded-md border border-[var(--color-border)] px-2 py-1 text-[11px] font-medium text-[var(--color-destructive)] hover:bg-[var(--color-destructive)]/10 transition-colors"
+              class="btn-tactile px-3 py-1.5 text-[11px] font-medium text-[var(--color-destructive)]"
             >
               Cancel All
             </button>
@@ -124,7 +124,7 @@ export default function LiveResultsView() {
       </div>
 
       {/* Lane content */}
-      <div class="flex-1 overflow-y-auto px-4 py-3">
+      <div class="flex-1 overflow-y-auto px-4 pb-4 pt-1">
         <Show when={lane() === "found"}>
           <FoundLane
             candidates={allCandidates()}
@@ -165,20 +165,25 @@ function LaneTab(props: {
   return (
     <button
       onClick={() => props.onSelect(props.id)}
-      class="rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors"
+      class="px-3 py-1.5 text-[12px] font-medium transition-all duration-150"
       classList={{
-        "bg-[var(--color-primary)] text-white": props.active,
-        "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)]":
-          !props.active,
+        "surface-pressed-sm": props.active,
+        "btn-tactile": !props.active,
+      }}
+      style={{
+        color: props.active ? "var(--color-primary)" : "var(--color-foreground-muted)",
       }}
     >
       {props.label}
       <span
         class="ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-mono"
-        classList={{
-          "bg-white/20 text-white": props.active,
-          "bg-[var(--color-muted)] text-[var(--color-muted-foreground)]":
-            !props.active,
+        style={{
+          background: props.active
+            ? "color-mix(in oklch, var(--color-primary) 18%, transparent)"
+            : "var(--color-surface-deep)",
+          color: props.active
+            ? "var(--color-primary)"
+            : "var(--color-foreground-muted)",
         }}
       >
         {props.count}
@@ -233,11 +238,10 @@ function CandidateRow(props: {
   const isRejected = () => props.c.status !== "kept";
   return (
     <li
-      class="animate-slide-in flex items-start gap-2 rounded-lg border p-2"
+      class="animate-slide-in flex items-start gap-2 p-2.5 transition-all duration-150"
       classList={{
-        "border-[var(--color-border)] bg-[var(--color-card)]": !isRejected(),
-        "border-[var(--color-border)]/50 bg-[var(--color-muted)]/40 opacity-60":
-          isRejected(),
+        "surface-raised-sm hover:translate-y-[-1px]": !isRejected(),
+        "surface-pressed-sm opacity-60": isRejected(),
       }}
       title={
         props.c.reject_reason ??
@@ -311,7 +315,7 @@ function CandidateRow(props: {
       <Show when={isRejected()}>
         <button
           onClick={props.onOverrideHint}
-          class="shrink-0 rounded-md p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+          class="btn-tactile shrink-0 p-1.5 text-[var(--color-foreground-muted)]"
           title="Force download (rejected by ranker)"
         >
           <Download size={11} />
@@ -333,13 +337,13 @@ function DownloadingLane(props: { items: InFlight[] }) {
             const pct = () =>
               item.total > 0 ? Math.round((item.downloaded / item.total) * 100) : 0;
             return (
-              <li class="rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-2.5">
+              <li class="surface-raised-sm p-3">
                 <div class="mb-2 flex items-center gap-2">
                   <SourceBadge source={item.source} />
                   <span class="line-clamp-1 flex-1 text-[12px]">{item.title}</span>
                 </div>
                 <div class="flex items-center gap-2">
-                  <div class="h-1 flex-1 overflow-hidden rounded-full bg-[var(--color-border)]">
+                  <div class="surface-pressed-sm h-1.5 flex-1 overflow-hidden">
                     <div
                       class="h-full rounded-full transition-all duration-300"
                       classList={{
@@ -351,7 +355,7 @@ function DownloadingLane(props: { items: InFlight[] }) {
                       }}
                     />
                   </div>
-                  <span class="shrink-0 font-mono text-[10px] text-[var(--color-muted-foreground)]">
+                  <span class="shrink-0 font-mono text-[10px] text-[var(--color-foreground-muted)]">
                     {item.total > 0
                       ? `${formatBytes(item.downloaded)} / ${formatBytes(item.total)}`
                       : formatBytes(item.downloaded)}
@@ -372,10 +376,10 @@ function CompletedLane(props: { items: CompletedItem[] }) {
       when={props.items.length > 0}
       fallback={<EmptyState msg="No completed downloads yet." />}
     >
-      <ul class="space-y-1">
+      <ul class="space-y-1.5">
         <For each={props.items.slice(0, MAX_VISIBLE_ROWS)}>
           {(item) => (
-            <li class="flex items-center gap-2 rounded-md px-2 py-1.5">
+            <li class="surface-raised-xs flex items-center gap-2 px-3 py-2" style={{ "border-radius": "var(--radius-sm)" }}>
               <CheckCircle2
                 size={13}
                 class="shrink-0"
@@ -386,7 +390,7 @@ function CompletedLane(props: { items: CompletedItem[] }) {
               <Show when={item.absolute_path}>
                 <button
                   onClick={() => api.revealInFinder(item.absolute_path!)}
-                  class="shrink-0 text-[10px] text-[var(--color-muted-foreground)] hover:text-[var(--color-primary)]"
+                  class="shrink-0 text-[10px] text-[var(--color-foreground-muted)] hover:text-[var(--color-primary)]"
                 >
                   reveal
                 </button>
@@ -405,10 +409,10 @@ function FailedLane(props: { items: CompletedItem[] }) {
       when={props.items.length > 0}
       fallback={<EmptyState msg="No failures." />}
     >
-      <ul class="space-y-1">
+      <ul class="space-y-1.5">
         <For each={props.items.slice(0, MAX_VISIBLE_ROWS)}>
           {(item) => (
-            <li class="flex items-start gap-2 rounded-md px-2 py-1.5">
+            <li class="surface-pressed-sm flex items-start gap-2 px-3 py-2" style={{ "border-radius": "var(--radius-sm)" }}>
               <XCircle
                 size={13}
                 class="mt-0.5 shrink-0 text-[var(--color-destructive)]"

@@ -16,6 +16,8 @@ Document Finder v2 is a complete rewrite of the original Python-based tool, now 
 - **AI-Ready Exports**: Export libraries as `.zip` files containing PDFs, EPUBs, and extracted plain text — ready to drop into any AI context window.
 - **Blazing Fast**: Rust handles parallel downloads, PDF/EPUB text extraction, and SQLite persistence natively.
 - **Privacy-First Search**: Optionally integrate SearXNG for privacy-respecting web search across dozens of engines.
+- **Local AI Ranking**: Two small bundled models — `bge-small-en-v1.5` (~33 MB) for semantic reranking and `Qwen 2.5 3B Instruct` (~2 GB) for query expansion + borderline filtering. Downloaded on first use. Everything runs offline; no API keys, ever.
+- **Neumorphic UI**: Soft-depth design language with paired shadows, tactile press feedback, and a unified warm-cream canvas across every screen.
 
 ## Supported Sources
 
@@ -40,8 +42,19 @@ Document Finder v2 is a complete rewrite of the original Python-based tool, now 
 
 - [Rust](https://rustup.rs/) (installed via `rustup`)
 - [Node.js](https://nodejs.org/) v20+
+- **C++ build toolchain** (for the local LLM via llama.cpp):
+  - **macOS**: `brew install cmake` + Xcode Command Line Tools (`xcode-select --install`). Metal GPU support is built in.
+  - **Linux**: cmake + clang/g++ (e.g. `sudo apt install build-essential cmake clang`).
+  - **Windows**: cmake + Visual Studio Build Tools 2022 with the C++ workload.
 
 > **pnpm** is installed automatically by `run.sh` if not present.
+
+> The first `cargo build` is slow (10–20 min) because llama.cpp + ONNX
+> Runtime get compiled from source. Subsequent builds are cached.
+>
+> To skip the AI features entirely (faster builds, no semantic
+> reranking or LLM expansion), build with:
+> `cargo build --no-default-features --features=custom-protocol`
 
 ### One-Click Launch
 

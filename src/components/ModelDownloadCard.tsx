@@ -30,7 +30,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
   });
 
   return (
-    <div class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4">
+    <div class="surface-raised-sm p-4">
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0 flex-1">
           <div class="flex items-center gap-2">
@@ -64,9 +64,9 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
           </div>
 
           <Show when={m().status.kind === "downloading"}>
-            <div class="mt-2 h-1 w-full overflow-hidden rounded-full bg-[var(--color-border)]">
+            <div class="surface-pressed-sm mt-2 h-1.5 w-full overflow-hidden">
               <div
-                class="h-full bg-[var(--color-primary)] transition-all duration-300"
+                class="h-full rounded-full bg-[var(--color-primary)] transition-all duration-300"
                 style={{ width: `${pct()}%` }}
               />
             </div>
@@ -88,7 +88,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
           <Show when={m().status.kind === "not_downloaded" || m().status.kind === "failed" || m().status.kind === "cancelled"}>
             <button
               onClick={() => modelsStore.download(m().id)}
-              class="flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2.5 py-1 text-[11px] font-medium hover:bg-[var(--color-accent)] transition-colors"
+              class="btn-tactile flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
             >
               <Download size={11} />
               Download
@@ -97,7 +97,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
           <Show when={m().status.kind === "downloading" || m().status.kind === "verifying"}>
             <button
               onClick={() => modelsStore.cancel(m().id)}
-              class="flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2.5 py-1 text-[11px] font-medium hover:bg-[var(--color-accent)] transition-colors"
+              class="btn-tactile flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
             >
               <X size={11} />
               Cancel
@@ -107,7 +107,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
             <button
               onClick={() => modelsStore.remove(m().id)}
               title="Delete from disk"
-              class="flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-[11px] font-medium text-[var(--color-muted-foreground)] hover:bg-[var(--color-destructive)]/10 hover:text-[var(--color-destructive)] transition-colors"
+              class="btn-tactile flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-[var(--color-foreground-muted)]"
             >
               <Trash2 size={11} />
             </button>

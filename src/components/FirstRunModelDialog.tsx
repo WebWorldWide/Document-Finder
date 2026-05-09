@@ -40,11 +40,11 @@ export default function FirstRunModelDialog() {
   return (
     <Show when={open()}>
       <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm animate-fade-in">
-        <div class="relative w-full max-w-lg rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-2xl">
+        <div class="surface-floating relative w-full max-w-lg p-6">
           <button
             onClick={dismiss}
             aria-label="Dismiss"
-            class="absolute right-3 top-3 rounded-md p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)]"
+            class="btn-tactile absolute right-3 top-3 p-1.5 text-[var(--color-foreground-muted)]"
           >
             <X size={14} />
           </button>
@@ -76,7 +76,7 @@ export default function FirstRunModelDialog() {
           <div class="mt-5 flex items-center justify-between gap-3">
             <button
               onClick={dismiss}
-              class="text-[11px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+              class="text-[11px] text-[var(--color-foreground-muted)] hover:text-[var(--color-foreground)]"
             >
               Skip — use lexical ranking only
             </button>
@@ -85,7 +85,8 @@ export default function FirstRunModelDialog() {
                 void downloadDefaults();
                 dismiss();
               }}
-              class="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-xs font-medium text-white hover:opacity-90"
+              class="btn-tactile px-4 py-2 text-xs font-semibold"
+              style={{ background: "var(--color-primary)", color: "white" }}
             >
               Download both
             </button>

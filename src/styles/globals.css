@@ -2,61 +2,128 @@
 
 @custom-variant dark (&:is(.dark *));
 
-@theme {
-  --color-background: oklch(0.99 0 0);
-  --color-foreground: oklch(0.18 0 0);
-  --color-card: oklch(1 0 0);
-  --color-card-foreground: oklch(0.18 0 0);
-  --color-popover: oklch(1 0 0);
-  --color-popover-foreground: oklch(0.18 0 0);
-  --color-primary: oklch(0.55 0.18 270);
-  --color-primary-foreground: oklch(0.99 0 0);
-  --color-secondary: oklch(0.95 0.01 270);
-  --color-secondary-foreground: oklch(0.25 0.02 270);
-  --color-muted: oklch(0.96 0 0);
-  --color-muted-foreground: oklch(0.45 0 0);
-  --color-accent: oklch(0.96 0.01 270);
-  --color-accent-foreground: oklch(0.18 0 0);
-  --color-destructive: oklch(0.55 0.21 27);
-  --color-destructive-foreground: oklch(0.99 0 0);
-  --color-border: oklch(0.9 0 0);
-  --color-input: oklch(0.97 0 0);
-  --color-ring: oklch(0.55 0.18 270);
+/* =============================================================================
+ * Neumorphic / Skeumorphic design system.
+ *
+ * Single warm-cream canvas. Surfaces never separate by hue — only by paired
+ * shadows (light from top-left, dark from bottom-right). Buttons depress
+ * visibly when active. Inputs look milled into the surface. Typography
+ * stays Inter for now; refined sizes per the plan.
+ *
+ * Palette migration notes: the older flat tokens (--color-card,
+ * --color-border, --color-accent) are kept as aliases that resolve to the
+ * new canvas/surface values so existing components don't break — the
+ * per-component sweep gradually replaces them with the new utility classes.
+ * ========================================================================= */
 
-  --color-source-arxiv: oklch(0.5 0.18 30);
-  --color-source-openalex: oklch(0.5 0.18 200);
+@theme {
+  /* ---- Canvas + surfaces ------------------------------------------------ */
+  --color-canvas:       oklch(0.94 0.012 80);
+  --color-surface:      oklch(0.94 0.012 80);
+  --color-surface-soft: oklch(0.96 0.010 80);
+  --color-surface-deep: oklch(0.91 0.014 80);
+
+  /* ---- Text ------------------------------------------------------------ */
+  --color-foreground:         oklch(0.22 0.020 80);
+  --color-foreground-muted:   oklch(0.50 0.018 80);
+
+  /* ---- Brand + accent -------------------------------------------------- */
+  --color-primary:            oklch(0.58 0.16 270);
+  --color-primary-foreground: oklch(0.99 0 0);
+  --color-accent-warm:        oklch(0.70 0.12 60);
+
+  /* ---- Status colors (semantic; unchanged from prior design) ----------- */
+  --color-destructive:           oklch(0.55 0.21 27);
+  --color-destructive-foreground: oklch(0.99 0 0);
+  --color-success:               oklch(0.55 0.16 145);
+  --color-success-fg:            oklch(0.32 0.10 145);
+  --color-success-bg:            oklch(0.96 0.04 145);
+
+  /* ---- Source colors (unchanged: encode meaning) ----------------------- */
+  --color-source-arxiv:            oklch(0.5 0.18 30);
+  --color-source-openalex:         oklch(0.5 0.18 200);
   --color-source-semantic_scholar: oklch(0.5 0.18 320);
   --color-source-internet_archive: oklch(0.5 0.18 80);
-  --color-source-doaj: oklch(0.5 0.18 140);
-  --color-source-gutenberg: oklch(0.5 0.18 50);
-  --color-source-web: oklch(0.5 0.18 250);
-  --color-source-brave: oklch(0.55 0.2 30);
-  --color-source-bing: oklch(0.5 0.16 180);
-  --color-source-searxng: oklch(0.5 0.18 290);
+  --color-source-doaj:             oklch(0.5 0.18 140);
+  --color-source-gutenberg:        oklch(0.5 0.18 50);
+  --color-source-web:              oklch(0.5 0.18 250);
+  --color-source-brave:            oklch(0.55 0.20 30);
+  --color-source-bing:             oklch(0.5 0.16 180);
+  --color-source-searxng:          oklch(0.5 0.18 290);
 
-  --color-success: oklch(0.55 0.16 145);
-  --color-success-fg: oklch(0.35 0.12 145);
-  --color-success-bg: oklch(0.97 0.04 145);
+  /* ---- Backwards-compatible aliases.
+   *      Existing components reference these; the per-component sweep
+   *      gradually swaps them out. -------------------------------------- */
+  --color-background:           oklch(0.94 0.012 80);
+  --color-card:                 oklch(0.94 0.012 80);
+  --color-card-foreground:      oklch(0.22 0.020 80);
+  --color-popover:              oklch(0.94 0.012 80);
+  --color-popover-foreground:   oklch(0.22 0.020 80);
+  --color-secondary:            oklch(0.92 0.014 80);
+  --color-secondary-foreground: oklch(0.25 0.020 80);
+  --color-muted:                oklch(0.93 0.012 80);
+  --color-muted-foreground:     oklch(0.50 0.018 80);
+  --color-accent:               oklch(0.92 0.018 60);
+  --color-accent-foreground:    oklch(0.22 0.020 80);
+  --color-border:               oklch(0.86 0.014 80);
+  --color-input:                oklch(0.96 0.010 80);
+  --color-ring:                 oklch(0.58 0.16 270);
 
-  --radius: 0.625rem;
+  /* ---- Geometry -------------------------------------------------------- */
+  --radius:    1rem;
+  --radius-sm: 0.625rem;
+  --radius-pill: 9999px;
+
+  /* ---- Depth shadows (the heart of the neumorphic look) --------------- */
+  /* Standard raised: light from top-left, dark from bottom-right */
+  --shadow-raised:
+    8px 8px 16px oklch(0.84 0.020 80 / 0.7),
+    -8px -8px 16px oklch(1 0 0 / 0.85);
+
+  --shadow-raised-sm:
+    4px 4px 8px oklch(0.84 0.020 80 / 0.6),
+    -4px -4px 8px oklch(1 0 0 / 0.85);
+
+  --shadow-raised-xs:
+    2px 2px 4px oklch(0.84 0.020 80 / 0.55),
+    -2px -2px 4px oklch(1 0 0 / 0.85);
+
+  /* Pressed: same shadows but inset */
+  --shadow-pressed:
+    inset 4px 4px 8px oklch(0.82 0.022 80 / 0.85),
+    inset -4px -4px 8px oklch(1 0 0 / 0.95);
+
+  --shadow-pressed-sm:
+    inset 2px 2px 4px oklch(0.82 0.022 80 / 0.75),
+    inset -2px -2px 4px oklch(1 0 0 / 0.85);
+
+  /* Floating: deeper, for modals + the active library card */
+  --shadow-floating:
+    20px 20px 40px oklch(0.78 0.024 80 / 0.55),
+    -10px -10px 30px oklch(1 0 0 / 0.85);
+
+  /* Soft hover lift */
+  --shadow-hover:
+    10px 10px 20px oklch(0.83 0.022 80 / 0.7),
+    -10px -10px 20px oklch(1 0 0 / 0.9);
 }
+
+/* =============================================================================
+ * Layout primitives + global resets
+ * ========================================================================= */
 
 html, body, #app {
   height: 100%;
   margin: 0;
 }
 
-button:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-  border-radius: var(--radius);
-}
-
 body {
-  background: var(--color-background);
+  background: var(--color-canvas);
   color: var(--color-foreground);
   font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  font-size: 14px;
+  letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
   user-select: none;
   overflow: hidden;
@@ -70,18 +137,119 @@ textarea, input, [contenteditable] {
   box-sizing: border-box;
 }
 
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+/* Headings — slightly tighter than body */
+h1, h2, h3, h4 {
+  letter-spacing: -0.015em;
+}
+
+/* Scrollbars — recede into the canvas */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: oklch(0.85 0 0);
-  border-radius: 6px;
+  background: oklch(0.84 0.020 80);
+  border-radius: 8px;
+  border: 2px solid var(--color-canvas);
 }
-::-webkit-scrollbar-thumb:hover { background: oklch(0.75 0 0); }
+::-webkit-scrollbar-thumb:hover { background: oklch(0.78 0.024 80); }
 
-/* Animations */
+/* =============================================================================
+ * Neumorphic utility classes
+ *
+ * Compose with Tailwind utilities for spacing/typography. The shadows do
+ * the heavy lifting; backgrounds always match the canvas so the depth
+ * illusion holds.
+ * ========================================================================= */
+
+.surface-raised {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-raised);
+  border-radius: var(--radius);
+}
+.surface-raised-sm {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-raised-sm);
+  border-radius: var(--radius-sm);
+}
+.surface-pressed {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-pressed);
+  border-radius: var(--radius);
+}
+.surface-pressed-sm {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-pressed-sm);
+  border-radius: var(--radius-sm);
+}
+.surface-floating {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-floating);
+  border-radius: var(--radius);
+}
+.surface-input {
+  background: var(--color-surface-soft);
+  box-shadow: var(--shadow-pressed-sm);
+  border-radius: var(--radius-sm);
+  border: none;
+}
+.surface-input:focus, .surface-input:focus-within {
+  box-shadow: var(--shadow-pressed-sm),
+              0 0 0 2px oklch(0.58 0.16 270 / 0.3);
+}
+
+/* Tactile button: subtle press feedback in 80ms */
+.btn-tactile {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-raised-sm);
+  border-radius: var(--radius-sm);
+  border: none;
+  transition: box-shadow 100ms ease-out, transform 100ms ease-out;
+  cursor: pointer;
+}
+.btn-tactile:hover:not(:disabled) {
+  box-shadow: var(--shadow-hover);
+}
+.btn-tactile:active:not(:disabled) {
+  box-shadow: var(--shadow-pressed-sm);
+  transform: translate(1px, 1px);
+}
+.btn-tactile:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Pill toggle: pressed when active, raised when inactive */
+.pill-toggle {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-raised-xs);
+  border-radius: var(--radius-pill);
+  border: none;
+  transition: box-shadow 100ms ease-out, color 100ms ease-out;
+  cursor: pointer;
+}
+.pill-toggle:hover:not(:disabled) {
+  box-shadow: var(--shadow-raised-sm);
+}
+.pill-toggle.is-active {
+  box-shadow: var(--shadow-pressed-sm);
+  color: var(--color-primary);
+}
+
+/* =============================================================================
+ * Animations
+ * ========================================================================= */
+
 @keyframes slide-in {
   from { opacity: 0; transform: translateY(-6px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -92,15 +260,15 @@ textarea, input, [contenteditable] {
   to   { opacity: 1; }
 }
 
-.animate-slide-in { animation: slide-in 0.15s ease-out; }
-.animate-fade-in  { animation: fade-in 0.2s ease-out; }
+.animate-slide-in { animation: slide-in 0.18s ease-out; }
+.animate-fade-in  { animation: fade-in 0.22s ease-out; }
 .animate-spin     { animation: spin 1s linear infinite; }
 
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
 
-/* Progress bar shimmer */
+/* Progress bar shimmer — subtle gradient sweep */
 @keyframes shimmer {
   0%   { background-position: -200% center; }
   100% { background-position: 200% center; }
@@ -109,9 +277,16 @@ textarea, input, [contenteditable] {
   background: linear-gradient(
     90deg,
     var(--color-primary) 25%,
-    oklch(0.65 0.18 270) 50%,
+    oklch(0.68 0.18 270) 50%,
     var(--color-primary) 75%
   );
   background-size: 200% auto;
   animation: shimmer 2s linear infinite;
 }
+
+/* Soft pulsing inner highlight for the active model status badge */
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.6; }
+}
+.animate-pulse-soft { animation: pulse-soft 1.6s ease-in-out infinite; }

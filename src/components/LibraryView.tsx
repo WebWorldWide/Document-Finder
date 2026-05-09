@@ -70,22 +70,22 @@ export default function LibraryView() {
 
   return (
     <div class="flex h-full flex-col overflow-hidden">
-      <div class="border-b border-[var(--color-border)] px-6 py-5 pt-10">
+      <div class="px-6 py-5 pt-10">
         <h1 class="text-xl font-semibold">Library</h1>
-        <p class="mt-0.5 text-sm text-[var(--color-muted-foreground)]">
+        <p class="mt-0.5 text-sm text-[var(--color-foreground-muted)]">
           Your saved research collections.
         </p>
       </div>
 
-      <div class="flex-1 overflow-y-auto p-6 space-y-4">
+      <div class="flex-1 overflow-y-auto px-6 pb-6 space-y-4">
         {/* Export error */}
         <Show when={exportError()}>
-          <div class="rounded-lg border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 p-3 text-sm text-[var(--color-destructive)] flex items-start justify-between gap-2">
+          <div class="surface-raised-sm flex items-start justify-between gap-2 p-3 text-sm text-[var(--color-destructive)]">
             <span>Export failed: {exportError()}</span>
             <button
               onClick={() => setExportError(null)}
               aria-label="Dismiss"
-              class="shrink-0 rounded hover:bg-[var(--color-destructive)]/10 p-0.5 transition-colors"
+              class="btn-tactile shrink-0 p-1"
             >
               <X size={12} />
             </button>
@@ -94,16 +94,16 @@ export default function LibraryView() {
 
         <Show when={loading()}>
           <div class="flex items-center justify-center py-16">
-            <Loader2 size={24} class="animate-spin text-[var(--color-muted-foreground)]" />
+            <Loader2 size={24} class="animate-spin text-[var(--color-foreground-muted)]" />
           </div>
         </Show>
 
         <Show when={!loading() && error()}>
-          <div class="rounded-lg border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 p-4 text-sm text-[var(--color-destructive)] space-y-3">
+          <div class="surface-raised-sm space-y-3 p-4 text-sm text-[var(--color-destructive)]">
             <p>{error()}</p>
             <button
               onClick={() => setLoadTick((n) => n + 1)}
-              class="flex items-center gap-1.5 rounded-lg border border-[var(--color-destructive)]/30 px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-destructive)]/10 transition-colors"
+              class="btn-tactile flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium"
             >
               <RefreshCw size={12} />
               Retry
@@ -112,17 +112,18 @@ export default function LibraryView() {
         </Show>
 
         <Show when={!loading() && !error() && libraries().length === 0}>
-          <div class="flex flex-col items-center justify-center py-20 text-center">
-            <div class="mb-4 rounded-full bg-[var(--color-muted)] p-5">
-              <Archive size={28} class="text-[var(--color-muted-foreground)]" />
+          <div class="surface-raised flex flex-col items-center justify-center py-16 text-center mx-auto max-w-md">
+            <div class="surface-pressed-sm mb-4 p-5" style={{ "border-radius": "9999px" }}>
+              <Archive size={28} class="text-[var(--color-foreground-muted)]" />
             </div>
-            <p class="text-sm font-medium">No libraries yet</p>
-            <p class="mt-1 text-sm text-[var(--color-muted-foreground)]">
+            <p class="text-sm font-semibold">No libraries yet</p>
+            <p class="mt-1 text-sm text-[var(--color-foreground-muted)]">
               Run a search to build your first collection.
             </p>
             <button
               onClick={() => uiStore.setView("find")}
-              class="mt-4 rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+              class="btn-tactile mt-4 px-5 py-2 text-sm font-semibold"
+              style={{ background: "var(--color-primary)", color: "white" }}
             >
               Go to Discover
             </button>
@@ -130,7 +131,7 @@ export default function LibraryView() {
         </Show>
 
         <Show when={!loading() && libraries().length > 0}>
-          <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
             <For each={libraries()}>
               {(lib) => {
                 const isActive = () => uiStore.activeLibrary?.path === lib.path;
@@ -139,25 +140,29 @@ export default function LibraryView() {
                   <div
                     role="button"
                     tabindex="0"
-                    class="group rounded-xl border p-4 transition-all cursor-pointer hover:shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                    class="group p-5 cursor-pointer outline-none transition-all duration-200 hover:translate-y-[-2px]"
                     classList={{
-                      "border-[var(--color-primary)] bg-[var(--color-primary)]/5": isActive(),
-                      "border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-primary)]/50": !isActive(),
+                      "surface-pressed": isActive(),
+                      "surface-raised": !isActive(),
                     }}
                     onClick={() => uiStore.setActiveLibrary(lib)}
                     onKeyDown={(e) => handleCardKeyDown(e, lib)}
                   >
-                    <h3 class="mb-1 truncate text-sm font-medium" title={lib.query}>
+                    <h3
+                      class="mb-1 truncate text-sm font-semibold"
+                      title={lib.query}
+                      style={{ color: isActive() ? "var(--color-primary)" : undefined }}
+                    >
                       {lib.query ?? lib.name}
                     </h3>
-                    <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
+                    <p class="mb-4 text-xs text-[var(--color-foreground-muted)]">
                       {lib.n_docs} documents · {formatBytes(lib.size_bytes)}
                     </p>
                     <div class="flex gap-2" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => handleExport(lib)}
                         disabled={isExporting()}
-                        class="flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-accent)] transition-colors disabled:opacity-50"
+                        class="btn-tactile flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium"
                       >
                         <Show when={isExporting()} fallback={<Archive size={12} />}>
                           <Loader2 size={12} class="animate-spin" />
@@ -166,7 +171,7 @@ export default function LibraryView() {
                       </button>
                       <button
                         onClick={() => api.revealInFinder(lib.path)}
-                        class="flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-accent)] transition-colors"
+                        class="btn-tactile flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium"
                       >
                         <FolderOpen size={12} />
                         Show

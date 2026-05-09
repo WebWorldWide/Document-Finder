@@ -102,7 +102,7 @@ export default function SettingsView() {
         <h1 class="text-xl font-semibold">Settings</h1>
 
         {/* Discovery settings */}
-        <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+        <section class="surface-raised p-5">
           <h2 class="mb-4 text-sm font-semibold">Discovery</h2>
           <div class="grid grid-cols-3 gap-4">
             <label class="block">
@@ -112,7 +112,7 @@ export default function SettingsView() {
                 min="1"
                 value={settings.perSource}
                 onInput={numInput("perSource")}
-                class="w-full rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors"
+                class="surface-input w-full px-3 py-2 text-sm outline-none"
               />
               <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">Max docs per source per sub-query</p>
             </label>
@@ -123,7 +123,7 @@ export default function SettingsView() {
                 min="1"
                 value={settings.maxTotal}
                 onInput={numInput("maxTotal")}
-                class="w-full rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors"
+                class="surface-input w-full px-3 py-2 text-sm outline-none"
               />
               <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">Hard cap across all sources</p>
             </label>
@@ -135,7 +135,7 @@ export default function SettingsView() {
                 max="32"
                 value={settings.concurrency}
                 onInput={numInput("concurrency")}
-                class="w-full rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors"
+                class="surface-input w-full px-3 py-2 text-sm outline-none"
               />
               <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">Higher = faster but more rate limits</p>
             </label>
@@ -143,7 +143,7 @@ export default function SettingsView() {
         </section>
 
         {/* AI Models */}
-        <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+        <section class="surface-raised p-5">
           <div class="mb-3 flex items-center gap-2">
             <Sparkles size={14} class="text-[var(--color-primary)]" />
             <h2 class="text-sm font-semibold">AI Models</h2>
@@ -176,7 +176,7 @@ export default function SettingsView() {
         </section>
 
         {/* Ranking */}
-        <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+        <section class="surface-raised p-5">
           <h2 class="mb-1 text-sm font-semibold">Ranking</h2>
           <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
             Cross-source dedup, TF-IDF, and Reciprocal Rank Fusion are always on.
@@ -229,7 +229,7 @@ export default function SettingsView() {
         </section>
 
         {/* Library folder */}
-        <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+        <section class="surface-raised p-5">
           <h2 class="mb-3 text-sm font-semibold">Library Folder</h2>
           <label>
             <span class="sr-only">Library folder path</span>
@@ -240,13 +240,13 @@ export default function SettingsView() {
                 setSettings("libraryRoot", e.currentTarget.value);
                 saveSettings();
               }}
-              class="w-full rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 font-mono text-xs outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors"
+              class="surface-input w-full px-3 py-2 font-mono text-xs outline-none"
             />
           </label>
         </section>
 
         {/* SearXNG */}
-        <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+        <section class="surface-raised p-5">
           <h2 class="mb-1 text-sm font-semibold">Search Infrastructure</h2>
           <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
             SearXNG is an optional, privacy-respecting metasearch engine. The app
@@ -257,7 +257,7 @@ export default function SettingsView() {
             <button
               onClick={handleSetupSearx}
               disabled={settingUpSearx()}
-              class="flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-medium hover:bg-[var(--color-accent)] transition-colors disabled:opacity-50"
+              class="btn-tactile flex items-center gap-2 px-4 py-2 text-sm font-medium"
             >
               <Show when={settingUpSearx()} fallback={<Server size={14} />}>
                 <Loader2 size={14} class="animate-spin" />
@@ -275,7 +275,7 @@ export default function SettingsView() {
                   saveSettings();
                 }}
                 placeholder="http://localhost:8080"
-                class="w-full rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 font-mono text-xs outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors"
+                class="surface-input w-full px-3 py-2 font-mono text-xs outline-none"
               />
               <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
                 Local or remote SearXNG instance
@@ -358,7 +358,7 @@ export default function SettingsView() {
         </section>
 
         {/* Run log */}
-        <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+        <section class="surface-raised p-5">
           <h2 class="mb-1 text-sm font-semibold">Run Log</h2>
           <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
             Every query, source error, and download outcome is logged here.
@@ -372,7 +372,7 @@ export default function SettingsView() {
               <div class="space-y-3">
                 <code
                   title={info().path}
-                  class="block truncate rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)] px-3 py-2 font-mono text-[11px]"
+                  class="surface-pressed-sm block truncate px-3 py-2 font-mono text-[11px]"
                 >
                   {info().path}
                 </code>
@@ -383,7 +383,7 @@ export default function SettingsView() {
                   <button
                     onClick={() => api.revealInFinder(info().path)}
                     disabled={!info().exists}
-                    class="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-accent)] transition-colors disabled:opacity-40"
+                    class="btn-tactile flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium"
                   >
                     <FolderOpen size={12} />
                     Show in Finder

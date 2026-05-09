@@ -15,7 +15,7 @@ export default function ModelStatusBadge() {
     <Show when={activities().length > 0}>
       <div class="flex items-center gap-1.5">
         {activities().map((a) => (
-          <span class="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-0.5 text-[10px] font-medium">
+          <span class="surface-pressed-sm inline-flex items-center gap-1 px-2.5 py-0.5 text-[10px] font-medium animate-pulse-soft" style={{ "border-radius": "var(--radius-pill)" }}>
             <Show
               when={a.status === "embedding"}
               fallback={
