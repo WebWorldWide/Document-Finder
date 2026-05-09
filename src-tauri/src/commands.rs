@@ -10,6 +10,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_util::sync::CancellationToken;
 
+use crate::ai;
+use crate::ai::registry;
+use crate::ai::state::{snapshot, AiState, ModelInfo, ModelStatus};
 use crate::engine::db::init_db;
 use crate::engine::runlog;
 use crate::engine::{run_pipeline, RunRequest};
@@ -17,6 +20,7 @@ use crate::events::{
     ErrorPayload, SearxngLogPayload, SearxngStagePayload, EV_ERROR, EV_SEARXNG_LOG,
     EV_SEARXNG_STAGE,
 };
+use crate::sources::make_client;
 
 #[derive(Default)]
 pub struct AppState {
@@ -686,4 +690,90 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
+}
+
+// =============================================================================
+// AI Model Manager commands (E1)
+// =============================================================================
+
+#[tauri::command]
+pub fn list_models(app: AppHandle, state: State<'_, AiState>) -> Result<Vec<ModelInfo>, String> {
+    Ok(snapshot(&app, &state))
+}
+
+#[tauri::command]
+pub async fn download_model(
+    app: AppHandle,
+    state: State<'_, AiState>,
+    model_id: String,
+) -> Result<(), String> {
+    let entry = registry::find(&model_id)
+        .ok_or_else(|| format!("unknown model id: {}", model_id))?;
+
+    if state.is_downloading(&model_id) {
+        return Err(format!("model {} is already downloading", model_id));
+    }
+
+    let token = tokio_util::sync::CancellationToken::new();
+    state.register_cancel(&model_id, token.clone());
+    state.set_status(
+        &model_id,
+        ModelStatus::Downloading {
+            downloaded: 0,
+            total: entry.approx_bytes,
+        },
+    );
+
+    let client = std::sync::Arc::new(make_client());
+    let app_for_task = app.clone();
+    let model_id_for_task = model_id.clone();
+
+    // Spawn so the command returns immediately; progress streams via events.
+    tokio::spawn(async move {
+        let result = ai::downloader::download(app_for_task.clone(), client, entry, token).await;
+        if let Some(state) = app_for_task.try_state::<AiState>() {
+            state.clear_cancel(&model_id_for_task);
+            match &result {
+                Ok(_) => state.set_status(&model_id_for_task, ModelStatus::Ready),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg == "cancelled" {
+                        state.set_status(&model_id_for_task, ModelStatus::Cancelled);
+                    } else {
+                        state.set_status(&model_id_for_task, ModelStatus::Failed { msg });
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cancel_model_download(state: State<'_, AiState>, model_id: String) -> Result<(), String> {
+    state.cancel_download(&model_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_model(
+    app: AppHandle,
+    state: State<'_, AiState>,
+    model_id: String,
+) -> Result<(), String> {
+    let entry = registry::find(&model_id)
+        .ok_or_else(|| format!("unknown model id: {}", model_id))?;
+
+    // Cancel any in-flight download first.
+    state.cancel_download(&model_id);
+
+    let dir = ai::storage::model_dir(&app, entry).map_err(|e| e.to_string())?;
+    if dir.exists() {
+        tokio::fs::remove_dir_all(&dir)
+            .await
+            .map_err(|e| format!("failed to delete {}: {}", dir.display(), e))?;
+    }
+    state.set_status(&model_id, ModelStatus::NotDownloaded);
+    Ok(())
 }
