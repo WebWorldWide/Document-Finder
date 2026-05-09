@@ -1,4 +1,6 @@
 pub mod arxiv;
+pub mod bing_html;
+pub mod brave_html;
 pub mod doaj;
 pub mod duckduckgo;
 pub mod gutenberg;
@@ -6,6 +8,7 @@ pub mod internet_archive;
 pub mod openalex;
 pub mod searxng;
 pub mod semantic_scholar;
+pub mod web_common;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -29,6 +32,8 @@ pub const SOURCE_IDS: &[&str] = &[
     "doaj",
     "gutenberg",
     "web",
+    "brave",
+    "bing",
     "searxng",
 ];
 
@@ -105,6 +110,8 @@ pub fn build_source(
         "doaj" => Some(Box::new(doaj::DOAJSource::new(client))),
         "gutenberg" => Some(Box::new(gutenberg::GutenbergSource::new(client))),
         "web" => Some(Box::new(duckduckgo::DuckDuckGoSource::new(client))),
+        "brave" => Some(Box::new(brave_html::BraveHtmlSource::new(client))),
+        "bing" => Some(Box::new(bing_html::BingHtmlSource::new(client))),
         "searxng" => {
             let raw = _options.instance_url
                 .unwrap_or_else(|| "http://localhost:8080".to_string());

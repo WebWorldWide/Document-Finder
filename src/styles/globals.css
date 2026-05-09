@@ -30,6 +30,8 @@
   --color-source-doaj: oklch(0.5 0.18 140);
   --color-source-gutenberg: oklch(0.5 0.18 50);
   --color-source-web: oklch(0.5 0.18 250);
+  --color-source-brave: oklch(0.55 0.2 30);
+  --color-source-bing: oklch(0.5 0.16 180);
   --color-source-searxng: oklch(0.5 0.18 290);
 
   --color-success: oklch(0.55 0.16 145);

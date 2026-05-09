@@ -24,7 +24,9 @@ export const SOURCE_LABELS: Record<string, string> = {
   internet_archive: "Internet Archive",
   doaj: "DOAJ",
   gutenberg: "Gutenberg",
-  web: "Web",
+  web: "DuckDuckGo",
+  brave: "Brave",
+  bing: "Bing",
   searxng: "SearXNG",
 };
 
@@ -36,6 +38,8 @@ export const ALL_SOURCES = [
   "doaj",
   "gutenberg",
   "web",
+  "brave",
+  "bing",
   "searxng",
 ] as const;
 
