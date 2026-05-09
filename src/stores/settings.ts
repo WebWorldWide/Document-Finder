@@ -38,6 +38,7 @@ export const [settings, setSettings] = createStore({
   concurrency:     posInt(saved.concurrency, 8),
   selectedSources: safeSources(saved.selectedSources),
   searxngUrl:      safeUrl(saved.searxngUrl, "http://localhost:8080"),
+  useCitationGraph: typeof saved.useCitationGraph === "boolean" ? saved.useCitationGraph : false,
 });
 
 if (!settings.libraryRoot) {

@@ -294,6 +294,7 @@ async function startSearch(query: string) {
       max_total: settings.maxTotal,
       concurrency: settings.concurrency,
       extract: true,
+      use_citation_graph: settings.useCitationGraph,
       source_options: {
         searxng: { instance_url: settings.searxngUrl },
       },

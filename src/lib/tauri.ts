@@ -19,6 +19,7 @@ export interface RunRequest {
   max_total?: number;
   concurrency?: number;
   extract?: boolean;
+  use_citation_graph?: boolean;
   source_options?: Record<string, { instance_url?: string }>;
 }
 

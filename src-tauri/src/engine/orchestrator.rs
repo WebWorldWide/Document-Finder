@@ -10,6 +10,7 @@ use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
+use super::citation_graph::enrich_with_citation_graph;
 use super::db::DbManager;
 use super::dedup::Deduplicator;
 use super::downloader::{download, DownloadOutcome};
@@ -33,6 +34,11 @@ pub struct RunRequest {
     pub concurrency: usize,
     #[serde(default = "default_extract")]
     pub extract: bool,
+    /// When true, after Tier 1 ranking we enrich the top candidates with
+    /// Semantic Scholar citation/reference graph data and boost candidates
+    /// that are connected to other top candidates. Adds API latency.
+    #[serde(default)]
+    pub use_citation_graph: bool,
     #[serde(default)]
     pub source_options: HashMap<String, SourceOptions>,
 }
@@ -267,7 +273,17 @@ pub async fn run_pipeline(
     // Rank everything we found, then flag rejects so the UI can show greyed
     // entries with explanations rather than silently dropping low-relevance
     // candidates the way the old `relevance_score == 0` filter did.
-    let ranked: Vec<RankedDoc> = flag_rejects(rank_candidates(&all_keywords, merged));
+    let mut ranked: Vec<RankedDoc> = flag_rejects(rank_candidates(&all_keywords, merged));
+
+    // Tier 4: optional citation-graph enrichment. Boosts papers that are
+    // referenced or cited by other top-scoring candidates. Off by default
+    // because each enabled run hits Semantic Scholar's rate limits hard.
+    if req.use_citation_graph && !cancel.is_cancelled() {
+        ranked = enrich_with_citation_graph(client.clone(), ranked).await;
+        // Re-flag rejects: scores changed, but the absolute TF-IDF cutoff
+        // didn't, so this is mostly a no-op. Cheap to be defensive though.
+        ranked = flag_rejects(ranked);
+    }
 
     // Emit one EV_CANDIDATE per ranked doc with full scoring breakdown +
     // reject_reason. This is what the multi-lane UI consumes for the

@@ -138,6 +138,31 @@ export default function SettingsView() {
           </div>
         </section>
 
+        {/* Ranking — Tier 4 toggle */}
+        <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+          <h2 class="mb-1 text-sm font-semibold">Ranking</h2>
+          <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
+            Cross-source dedup, TF-IDF, and Reciprocal Rank Fusion are always on.
+            Citation-graph reasoning queries Semantic Scholar for the top
+            candidates' references and citations and boosts papers that other
+            top results point to. Adds API calls — slower per run, but surfaces
+            foundational works your query terms wouldn't find on their own.
+          </p>
+          <label class="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={settings.useCitationGraph}
+              onChange={(e) => {
+                setSettings("useCitationGraph", e.currentTarget.checked);
+                saveSettings();
+              }}
+              class="h-3.5 w-3.5 rounded border-[var(--color-border)]"
+            />
+            <span class="font-medium">Use citation-graph reasoning</span>
+            <span class="text-[10px] text-[var(--color-muted-foreground)]">(slower, deeper)</span>
+          </label>
+        </section>
+
         {/* Library folder */}
         <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
           <h2 class="mb-3 text-sm font-semibold">Library Folder</h2>

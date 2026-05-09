@@ -1,4 +1,5 @@
 pub mod authority;
+pub mod citation_graph;
 pub mod db;
 pub mod dedup;
 pub mod downloader;
