@@ -1,14 +1,43 @@
-import { createSignal, onMount, Show } from "solid-js";
+import { createSignal, onMount, Show, For } from "solid-js";
 import { Server, FolderOpen, FileText, Loader2, CheckCircle2 } from "lucide-solid";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api, type LogInfo } from "@/lib/tauri";
 import { settings, setSettings, saveSettings } from "@/stores/settings";
 import { formatBytes } from "@/lib/utils";
+
+interface SearxLogLine {
+  stream: "stdout" | "stderr" | "info";
+  line: string;
+}
+interface SearxStage {
+  stage:
+    | "checking_docker"
+    | "checking_port"
+    | "pulling"
+    | "starting"
+    | "waiting_health"
+    | "ok"
+    | "failed";
+  detail?: string | null;
+}
+
+const STAGE_LABEL: Record<SearxStage["stage"], string> = {
+  checking_docker: "Checking Docker…",
+  checking_port: "Checking port availability…",
+  pulling: "Pulling SearXNG image…",
+  starting: "Starting container…",
+  waiting_health: "Waiting for JSON health check…",
+  ok: "Healthy",
+  failed: "Failed",
+};
 
 export default function SettingsView() {
   const [logInfo, setLogInfo] = createSignal<LogInfo | null>(null);
   const [settingUpSearx, setSettingUpSearx] = createSignal(false);
   const [searxResult, setSearxResult] = createSignal<string | null>(null);
   const [searxError, setSearxError] = createSignal<string | null>(null);
+  const [searxLog, setSearxLog] = createSignal<SearxLogLine[]>([]);
+  const [searxStage, setSearxStage] = createSignal<SearxStage | null>(null);
 
   onMount(async () => {
     setLogInfo(await api.runLogInfo().catch(() => null));
@@ -18,6 +47,25 @@ export default function SettingsView() {
     setSettingUpSearx(true);
     setSearxResult(null);
     setSearxError(null);
+    setSearxLog([]);
+    setSearxStage(null);
+
+    const unsubs: UnlistenFn[] = [];
+    unsubs.push(
+      await listen<SearxLogLine>("df:searxng_setup_log", (ev) => {
+        setSearxLog((prev) => {
+          const next = prev.concat(ev.payload);
+          // Cap to last 500 lines so the modal doesn't grow unbounded.
+          return next.length > 500 ? next.slice(next.length - 500) : next;
+        });
+      }),
+    );
+    unsubs.push(
+      await listen<SearxStage>("df:searxng_setup_stage", (ev) => {
+        setSearxStage(ev.payload);
+      }),
+    );
+
     try {
       const output = await api.setupSearXNG();
       setSearxResult(output);
@@ -30,6 +78,7 @@ export default function SettingsView() {
       setSearxError(String(e));
     } finally {
       setSettingUpSearx(false);
+      unsubs.forEach((u) => u());
     }
   }
 
@@ -110,8 +159,9 @@ export default function SettingsView() {
         <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
           <h2 class="mb-1 text-sm font-semibold">Search Infrastructure</h2>
           <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
-            SearXNG is a privacy-respecting metasearch engine. With Docker installed,
-            one click spins up a local instance and enables it as a search source.
+            SearXNG is an optional, privacy-respecting metasearch engine. The app
+            already searches the web via DuckDuckGo, Brave, and Bing scrapers
+            without any setup — SearXNG adds dozens more engines if you have Docker.
           </p>
           <div class="space-y-4">
             <button
@@ -142,7 +192,57 @@ export default function SettingsView() {
               </p>
             </label>
 
-            <Show when={searxResult() !== null}>
+            <Show when={searxStage()}>
+              {(stage) => (
+                <div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)] p-3 text-xs">
+                  <div class="flex items-center gap-2 font-medium">
+                    <Show
+                      when={stage().stage !== "ok" && stage().stage !== "failed"}
+                      fallback={
+                        <Show
+                          when={stage().stage === "ok"}
+                          fallback={<span class="text-[var(--color-destructive)]">●</span>}
+                        >
+                          <CheckCircle2 size={12} style={{ color: "var(--color-success)" }} />
+                        </Show>
+                      }
+                    >
+                      <Loader2 size={12} class="animate-spin" />
+                    </Show>
+                    <span>{STAGE_LABEL[stage().stage]}</span>
+                    <Show when={stage().detail}>
+                      <span class="font-mono text-[10px] text-[var(--color-muted-foreground)]">
+                        {stage().detail}
+                      </span>
+                    </Show>
+                  </div>
+                </div>
+              )}
+            </Show>
+
+            <Show when={searxLog().length > 0}>
+              <div class="rounded-lg border border-[var(--color-border)] bg-black/90 p-2">
+                <pre class="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[10px] text-green-400/90 leading-snug">
+                  <For each={searxLog()}>
+                    {(line) => (
+                      <div
+                        class={
+                          line.stream === "stderr"
+                            ? "text-red-300/90"
+                            : line.stream === "info"
+                            ? "text-cyan-300/80"
+                            : ""
+                        }
+                      >
+                        {line.line}
+                      </div>
+                    )}
+                  </For>
+                </pre>
+              </div>
+            </Show>
+
+            <Show when={searxResult() !== null && !searxError()}>
               <div class="flex items-start gap-2 rounded-lg border p-3"
                 style={{ "border-color": "color-mix(in oklch, var(--color-success) 30%, transparent)", "background-color": "var(--color-success-bg)" }}
               >
@@ -161,7 +261,7 @@ export default function SettingsView() {
             <Show when={searxError()}>
               <div class="rounded-lg border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 p-3 text-xs text-[var(--color-destructive)]">
                 <p class="font-medium">Setup failed</p>
-                <p class="mt-0.5 opacity-80">{searxError()}</p>
+                <p class="mt-0.5 opacity-80 whitespace-pre-wrap">{searxError()}</p>
               </div>
             </Show>
           </div>

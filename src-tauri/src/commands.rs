@@ -3,14 +3,20 @@
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, State};
+use tauri::path::BaseDirectory;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_util::sync::CancellationToken;
 
 use crate::engine::db::init_db;
 use crate::engine::runlog;
 use crate::engine::{run_pipeline, RunRequest};
-use crate::events::{ErrorPayload, EV_ERROR};
+use crate::events::{
+    ErrorPayload, SearxngLogPayload, SearxngStagePayload, EV_ERROR, EV_SEARXNG_LOG,
+    EV_SEARXNG_STAGE,
+};
 
 #[derive(Default)]
 pub struct AppState {
@@ -390,84 +396,252 @@ pub fn run_log_tail(max: Option<usize>) -> Result<Vec<serde_json::Value>, String
     Ok(runlog::read_tail(max.unwrap_or(200)))
 }
 
+/// Container name we own. Anything with this name gets removed on setup;
+/// users running their own SearXNG should use a different name.
+const SEARXNG_CONTAINER: &str = "document-finder-searxng";
+
+/// Pick a host port for SearXNG. Tries 8080 first; if it's bound, walks up
+/// from 8888 until one is free. Returns the first port that `bind` accepts.
+async fn find_free_port() -> Result<u16, String> {
+    use tokio::net::TcpListener;
+    let candidates: Vec<u16> = std::iter::once(8080)
+        .chain(8888..=8910)
+        .collect();
+    for port in candidates {
+        if TcpListener::bind(("127.0.0.1", port)).await.is_ok() {
+            return Ok(port);
+        }
+    }
+    Err("no free local port found in 8080, 8888..=8910".into())
+}
+
+fn emit_log(app: &AppHandle, stream: &str, line: impl Into<String>) {
+    let _ = app.emit(
+        EV_SEARXNG_LOG,
+        SearxngLogPayload {
+            stream: stream.to_string(),
+            line: line.into(),
+        },
+    );
+}
+
+fn emit_stage(app: &AppHandle, stage: &str, detail: Option<String>) {
+    let _ = app.emit(
+        EV_SEARXNG_STAGE,
+        SearxngStagePayload {
+            stage: stage.to_string(),
+            detail,
+        },
+    );
+}
+
+/// Spawn `docker <args>` and stream stdout+stderr line-by-line to the frontend.
+/// Returns Ok(exit_code) regardless of success — caller decides what's fatal.
+async fn run_docker_streaming(
+    app: &AppHandle,
+    args: &[&str],
+) -> Result<std::process::ExitStatus, String> {
+    emit_log(app, "info", format!("$ docker {}", args.join(" ")));
+
+    let mut cmd = tokio::process::Command::new("docker");
+    cmd.args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to spawn docker: {}", e))?;
+
+    let stdout = child.stdout.take().ok_or("no stdout")?;
+    let stderr = child.stderr.take().ok_or("no stderr")?;
+
+    let app_out = app.clone();
+    let stdout_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            // docker pull uses `\r` for in-place progress; the `lines` iterator
+            // would treat them as a single huge line. Split on `\r` to get one
+            // event per progress update.
+            for chunk in line.split('\r') {
+                let trimmed = chunk.trim();
+                if !trimmed.is_empty() {
+                    emit_log(&app_out, "stdout", trimmed.to_string());
+                }
+            }
+        }
+    });
+
+    let app_err = app.clone();
+    let stderr_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            for chunk in line.split('\r') {
+                let trimmed = chunk.trim();
+                if !trimmed.is_empty() {
+                    emit_log(&app_err, "stderr", trimmed.to_string());
+                }
+            }
+        }
+    });
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("docker wait failed: {}", e))?;
+    let _ = stdout_task.await;
+    let _ = stderr_task.await;
+
+    Ok(status)
+}
+
+/// Verify SearXNG is actually serving JSON results — not just returning 200
+/// for the static home page. Default SearXNG ships with JSON disabled, so a
+/// container started without our settings.yml will pass a naive HTTP probe
+/// but reject every real query with 403. This is the silent failure mode
+/// the original `setup_searxng` exhibited.
+async fn searxng_json_health(http: &reqwest::Client, base_url: &str) -> Result<(), String> {
+    let url = format!("{}/search", base_url);
+    let resp = http
+        .get(&url)
+        .query(&[
+            ("q", "test"),
+            ("format", "json"),
+            ("categories", "general"),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("network error: {}", e))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(format!(
+            "GET {}?format=json returned HTTP {} — JSON output is likely disabled in settings.yml",
+            url, status
+        ));
+    }
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    let parsed: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("non-JSON response (bot-protection or limiter active?): {}", e))?;
+    if parsed.get("results").is_none() {
+        return Err("JSON response missing `results` key".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
-pub async fn setup_searxng(_app: AppHandle) -> Result<String, String> {
-    // Verify Docker is installed and running.
+pub async fn setup_searxng(app: AppHandle) -> Result<String, String> {
+    // ---- Stage 1: Docker available? ---------------------------------------
+    emit_stage(&app, "checking_docker", None);
     let docker_info = tokio::process::Command::new("docker")
         .arg("info")
         .output()
         .await
-        .map_err(|_| "Docker is not installed. Install Docker Desktop from https://www.docker.com/products/docker-desktop/".to_string())?;
-
+        .map_err(|_| {
+            emit_stage(&app, "failed", Some("docker not installed".into()));
+            "Docker is not installed. Install Docker Desktop from https://www.docker.com/products/docker-desktop/".to_string()
+        })?;
     if !docker_info.status.success() {
-        return Err("Docker is not running. Please start Docker Desktop and try again.".to_string());
+        emit_stage(&app, "failed", Some("docker daemon not running".into()));
+        return Err("Docker is not running. Please start Docker Desktop and try again.".into());
     }
 
-    // Short-circuit if container is already running.
-    if let Ok(out) = tokio::process::Command::new("docker")
-        .args(["inspect", "--format", "{{.State.Running}}", "document-finder-searxng"])
-        .output()
-        .await
-    {
-        if String::from_utf8_lossy(&out.stdout).trim() == "true" {
-            return Ok("SearXNG is already running.\nSEARXNG_URL=http://localhost:8080".to_string());
-        }
+    // ---- Stage 2: Resolve mounted settings.yml ----------------------------
+    let settings_path = app
+        .path()
+        .resolve("resources/searxng-settings.yml", BaseDirectory::Resource)
+        .map_err(|e| {
+            emit_stage(&app, "failed", Some(format!("resource resolve: {}", e)));
+            format!("could not locate bundled searxng-settings.yml: {}", e)
+        })?;
+    if !settings_path.exists() {
+        emit_stage(&app, "failed", Some("settings.yml missing from bundle".into()));
+        return Err(format!(
+            "bundled searxng-settings.yml not found at {}",
+            settings_path.display()
+        ));
+    }
+    let settings_path_str = settings_path.to_string_lossy().to_string();
+    emit_log(&app, "info", format!("config: {}", settings_path_str));
+
+    // ---- Stage 3: Pick free host port -------------------------------------
+    emit_stage(&app, "checking_port", None);
+    let host_port = find_free_port().await?;
+    emit_log(&app, "info", format!("host port: {}", host_port));
+
+    // ---- Stage 4: Pull image ----------------------------------------------
+    emit_stage(&app, "pulling", None);
+    let pull_status = run_docker_streaming(&app, &["pull", "searxng/searxng:latest"]).await?;
+    if !pull_status.success() {
+        emit_stage(&app, "failed", Some("docker pull failed".into()));
+        return Err("docker pull failed — see modal log for details".into());
     }
 
-    // Pull the image.
-    let pull = tokio::process::Command::new("docker")
-        .args(["pull", "searxng/searxng:latest"])
-        .output()
-        .await
-        .map_err(|e| format!("docker pull failed: {}", e))?;
+    // ---- Stage 5: Remove any stale container ------------------------------
+    let _ = run_docker_streaming(&app, &["rm", "-f", SEARXNG_CONTAINER]).await;
 
-    if !pull.status.success() {
-        let stderr = String::from_utf8_lossy(&pull.stderr).to_string();
-        return Err(format!("docker pull failed: {}", stderr.trim()));
-    }
-
-    // Remove any stale container.
-    let _ = tokio::process::Command::new("docker")
-        .args(["rm", "-f", "document-finder-searxng"])
-        .output()
-        .await;
-
-    // Start the container.
-    let run = tokio::process::Command::new("docker")
-        .args([
-            "run", "-d",
-            "--name", "document-finder-searxng",
-            "--restart", "unless-stopped",
-            "-p", "8080:8080",
+    // ---- Stage 6: Start container with mounted settings.yml ---------------
+    emit_stage(&app, "starting", Some(format!("port {}", host_port)));
+    let port_arg = format!("{}:8080", host_port);
+    let mount_arg = format!("{}:/etc/searxng/settings.yml:ro", settings_path_str);
+    let run_status = run_docker_streaming(
+        &app,
+        &[
+            "run",
+            "-d",
+            "--name",
+            SEARXNG_CONTAINER,
+            "--restart",
+            "unless-stopped",
+            "-p",
+            &port_arg,
+            "-v",
+            &mount_arg,
             "searxng/searxng:latest",
-        ])
-        .output()
-        .await
-        .map_err(|e| format!("docker run failed: {}", e))?;
-
-    if !run.status.success() {
-        let stderr = String::from_utf8_lossy(&run.stderr).to_string();
-        return Err(format!("docker run failed: {}", stderr.trim()));
+        ],
+    )
+    .await?;
+    if !run_status.success() {
+        emit_stage(&app, "failed", Some("docker run failed".into()));
+        return Err("docker run failed — see modal log for details".into());
     }
 
-    // Wait up to 30 s for SearXNG to respond using reqwest (avoids curl PATH dependency).
+    // ---- Stage 7: Wait for JSON-capable health ----------------------------
+    emit_stage(&app, "waiting_health", None);
+    let base_url = format!("http://localhost:{}", host_port);
     let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(4))
         .build()
         .unwrap_or_default();
-    for _ in 0..15 {
+
+    let mut last_err = String::from("never reached");
+    for attempt in 1..=20 {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        let ok = http.get("http://localhost:8080/")
-            .send()
-            .await
-            .map(|r| r.status().is_success() || r.status().as_u16() < 500)
-            .unwrap_or(false);
-        if ok {
-            return Ok("SearXNG started successfully.\nSEARXNG_URL=http://localhost:8080".to_string());
+        match searxng_json_health(&http, &base_url).await {
+            Ok(()) => {
+                emit_stage(&app, "ok", Some(base_url.clone()));
+                let msg = format!(
+                    "SearXNG is healthy and serving JSON.\nSEARXNG_URL={}",
+                    base_url
+                );
+                emit_log(&app, "info", msg.clone());
+                return Ok(msg);
+            }
+            Err(e) => {
+                last_err = e.clone();
+                emit_log(
+                    &app,
+                    "info",
+                    format!("health check {}: {}", attempt, e),
+                );
+            }
         }
     }
 
-    Ok("SearXNG container started — it may need a few more seconds to be fully ready.\nSEARXNG_URL=http://localhost:8080".to_string())
+    emit_stage(&app, "failed", Some(last_err.clone()));
+    Err(format!(
+        "SearXNG container is up but JSON health check never passed.\nLast error: {}\nThe container is still running on {} — you can `docker logs {}` for details.",
+        last_err, base_url, SEARXNG_CONTAINER
+    ))
 }
 
 #[tauri::command]

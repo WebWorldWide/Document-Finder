@@ -39,6 +39,9 @@
     ],
     "category": "Productivity",
     "shortDescription": "Find documents for AI conversational awareness",
-    "longDescription": "Search open-access sources, download PDFs/EPUBs/HTML/text in parallel, and bundle them into AI-ready context with full-text BM25 search."
+    "longDescription": "Search open-access sources, download PDFs/EPUBs/HTML/text in parallel, and bundle them into AI-ready context with full-text BM25 search.",
+    "resources": [
+      "resources/searxng-settings.yml"
+    ]
   }
 }

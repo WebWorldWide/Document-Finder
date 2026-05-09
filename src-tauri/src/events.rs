@@ -22,6 +22,10 @@ pub const EV_COMPLETE: &str = "df:complete";
 pub const EV_ERROR: &str = "df:error";
 pub const EV_FILTERED: &str = "df:filtered";
 
+// SearXNG setup streaming events
+pub const EV_SEARXNG_LOG: &str = "df:searxng_setup_log";
+pub const EV_SEARXNG_STAGE: &str = "df:searxng_setup_stage";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct KeywordsPayload {
     pub query: String,
@@ -121,4 +125,19 @@ pub struct FilteredPayload {
 #[derive(Debug, Clone, Serialize)]
 pub struct ErrorPayload {
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearxngLogPayload {
+    /// "stdout" | "stderr" | "info"
+    pub stream: String,
+    pub line: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearxngStagePayload {
+    /// One of: "checking_docker", "checking_port", "pulling", "starting",
+    /// "waiting_health", "ok", "failed".
+    pub stage: String,
+    pub detail: Option<String>,
 }

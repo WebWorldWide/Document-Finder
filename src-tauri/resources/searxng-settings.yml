@@ -1,0 +1,35 @@
+# SearXNG configuration mounted into the document-finder-searxng container.
+#
+# The Document Finder Rust source (src-tauri/src/sources/searxng.rs) requests
+# results with `?format=json`. SearXNG's default settings.yml ships with JSON
+# disabled, so requests return 403 even though the home page returns 200 —
+# this is the silent-failure mode that motivated the rewrite of setup_searxng.
+#
+# `use_default_settings: true` inherits the upstream defaults (engines, UI,
+# locales, ...). We override only what's required for local programmatic use.
+
+use_default_settings: true
+
+server:
+  # Required by SearXNG; any non-empty value works for a localhost-only
+  # container that's not exposed to the internet.
+  secret_key: "document-finder-local-only-not-a-secret"
+  # Bot-detection limiter rejects rapid programmatic queries with 429.
+  # Off here because the only client is the local desktop app.
+  limiter: false
+  image_proxy: false
+  # Trust requests from any origin since we're only bound to localhost.
+  bind_address: "0.0.0.0"
+  port: 8080
+
+search:
+  # Enabling JSON is the whole reason this file exists.
+  formats:
+    - html
+    - json
+  # Safe-search permissive — researchers query for primary sources that
+  # SearXNG's default "moderate" filter sometimes drops.
+  safe_search: 0
+
+ui:
+  static_use_hash: true
