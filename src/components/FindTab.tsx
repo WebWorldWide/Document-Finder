@@ -111,12 +111,15 @@ export default function FindTab() {
                 return (
                   <button
                     onClick={() => toggleSource(src)}
-                    class="pill-toggle px-2.5 py-0.5 text-[10px] font-medium"
+                    class="tag-pill px-2.5 py-0.5 text-[10px] font-medium"
                     classList={{ "is-active": active() }}
                     style={
                       active()
-                        ? { color: `var(--color-source-${src})` }
-                        : {}
+                        ? {
+                            "background-color": `var(--color-source-${src})`,
+                            color: "white",
+                          }
+                        : { color: "var(--color-foreground-muted)" }
                     }
                   >
                     {SOURCE_LABELS[src]}
@@ -350,24 +353,23 @@ function FullHeader(props: {
         </For>
       </div>
 
-      {/* Source toggles — pressed when active with source color tint */}
-      <div class="flex flex-wrap gap-1.5">
+      {/* Source toggles — flat outlined tags; active fills with source color */}
+      <div class="flex flex-wrap gap-2">
         <For each={ALL_SOURCES}>
           {(src) => {
             const active = () => settings.selectedSources.includes(src);
             return (
               <button
                 onClick={() => toggleSource(src)}
-                class="pill-toggle px-3 py-1 text-[11px] font-medium"
-                classList={{
-                  "is-active": active(),
-                }}
+                class="tag-pill px-3 py-1 text-[11px] font-medium"
+                classList={{ "is-active": active() }}
                 style={
                   active()
                     ? {
-                        color: `var(--color-source-${src})`,
+                        "background-color": `var(--color-source-${src})`,
+                        color: "white",
                       }
-                    : {}
+                    : { color: "var(--color-foreground-muted)" }
                 }
               >
                 {SOURCE_LABELS[src]}

@@ -20,7 +20,20 @@ use crate::events::{
     ErrorPayload, SearxngLogPayload, SearxngStagePayload, EV_ERROR, EV_SEARXNG_LOG,
     EV_SEARXNG_STAGE,
 };
-use crate::sources::make_client;
+use crate::sources::USER_AGENT;
+
+/// HTTP client tuned for huge model downloads — connect_timeout fails fast on
+/// dead URLs but there is NO overall .timeout, because the default
+/// `make_client()` uses 60s which would silently kill a 2GB download
+/// mid-stream.
+fn make_model_download_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .connect_timeout(std::time::Duration::from_secs(30))
+        // Intentionally NO .timeout — model files take many minutes.
+        .build()
+        .expect("model http client")
+}
 
 #[derive(Default)]
 pub struct AppState {
@@ -724,7 +737,9 @@ pub async fn download_model(
         },
     );
 
-    let client = std::sync::Arc::new(make_client());
+    // Use the dedicated no-timeout client; the shared make_client() has a
+    // 60s overall timeout that silently kills 2 GB downloads mid-stream.
+    let client = std::sync::Arc::new(make_model_download_client());
     let app_for_task = app.clone();
     let model_id_for_task = model_id.clone();
 
@@ -775,5 +790,31 @@ pub async fn delete_model(
             .map_err(|e| format!("failed to delete {}: {}", dir.display(), e))?;
     }
     state.set_status(&model_id, ModelStatus::NotDownloaded);
+    Ok(())
+}
+
+// =============================================================================
+// Library delete (F3)
+// =============================================================================
+
+/// Permanently delete a library folder. Same security envelope as
+/// `export_library_zip` — the path must canonicalize to something inside the
+/// user's Documents directory, so a malicious or misconfigured caller can't
+/// rm-rf arbitrary host paths.
+#[tauri::command]
+pub async fn delete_library(path: String) -> Result<(), String> {
+    let p = PathBuf::from(&path)
+        .canonicalize()
+        .map_err(|e| format!("invalid path: {}", e))?;
+    if !p.is_dir() {
+        return Err("not a folder".into());
+    }
+    let docs = dirs::document_dir().ok_or("cannot resolve Documents directory")?;
+    if !p.starts_with(&docs) {
+        return Err("library must be inside your Documents directory".into());
+    }
+    tokio::fs::remove_dir_all(&p)
+        .await
+        .map_err(|e| format!("delete failed: {}", e))?;
     Ok(())
 }

@@ -247,26 +247,19 @@ export default function SettingsView() {
 
         {/* SearXNG */}
         <section class="surface-raised p-5">
-          <h2 class="mb-1 text-sm font-semibold">Search Infrastructure</h2>
+          <h2 class="mb-1 text-sm font-semibold">SearXNG (Metasearch)</h2>
           <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
-            SearXNG is an optional, privacy-respecting metasearch engine. The app
-            already searches the web via DuckDuckGo, Brave, and Bing scrapers
-            without any setup — SearXNG adds dozens more engines if you have Docker.
+            The app already searches the web via DuckDuckGo, Brave, Bing,
+            Mojeek, Marginalia, and Startpage with no setup. SearXNG aggregates
+            dozens more engines into a single endpoint. The easiest way to use
+            it is to point at a public instance — no Docker, no setup.
           </p>
           <div class="space-y-4">
-            <button
-              onClick={handleSetupSearx}
-              disabled={settingUpSearx()}
-              class="btn-tactile flex items-center gap-2 px-4 py-2 text-sm font-medium"
-            >
-              <Show when={settingUpSearx()} fallback={<Server size={14} />}>
-                <Loader2 size={14} class="animate-spin" />
-              </Show>
-              {settingUpSearx() ? "Setting up… (may take a few minutes)" : "Setup SearXNG with Docker"}
-            </button>
-
+            {/* PRIMARY: paste any public-instance URL or pick from a curated list */}
             <label class="block">
-              <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">SearXNG instance URL</span>
+              <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">
+                SearXNG instance URL
+              </span>
               <input
                 type="text"
                 value={settings.searxngUrl}
@@ -274,17 +267,87 @@ export default function SettingsView() {
                   setSettings("searxngUrl", e.currentTarget.value);
                   saveSettings();
                 }}
-                placeholder="http://localhost:8080"
+                placeholder="https://searx.be"
                 class="surface-input w-full px-3 py-2 font-mono text-xs outline-none"
               />
               <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
-                Local or remote SearXNG instance
+                Paste any public instance from{" "}
+                <a
+                  href="https://searx.space"
+                  target="_blank"
+                  rel="noreferrer"
+                  class="underline hover:text-[var(--color-primary)]"
+                >
+                  searx.space
+                </a>
+                {" "}— or pick one of the well-known public instances below.
               </p>
             </label>
 
+            <div class="flex flex-wrap gap-1.5">
+              <For
+                each={[
+                  "https://searx.be",
+                  "https://searx.tiekoetter.com",
+                  "https://search.disroot.org",
+                  "https://priv.au",
+                ]}
+              >
+                {(url) => {
+                  const active = () => settings.searxngUrl === url;
+                  return (
+                    <button
+                      onClick={() => {
+                        setSettings("searxngUrl", url);
+                        saveSettings();
+                      }}
+                      class="tag-pill px-2.5 py-0.5 text-[10px] font-mono"
+                      classList={{ "is-active": active() }}
+                      style={
+                        active()
+                          ? { "background-color": "var(--color-source-searxng)", color: "white" }
+                          : { color: "var(--color-foreground-muted)" }
+                      }
+                    >
+                      {url.replace("https://", "")}
+                    </button>
+                  );
+                }}
+              </For>
+            </div>
+
+            <p class="text-[10px] text-[var(--color-muted-foreground)] italic">
+              Public instances are run by third parties — uptime + speed vary.
+              Toggle the SearXNG source on in the Discover tab once a URL is set.
+            </p>
+
+            {/* SECONDARY: collapsed Docker setup for power users */}
+            <details class="surface-raised-subtle">
+              <summary class="cursor-pointer px-3 py-2 text-xs font-medium text-[var(--color-foreground-muted)] hover:text-[var(--color-foreground)]">
+                Advanced: spin up a local instance with Docker
+              </summary>
+              <div class="space-y-3 px-3 pb-3 pt-1">
+                <p class="text-[11px] text-[var(--color-foreground-muted)]">
+                  Requires Docker installed and running. Useful if your
+                  network blocks public instances or you need self-hosted
+                  privacy.
+                </p>
+                <button
+                  onClick={handleSetupSearx}
+                  disabled={settingUpSearx()}
+                  class="btn-tactile flex items-center gap-2 px-3 py-1.5 text-xs font-medium"
+                >
+                  <Show when={settingUpSearx()} fallback={<Server size={12} />}>
+                    <Loader2 size={12} class="animate-spin" />
+                  </Show>
+                  {settingUpSearx() ? "Setting up…" : "Setup SearXNG with Docker"}
+                </button>
+              </div>
+            </details>
+
             <Show when={searxStage()}>
               {(stage) => (
-                <div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)] p-3 text-xs">
+                <div class="surface-pressed-sm p-3 text-xs">
                   <div class="flex items-center gap-2 font-medium">
                     <Show
                       when={stage().stage !== "ok" && stage().stage !== "failed"}
