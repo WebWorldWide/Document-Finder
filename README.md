@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="src-tauri/icons/icon.png" alt="Document Finder Logo" width="128" height="128" />
+  <img src="src-tauri/icons/icon.png" alt="Document Finder Logo" width="160" height="160" />
   <h1>Document Finder v2</h1>
   <p><strong>A blazingly fast, cross-platform desktop application for discovering, downloading, and bundling open-access research for AI contexts.</strong></p>
 </div>
