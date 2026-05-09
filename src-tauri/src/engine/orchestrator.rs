@@ -1,19 +1,21 @@
 //! Core pipeline management for discovering, downloading, and bundling research documents.
 
-use dashmap::DashSet;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex as AsyncMutex, Semaphore};
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use super::db::DbManager;
+use super::dedup::Deduplicator;
 use super::downloader::{download, DownloadOutcome};
 use super::extract::extract_text;
-use super::query::{expand_query, parse_query, relevance_score, safe_folder};
+use super::query::{expand_query, parse_query, safe_folder};
+use super::ranking::{flag_rejects, rank_candidates, RankedDoc};
 use super::runlog;
 use crate::events::*;
 use crate::sources::{build_source, make_client, Document, SourceOptions, SOURCE_IDS};
@@ -84,14 +86,24 @@ pub async fn run_pipeline(
         // mgr (and its !Send Connection) is dropped here before any .await
     };
 
-    let seen_urls: DashSet<String> = DashSet::new();
+    // -------- Phase 1: parallel discovery -----------------------------------
+    //
+    // One spawned task per (sub_query, source). Each task drains its source
+    // stream and pushes raw discoveries into a shared async Deduplicator. The
+    // dedup happens incrementally so cross-source duplicates merge as they
+    // arrive (one paper from arXiv + Semantic Scholar collapses to a single
+    // candidate with both source attributions).
+    //
+    // EV_FOUND still fires per discovery to keep the existing live UI happy;
+    // the new EV_CANDIDATE event fires once per merged candidate after
+    // ranking, with rejection reasons attached.
 
-    // -------- Phase 1: discovery (sequential per sub-query × source, but stream-driven) --------
-    let mut candidates: Vec<Document> = Vec::new();
-    'outer: for sub in &sub_queries {
-        if cancel.is_cancelled() || candidates.len() >= req.max_total {
-            break;
-        }
+    let dedup: Arc<AsyncMutex<Deduplicator>> = Arc::new(AsyncMutex::new(Deduplicator::new()));
+    // Aggregate per-(sub_query) keyword set for ranking later.
+    let mut all_keywords: Vec<String> = Vec::new();
+    let mut tasks: JoinSet<()> = JoinSet::new();
+
+    for sub in &sub_queries {
         let keywords = parse_query(sub);
         let keywords = if keywords.is_empty() {
             sub.split_whitespace().map(String::from).collect::<Vec<_>>()
@@ -101,18 +113,16 @@ pub async fn run_pipeline(
         if keywords.is_empty() {
             continue;
         }
-        app.emit(
+        all_keywords.extend(keywords.iter().cloned());
+        let _ = app.emit(
             EV_SUBQUERY_START,
             SubQueryStartPayload {
                 sub_query: sub.clone(),
                 keywords: keywords.clone(),
             },
-        )?;
+        );
 
         for sname in &req.sources {
-            if cancel.is_cancelled() || candidates.len() >= req.max_total {
-                break 'outer;
-            }
             if !SOURCE_IDS.contains(&sname.as_str()) {
                 let _ = app.emit(
                     EV_SOURCE_ERROR,
@@ -128,91 +138,114 @@ pub async fn run_pipeline(
                 continue;
             };
 
-            app.emit(
-                EV_SOURCE_START,
-                SourceStartPayload {
-                    source: sname.clone(),
-                    sub_query: sub.clone(),
-                },
-            )?;
-            let mut count = 0usize;
-            let mut filtered = 0usize;
-            let mut stream = src.search(keywords.clone(), req.per_source).await;
-            while let Some(item) = stream.next().await {
-                if cancel.is_cancelled() || candidates.len() >= req.max_total {
-                    break;
-                }
-                match item {
-                    Ok(doc) => {
-                        if !seen_urls.insert(doc.url.clone()) {
-                            continue;
-                        }
-                        // Lexical relevance filter — drop documents that
-                        // mention zero query keywords in title+abstract.
-                        // Sources that don't return abstracts get judged on
-                        // title alone, which is conservative.
-                        let haystack =
-                            format!("{} {}", doc.title, doc.abstract_.as_deref().unwrap_or(""));
-                        if relevance_score(&keywords, &haystack) == 0 {
-                            filtered += 1;
-                            continue;
-                        }
-                        count += 1;
-                        let _ = app.emit(
-                            EV_FOUND,
-                            FoundPayload {
-                                title: doc.title.clone(),
-                                source: doc.source.clone(),
-                                url: doc.url.clone(),
-                                total: candidates.len() + 1,
-                            },
-                        );
-                        candidates.push(doc);
-                    }
-                    Err(e) => {
-                        let err_str = e.to_string();
-                        runlog::log(runlog::Event::SourceError {
-                            source: sname,
-                            error: &err_str,
-                            sub_query: Some(sub),
-                        });
-                        let _ = app.emit(
-                            EV_SOURCE_ERROR,
-                            SourceErrorPayload {
-                                source: sname.clone(),
-                                error: err_str,
-                            },
-                        );
-                    }
-                }
-            }
-            if filtered > 0 {
-                let _ = app.emit(
-                    EV_FILTERED,
-                    FilteredPayload {
-                        source: sname.clone(),
-                        count: filtered,
+            let app_t = app.clone();
+            let cancel_t = cancel.clone();
+            let dedup_t = dedup.clone();
+            let sub_t = sub.clone();
+            let sname_t = sname.clone();
+            let keywords_t = keywords.clone();
+            let per_source = req.per_source;
+            let max_total = req.max_total;
+
+            tasks.spawn(async move {
+                let _ = app_t.emit(
+                    EV_SOURCE_START,
+                    SourceStartPayload {
+                        source: sname_t.clone(),
+                        sub_query: sub_t.clone(),
                     },
                 );
-            }
-            let _ = app.emit(
-                EV_SOURCE_DONE,
-                SourceDonePayload {
-                    source: sname.clone(),
-                    count,
-                },
-            );
+
+                let mut count = 0usize;
+                let mut rank_in_source = 0usize;
+                let mut stream = src.search(keywords_t.clone(), per_source).await;
+
+                while let Some(item) = stream.next().await {
+                    if cancel_t.is_cancelled() {
+                        break;
+                    }
+                    match item {
+                        Ok(doc) => {
+                            rank_in_source += 1;
+                            // Hard cap so a slow source can't push us past max_total.
+                            // Cheaply checked under the lock below.
+                            let total_now = {
+                                let mut d = dedup_t.lock().await;
+                                if d.len() >= max_total {
+                                    break;
+                                }
+                                let title_for_evt = doc.title.clone();
+                                let url_for_evt = doc.url.clone();
+                                let source_for_evt = doc.source.clone();
+                                d.add(doc, &sname_t, rank_in_source);
+                                count += 1;
+                                let total = d.len();
+                                drop(d);
+                                let _ = app_t.emit(
+                                    EV_FOUND,
+                                    FoundPayload {
+                                        title: title_for_evt,
+                                        source: source_for_evt,
+                                        url: url_for_evt,
+                                        total,
+                                    },
+                                );
+                                total
+                            };
+                            if total_now >= max_total {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let err_str = e.to_string();
+                            runlog::log(runlog::Event::SourceError {
+                                source: &sname_t,
+                                error: &err_str,
+                                sub_query: Some(&sub_t),
+                            });
+                            let _ = app_t.emit(
+                                EV_SOURCE_ERROR,
+                                SourceErrorPayload {
+                                    source: sname_t.clone(),
+                                    error: err_str,
+                                },
+                            );
+                        }
+                    }
+                }
+                let _ = app_t.emit(
+                    EV_SOURCE_DONE,
+                    SourceDonePayload {
+                        source: sname_t.clone(),
+                        count,
+                    },
+                );
+            });
         }
     }
 
+    // Drain all spawned discovery tasks. Errors here are panics from the
+    // task body — they shouldn't happen since each task only emits events
+    // and pushes into the mutex.
+    while let Some(res) = tasks.join_next().await {
+        if let Err(e) = res {
+            tracing::warn!("discovery task join error: {e}");
+        }
+    }
+
+    // ---------- Phase 1.5: dedup → rank → flag rejects ----------------------
+    let merged = {
+        let dlock = std::mem::take(&mut *dedup.lock().await);
+        dlock.into_docs()
+    };
     let _ = app.emit(
         EV_FOUND_TOTAL,
         FoundTotalPayload {
-            count: candidates.len(),
+            count: merged.len(),
         },
     );
 
-    if candidates.is_empty() {
+    if merged.is_empty() {
         let payload = CompletePayload {
             done: 0,
             failed: 0,
@@ -230,6 +263,60 @@ pub async fn run_pipeline(
         );
         return Ok(());
     }
+
+    // Rank everything we found, then flag rejects so the UI can show greyed
+    // entries with explanations rather than silently dropping low-relevance
+    // candidates the way the old `relevance_score == 0` filter did.
+    let ranked: Vec<RankedDoc> = flag_rejects(rank_candidates(&all_keywords, merged));
+
+    // Emit one EV_CANDIDATE per ranked doc with full scoring breakdown +
+    // reject_reason. This is what the multi-lane UI consumes for the
+    // "All Found" tab (rejects greyed) and the "Downloading" tab (kept).
+    let kept_count = ranked.iter().filter(|r| r.reject_reason.is_none()).count();
+    let rejected_count = ranked.len() - kept_count;
+    let mut kept_index = 0usize;
+    for r in &ranked {
+        let final_rank = if r.reject_reason.is_none() {
+            kept_index += 1;
+            Some(kept_index)
+        } else {
+            None
+        };
+        let _ = app.emit(
+            EV_CANDIDATE,
+            CandidatePayload {
+                doc: r.doc.doc.clone(),
+                sources: r.doc.sources(),
+                tfidf: r.tfidf,
+                rrf: r.rrf,
+                authority: r.authority,
+                score: r.score,
+                status: if r.reject_reason.is_some() {
+                    "rejected".to_string()
+                } else {
+                    "kept".to_string()
+                },
+                reject_reason: r.reject_reason.clone(),
+                final_rank,
+            },
+        );
+    }
+    let _ = app.emit(
+        EV_RANKING_DONE,
+        RankingDonePayload {
+            total_candidates: ranked.len(),
+            kept: kept_count,
+            rejected: rejected_count,
+        },
+    );
+
+    // Convert kept ranked docs to the Document list Phase 2 expects, in
+    // best-first order so the most relevant downloads start first.
+    let candidates: Vec<Document> = ranked
+        .into_iter()
+        .filter(|r| r.reject_reason.is_none())
+        .map(|r| r.doc.doc)
+        .collect();
 
     // -------- Phase 2: parallel downloads --------
     let total = candidates.len();

@@ -26,6 +26,13 @@ pub const EV_FILTERED: &str = "df:filtered";
 pub const EV_SEARXNG_LOG: &str = "df:searxng_setup_log";
 pub const EV_SEARXNG_STAGE: &str = "df:searxng_setup_stage";
 
+// Per-candidate event with ranking + reject reason. Augments EV_FOUND
+// (kept for backward compat with the existing UI) by emitting one event
+// per de-duplicated candidate after ranking, including those that won't
+// be downloaded so the UI can show greyed "rejected" entries.
+pub const EV_CANDIDATE: &str = "df:candidate";
+pub const EV_RANKING_DONE: &str = "df:ranking_done";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct KeywordsPayload {
     pub query: String,
@@ -140,4 +147,28 @@ pub struct SearxngStagePayload {
     /// "waiting_health", "ok", "failed".
     pub stage: String,
     pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CandidatePayload {
+    #[serde(flatten)]
+    pub doc: Document,
+    /// Sources that returned this candidate (>=1; many for cross-source dupes).
+    pub sources: Vec<String>,
+    pub tfidf: f32,
+    pub rrf: f32,
+    pub authority: f32,
+    pub score: f32,
+    /// "kept" | "rejected" | "borderline"
+    pub status: String,
+    pub reject_reason: Option<String>,
+    /// 1-indexed final rank within the kept set, or None if rejected.
+    pub final_rank: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RankingDonePayload {
+    pub total_candidates: usize,
+    pub kept: usize,
+    pub rejected: usize,
 }
