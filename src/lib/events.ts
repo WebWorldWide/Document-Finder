@@ -97,6 +97,30 @@ export interface ErrorPayload {
   message: string;
 }
 
+export interface CandidatePayload {
+  title: string;
+  url: string;
+  source: string; // first-seen source
+  authors: string[];
+  year?: string;
+  abstract?: string;
+  identifier?: string;
+  sources: string[]; // all sources that returned this candidate
+  tfidf: number;
+  rrf: number;
+  authority: number;
+  score: number;
+  status: "kept" | "rejected" | "borderline";
+  reject_reason: string | null;
+  final_rank: number | null;
+}
+
+export interface RankingDonePayload {
+  total_candidates: number;
+  kept: number;
+  rejected: number;
+}
+
 export type DfEvent =
   | { type: "found"; payload: FoundPayload }
   | { type: "found_total"; payload: FoundTotalPayload }
@@ -112,7 +136,9 @@ export type DfEvent =
   | { type: "download_failed"; payload: DownloadFailedPayload }
   | { type: "complete"; payload: CompletePayload }
   | { type: "cancelled"; payload: CompletePayload }
-  | { type: "error"; payload: ErrorPayload };
+  | { type: "error"; payload: ErrorPayload }
+  | { type: "candidate"; payload: CandidatePayload }
+  | { type: "ranking_done"; payload: RankingDonePayload };
 
 const EVENTS = [
   "keywords",
@@ -130,6 +156,8 @@ const EVENTS = [
   "complete",
   "filtered",
   "error",
+  "candidate",
+  "ranking_done",
 ] as const;
 
 export async function listenAll(

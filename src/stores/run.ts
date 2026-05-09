@@ -1,7 +1,7 @@
 import { createStore, produce } from "solid-js/store";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api, type ExportResult } from "@/lib/tauri";
-import type { DfEvent } from "@/lib/events";
+import type { CandidatePayload, DfEvent } from "@/lib/events";
 import { settings } from "@/stores/settings";
 
 export interface InFlight {
@@ -36,6 +36,8 @@ export interface LogEntry {
   msg: string;
 }
 
+export type Candidate = CandidatePayload;
+
 interface RunState {
   running: boolean;
   query: string;
@@ -53,6 +55,11 @@ interface RunState {
   folder: string | null;
   manifest: string | null;
   fatalError: string | null;
+  // New for B3: ranked candidates with full scoring + reject reason.
+  candidates: Candidate[];
+  rankingDone: boolean;
+  rankingKept: number;
+  rankingRejected: number;
 }
 
 const [state, setState] = createStore<RunState>({
@@ -72,6 +79,10 @@ const [state, setState] = createStore<RunState>({
   folder: null,
   manifest: null,
   fatalError: null,
+  candidates: [],
+  rankingDone: false,
+  rankingKept: 0,
+  rankingRejected: 0,
 });
 
 function addLog(level: LogEntry["level"], msg: string) {
@@ -96,6 +107,10 @@ function reset(query: string) {
     folder: null,
     manifest: null,
     fatalError: null,
+    candidates: [],
+    rankingDone: false,
+    rankingKept: 0,
+    rankingRejected: 0,
   });
 }
 
@@ -233,6 +248,32 @@ function apply(ev: DfEvent) {
     case "error":
       setState({ running: false, fatalError: ev.payload.message });
       addLog("error", `Error: ${ev.payload.message}`);
+      break;
+
+    case "candidate":
+      setState(
+        produce((s) => {
+          // Replace prior entry for the same URL (re-emit case) or append.
+          const idx = s.candidates.findIndex((c) => c.url === ev.payload.url);
+          if (idx >= 0) {
+            s.candidates[idx] = ev.payload;
+          } else {
+            s.candidates.push(ev.payload);
+          }
+        })
+      );
+      break;
+
+    case "ranking_done":
+      setState({
+        rankingDone: true,
+        rankingKept: ev.payload.kept,
+        rankingRejected: ev.payload.rejected,
+      });
+      addLog(
+        "info",
+        `Ranked ${ev.payload.total_candidates} candidate(s): ${ev.payload.kept} kept, ${ev.payload.rejected} rejected`
+      );
       break;
   }
 }
