@@ -157,10 +157,15 @@ mod tests {
 
     #[test]
     fn safe_folder_basic() {
-        assert_eq!(
-            safe_folder("Christian bibles, scholarly texts"),
-            "christian-bibles-scholarly-texts"
+        let slug = safe_folder("Christian bibles, scholarly texts");
+        assert!(
+            slug.starts_with("christian-bibles-scholarly-texts-"),
+            "unexpected slug: {}",
+            slug
         );
+        // Timestamp suffix is at least 10 digits (Unix seconds since 2001).
+        let suffix = slug.rsplit_once('-').unwrap().1;
+        assert!(suffix.parse::<u64>().is_ok(), "non-numeric suffix: {}", suffix);
     }
 
     #[test]
