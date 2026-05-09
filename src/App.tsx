@@ -3,6 +3,7 @@ import Sidebar from "@/components/Sidebar";
 import FindTab from "@/components/FindTab";
 import LibraryView from "@/components/LibraryView";
 import SettingsView from "@/components/SettingsView";
+import FirstRunModelDialog from "@/components/FirstRunModelDialog";
 import { uiStore } from "@/stores/ui";
 
 export default function App() {
@@ -18,6 +19,7 @@ export default function App() {
           <Match when={uiStore.view === "settings"}><SettingsView /></Match>
         </Switch>
       </main>
+      <FirstRunModelDialog />
     </div>
   );
 }

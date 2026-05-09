@@ -4,8 +4,9 @@ import {
   ChevronUp, ChevronDown, Sliders,
 } from "lucide-solid";
 import LiveResultsView from "./LiveResultsView";
+import ModelStatusBadge from "./ModelStatusBadge";
 import { runStore } from "@/stores/run";
-import { settings, toggleSource, saveSettings } from "@/stores/settings";
+import { settings, toggleSource } from "@/stores/settings";
 import { uiStore } from "@/stores/ui";
 import { api } from "@/lib/tauri";
 import { ALL_SOURCES, SOURCE_LABELS } from "@/lib/utils";
@@ -165,6 +166,8 @@ export default function FindTab() {
                   failed
                 </span>
               </Show>
+              <ModelStatusBadge />
+
               <Show when={rs().total > 0}>
                 <span class="ml-auto text-[10px] font-mono text-[var(--color-muted-foreground)]">
                   {runStore.overallPct}%

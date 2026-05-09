@@ -121,6 +121,28 @@ export interface RankingDonePayload {
   rejected: number;
 }
 
+export interface ModelProgressPayload {
+  model_id: string;
+  downloaded: number;
+  total: number;
+  bytes_per_sec: number;
+}
+
+export interface ModelStatusPayload {
+  model_id: string;
+  status:
+    | "downloading"
+    | "verifying"
+    | "ready"
+    | "failed"
+    | "cancelled"
+    | "embedding"
+    | "llm_warming"
+    | "llm_expanding"
+    | "llm_filtering";
+  detail: string | null;
+}
+
 export type DfEvent =
   | { type: "found"; payload: FoundPayload }
   | { type: "found_total"; payload: FoundTotalPayload }
@@ -138,7 +160,9 @@ export type DfEvent =
   | { type: "cancelled"; payload: CompletePayload }
   | { type: "error"; payload: ErrorPayload }
   | { type: "candidate"; payload: CandidatePayload }
-  | { type: "ranking_done"; payload: RankingDonePayload };
+  | { type: "ranking_done"; payload: RankingDonePayload }
+  | { type: "model_progress"; payload: ModelProgressPayload }
+  | { type: "model_status"; payload: ModelStatusPayload };
 
 const EVENTS = [
   "keywords",
@@ -158,6 +182,8 @@ const EVENTS = [
   "error",
   "candidate",
   "ranking_done",
+  "model_progress",
+  "model_status",
 ] as const;
 
 export async function listenAll(

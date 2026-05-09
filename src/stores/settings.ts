@@ -31,6 +31,10 @@ function safeUrl(v: unknown, fallback: string): string {
   return fallback;
 }
 
+function safeBool(v: unknown, fallback: boolean): boolean {
+  return typeof v === "boolean" ? v : fallback;
+}
+
 export const [settings, setSettings] = createStore({
   libraryRoot:     safeStr(saved.libraryRoot, ""),
   perSource:       posInt(saved.perSource, 100),
@@ -38,7 +42,14 @@ export const [settings, setSettings] = createStore({
   concurrency:     posInt(saved.concurrency, 8),
   selectedSources: safeSources(saved.selectedSources),
   searxngUrl:      safeUrl(saved.searxngUrl, "http://localhost:8080"),
-  useCitationGraph: typeof saved.useCitationGraph === "boolean" ? saved.useCitationGraph : false,
+  useCitationGraph: safeBool(saved.useCitationGraph, false),
+  // AI / Tier 2 + 3 (default true; auto-no-ops if model not downloaded)
+  useSemanticRerank: safeBool(saved.useSemanticRerank, true),
+  useLlmExpansion:   safeBool(saved.useLlmExpansion, true),
+  useLlmFilter:      safeBool(saved.useLlmFilter, true),
+  llmModelId:        safeStr(saved.llmModelId, "qwen2.5-3b-instruct-q4_k_m"),
+  // Whether to dismiss the first-run AI download prompt (sticky once dismissed)
+  aiOnboardingDismissed: safeBool(saved.aiOnboardingDismissed, false),
 });
 
 if (!settings.libraryRoot) {

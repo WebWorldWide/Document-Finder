@@ -295,6 +295,10 @@ async function startSearch(query: string) {
       concurrency: settings.concurrency,
       extract: true,
       use_citation_graph: settings.useCitationGraph,
+      use_semantic_rerank: settings.useSemanticRerank,
+      use_llm_expansion: settings.useLlmExpansion,
+      use_llm_filter: settings.useLlmFilter,
+      llm_model_id: settings.llmModelId || null,
       source_options: {
         searxng: { instance_url: settings.searxngUrl },
       },

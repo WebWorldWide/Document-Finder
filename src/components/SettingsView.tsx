@@ -1,8 +1,10 @@
 import { createSignal, onMount, Show, For } from "solid-js";
-import { Server, FolderOpen, FileText, Loader2, CheckCircle2 } from "lucide-solid";
+import { Server, FolderOpen, FileText, Loader2, CheckCircle2, Sparkles } from "lucide-solid";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api, type LogInfo } from "@/lib/tauri";
 import { settings, setSettings, saveSettings } from "@/stores/settings";
+import { modelsStore } from "@/stores/models";
+import ModelDownloadCard from "./ModelDownloadCard";
 import { formatBytes } from "@/lib/utils";
 
 interface SearxLogLine {
@@ -41,6 +43,8 @@ export default function SettingsView() {
 
   onMount(async () => {
     setLogInfo(await api.runLogInfo().catch(() => null));
+    void modelsStore.refresh();
+    void modelsStore.ensureSubscribed();
   });
 
   async function handleSetupSearx() {
@@ -138,29 +142,90 @@ export default function SettingsView() {
           </div>
         </section>
 
-        {/* Ranking — Tier 4 toggle */}
+        {/* AI Models */}
+        <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+          <div class="mb-3 flex items-center gap-2">
+            <Sparkles size={14} class="text-[var(--color-primary)]" />
+            <h2 class="text-sm font-semibold">AI Models</h2>
+            <Show when={modelsStore.totalDiskBytes > 0}>
+              <span class="ml-auto text-[10px] text-[var(--color-muted-foreground)]">
+                {formatBytes(modelsStore.totalDiskBytes)} on disk
+              </span>
+            </Show>
+          </div>
+          <p class="mb-4 text-xs leading-relaxed text-[var(--color-muted-foreground)]">
+            Two local models power Tier 2 (semantic reranking) and Tier 3
+            (LLM query expansion + borderline filtering). Everything runs
+            offline — no API keys, no telemetry. Models can be deleted any
+            time to reclaim disk.
+          </p>
+          <Show
+            when={modelsStore.state.models.length > 0}
+            fallback={
+              <p class="text-[11px] text-[var(--color-muted-foreground)]">
+                Loading…
+              </p>
+            }
+          >
+            <div class="space-y-2">
+              <For each={modelsStore.state.models}>
+                {(model) => <ModelDownloadCard model={model} />}
+              </For>
+            </div>
+          </Show>
+        </section>
+
+        {/* Ranking */}
         <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
           <h2 class="mb-1 text-sm font-semibold">Ranking</h2>
           <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
             Cross-source dedup, TF-IDF, and Reciprocal Rank Fusion are always on.
-            Citation-graph reasoning queries Semantic Scholar for the top
-            candidates' references and citations and boosts papers that other
-            top results point to. Adds API calls — slower per run, but surfaces
-            foundational works your query terms wouldn't find on their own.
+            The toggles below add additional ranking signals.
           </p>
-          <label class="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={settings.useCitationGraph}
-              onChange={(e) => {
-                setSettings("useCitationGraph", e.currentTarget.checked);
+          <div class="space-y-2.5">
+            <RankingToggle
+              checked={settings.useSemanticRerank}
+              onToggle={(v) => {
+                setSettings("useSemanticRerank", v);
                 saveSettings();
               }}
-              class="h-3.5 w-3.5 rounded border-[var(--color-border)]"
+              label="Semantic reranking"
+              detail="bge-small-en-v1.5"
+              disabled={!modelsStore.embeddingReady}
+              disabledHint="Download the embedding model above to enable."
             />
-            <span class="font-medium">Use citation-graph reasoning</span>
-            <span class="text-[10px] text-[var(--color-muted-foreground)]">(slower, deeper)</span>
-          </label>
+            <RankingToggle
+              checked={settings.useLlmExpansion}
+              onToggle={(v) => {
+                setSettings("useLlmExpansion", v);
+                saveSettings();
+              }}
+              label="LLM query expansion"
+              detail="generates 5–8 alternative search phrasings before discovery"
+              disabled={!modelsStore.llmReady}
+              disabledHint="Download an LLM model above to enable."
+            />
+            <RankingToggle
+              checked={settings.useLlmFilter}
+              onToggle={(v) => {
+                setSettings("useLlmFilter", v);
+                saveSettings();
+              }}
+              label="LLM borderline filter"
+              detail="judges 50–70th percentile candidates for topical fit"
+              disabled={!modelsStore.llmReady}
+              disabledHint="Download an LLM model above to enable."
+            />
+            <RankingToggle
+              checked={settings.useCitationGraph}
+              onToggle={(v) => {
+                setSettings("useCitationGraph", v);
+                saveSettings();
+              }}
+              label="Citation-graph reasoning"
+              detail="Semantic Scholar refs/cites — slower, deeper"
+            />
+          </div>
         </section>
 
         {/* Library folder */}
@@ -337,5 +402,40 @@ export default function SettingsView() {
         </section>
       </div>
     </div>
+  );
+}
+
+function RankingToggle(props: {
+  checked: boolean;
+  onToggle: (v: boolean) => void;
+  label: string;
+  detail: string;
+  disabled?: boolean;
+  disabledHint?: string;
+}) {
+  return (
+    <label
+      class="flex items-start gap-2 text-xs"
+      classList={{ "opacity-50": !!props.disabled }}
+    >
+      <input
+        type="checkbox"
+        checked={props.checked && !props.disabled}
+        disabled={!!props.disabled}
+        onChange={(e) => props.onToggle(e.currentTarget.checked)}
+        class="mt-0.5 h-3.5 w-3.5 rounded border-[var(--color-border)]"
+      />
+      <span class="flex-1">
+        <span class="font-medium">{props.label}</span>{" "}
+        <span class="text-[10px] text-[var(--color-muted-foreground)]">
+          · {props.detail}
+        </span>
+        <Show when={props.disabled && props.disabledHint}>
+          <p class="mt-0.5 text-[10px] italic text-[var(--color-muted-foreground)]">
+            {props.disabledHint}
+          </p>
+        </Show>
+      </span>
+    </label>
   );
 }
