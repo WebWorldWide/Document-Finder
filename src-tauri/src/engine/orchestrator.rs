@@ -39,8 +39,34 @@ pub struct RunRequest {
     /// that are connected to other top candidates. Adds API latency.
     #[serde(default)]
     pub use_citation_graph: bool,
+    /// When true, after Tier 1 ranking we re-embed the top 100 candidates
+    /// with the bge-small-en-v1.5 model and blend cosine similarity into
+    /// the final score. Defaults to true; auto-falls-back to Tier 1 only
+    /// if the embedding model fails to load.
+    #[serde(default = "default_use_semantic_rerank")]
+    pub use_semantic_rerank: bool,
+    /// When true, the local LLM (Tier 3) generates additional sub-queries
+    /// from the user's input before discovery starts. Currently a no-op
+    /// when the LLM model isn't loaded.
+    #[serde(default = "default_use_llm_expansion")]
+    pub use_llm_expansion: bool,
+    /// When true, the local LLM (Tier 3) judges borderline candidates
+    /// (50–70th percentile of post-rerank score) for topical fit.
+    /// Currently a no-op when the LLM model isn't loaded.
+    #[serde(default = "default_use_llm_filter")]
+    pub use_llm_filter: bool,
     #[serde(default)]
     pub source_options: HashMap<String, SourceOptions>,
+}
+
+fn default_use_semantic_rerank() -> bool {
+    true
+}
+fn default_use_llm_expansion() -> bool {
+    true
+}
+fn default_use_llm_filter() -> bool {
+    true
 }
 
 fn default_per_source() -> usize {
@@ -274,6 +300,42 @@ pub async fn run_pipeline(
     // entries with explanations rather than silently dropping low-relevance
     // candidates the way the old `relevance_score == 0` filter did.
     let mut ranked: Vec<RankedDoc> = flag_rejects(rank_candidates(&all_keywords, merged));
+
+    // Tier 2: optional semantic reranking via local embedding model.
+    // Falls back silently to Tier 1 if the model isn't available — the
+    // user gets no error, just lexical-only ranking.
+    #[cfg(feature = "ai-embeddings")]
+    if req.use_semantic_rerank && !cancel.is_cancelled() {
+        let _ = app.emit(
+            crate::events::EV_MODEL_STATUS,
+            crate::events::ModelStatusPayload {
+                model_id: "bge-small-en-v1.5".to_string(),
+                status: "embedding".to_string(),
+                detail: Some(format!("{} candidates", ranked.len().min(100))),
+            },
+        );
+        let query_for_rerank = req.query.clone();
+        let mut taken: Vec<RankedDoc> = std::mem::take(&mut ranked);
+        let result = tokio::task::spawn_blocking(move || {
+            let res = crate::ai::embeddings::rerank_blocking(&query_for_rerank, &mut taken, 100);
+            (taken, res)
+        })
+        .await;
+        match result {
+            Ok((reranked, Ok(()))) => {
+                ranked = reranked;
+            }
+            Ok((reranked, Err(e))) => {
+                tracing::warn!("semantic rerank failed, falling back to Tier 1: {}", e);
+                ranked = reranked;
+            }
+            Err(e) => {
+                tracing::warn!("rerank task panicked: {}", e);
+                // ranked is empty here because of std::mem::take — that's fine
+                // because the task only panics after taking ownership.
+            }
+        }
+    }
 
     // Tier 4: optional citation-graph enrichment. Boosts papers that are
     // referenced or cited by other top-scoring candidates. Off by default

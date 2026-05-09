@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod commands;
 pub mod engine;
 pub mod events;
@@ -18,6 +19,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::AppState::default())
+        .manage(ai::AiState::default())
         .invoke_handler(tauri::generate_handler![
             commands::default_library_dir,
             commands::start_run,
@@ -29,6 +31,10 @@ pub fn run() {
             commands::run_log_info,
             commands::run_log_tail,
             commands::setup_searxng,
+            commands::list_models,
+            commands::download_model,
+            commands::cancel_model_download,
+            commands::delete_model,
         ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())

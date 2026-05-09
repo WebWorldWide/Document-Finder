@@ -56,14 +56,26 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# AI: model download + verification (E1 foundation)
+sha2 = "0.10"
+
+# AI: semantic embeddings (E2 — optional, default on via "ai-embeddings" feature)
+# rustls variants match our reqwest TLS stack — avoids pulling in openssl-sys.
+fastembed = { version = "5", default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls"], optional = true }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 tempfile = "3"
 wiremock = "0.6"
 
 [features]
-default = ["custom-protocol"]
+default = ["custom-protocol", "ai-embeddings"]
 custom-protocol = ["tauri/custom-protocol"]
+# Tier 2 — semantic reranking via local ONNX embedding model.
+# Disable for fast dev rebuilds: `cargo build --no-default-features --features=custom-protocol`
+ai-embeddings = ["dep:fastembed"]
+# Tier 3 — local LLM via llama.cpp. Off by default (see E3 commit).
+ai-llm = []
 
 [profile.dev]
 opt-level = 0

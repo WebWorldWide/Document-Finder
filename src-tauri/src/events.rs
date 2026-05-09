@@ -33,6 +33,10 @@ pub const EV_SEARXNG_STAGE: &str = "df:searxng_setup_stage";
 pub const EV_CANDIDATE: &str = "df:candidate";
 pub const EV_RANKING_DONE: &str = "df:ranking_done";
 
+// AI model lifecycle events (Tier 2 + Tier 3 + model manager).
+pub const EV_MODEL_PROGRESS: &str = "df:model_progress";
+pub const EV_MODEL_STATUS: &str = "df:model_status";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct KeywordsPayload {
     pub query: String,
@@ -171,4 +175,21 @@ pub struct RankingDonePayload {
     pub total_candidates: usize,
     pub kept: usize,
     pub rejected: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelProgressPayload {
+    pub model_id: String,
+    pub downloaded: u64,
+    pub total: u64,
+    pub bytes_per_sec: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelStatusPayload {
+    pub model_id: String,
+    /// One of: "downloading", "verifying", "ready", "failed", "cancelled",
+    /// "embedding", "llm_warming", "llm_expanding", "llm_filtering".
+    pub status: String,
+    pub detail: Option<String>,
 }
