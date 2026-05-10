@@ -18,8 +18,10 @@ export default function App() {
 
   return (
     <div class="flex h-screen w-screen overflow-hidden bg-pinstripe-light text-[var(--color-foreground)]">
-      {/* macOS traffic light drag region */}
-      <div class="fixed inset-x-0 top-0 h-8 z-50 pointer-events-none" data-tauri-drag-region aria-hidden="true" />
+      {/* No custom drag region — Tauri's native macOS title bar (decorations:
+        * true in tauri.conf.json) handles dragging on its own. The previous
+        * fixed transparent drag region overlaid the pinstripe canvas at the
+        * top of the window and showed up as a striped artifact strip. */}
       <Sidebar />
       <main id="main-content" tabindex="-1" class="flex-1 overflow-hidden outline-none">
         <Switch>

@@ -137,7 +137,7 @@ export default function FindTab() {
                             "background-color": `var(--color-source-${src})`,
                             color: "white",
                           }
-                        : { color: "var(--color-foreground-muted)" }
+                        : {}
                     }
                   >
                     {SOURCE_LABELS[src]}
@@ -165,7 +165,7 @@ export default function FindTab() {
                               "background-color": `var(--color-source-${src})`,
                               color: "white",
                             }
-                          : { color: "var(--color-foreground-muted)" }
+                          : {}
                       }
                     >
                       {SOURCE_LABELS[src]}
@@ -396,20 +396,6 @@ function FullHeader(props: {
         </div>
       </div>
 
-      {/* Example pills */}
-      <div class="flex flex-wrap gap-1.5">
-        <For each={EXAMPLES}>
-          {(ex) => (
-            <button
-              onClick={() => props.setQuery(ex)}
-              class="pill-toggle px-3 py-1 text-[11px] text-[var(--color-foreground-muted)] hover:text-[var(--color-primary)]"
-            >
-              {ex}
-            </button>
-          )}
-        </For>
-      </div>
-
       {/* Source toggles — flat outlined tags; active fills with source color */}
       <div class="space-y-2">
         <div class="flex flex-wrap gap-2">
@@ -455,7 +441,7 @@ function FullHeader(props: {
                             "background-color": `var(--color-source-${src})`,
                             color: "white",
                           }
-                        : { color: "var(--color-foreground-muted)" }
+                        : {}
                     }
                   >
                     {SOURCE_LABELS[src]}

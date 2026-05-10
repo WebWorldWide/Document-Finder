@@ -6,11 +6,12 @@ import type { ModelProgressPayload, ModelStatusPayload } from "@/lib/events";
 interface ModelsState {
   models: ModelInfo[];
   loading: boolean;
-  /// Set when the most recent refresh attempt failed. Cleared on the next
-  /// successful refresh. Surfaced in the Settings AI Models card so the
-  /// user can see the actual failure instead of staring at "Loading…"
-  /// forever (the previous behavior swallowed the error in console.error).
   error: string | null;
+  /// True once the embedding model (managed by fastembed itself, not by our
+  /// registry) has been initialized in-process. Polled lazily from the
+  /// `is_embedding_loaded` Tauri command. Used by the AI Models UI to show
+  /// "Auto-managed — ready" vs "Auto-managed — downloads on first search".
+  embeddingLoaded: boolean;
   // Per-model bytes/sec for the UI ETA, keyed by model_id.
   bytesPerSec: Record<string, number>;
   // Last activity status for the model (e.g. "embedding 23/100", "llm_warming").
@@ -24,6 +25,7 @@ const [state, setState] = createStore<ModelsState>({
   models: [],
   loading: false,
   error: null,
+  embeddingLoaded: false,
   bytesPerSec: {},
   activity: {},
 });
@@ -37,6 +39,11 @@ async function refresh() {
   try {
     const list = await api.listModels();
     setState("models", list);
+    // Embedding readiness is decoupled from the registry list — fastembed
+    // owns its own model cache. Best-effort poll; ignore errors.
+    api.isEmbeddingLoaded()
+      .then((loaded) => setState("embeddingLoaded", loaded))
+      .catch(() => {});
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("listModels failed", e);
@@ -79,6 +86,10 @@ async function ensureSubscribed() {
       status === "llm_expanding" ||
       status === "llm_filtering"
     ) {
+      // The first "embedding" event implies fastembed has finished loading.
+      if (status === "embedding") {
+        setState("embeddingLoaded", true);
+      }
       setState("activity", model_id, { status, detail });
       // Auto-clear activity after 5s of silence.
       setTimeout(() => {
@@ -156,11 +167,10 @@ export const modelsStore = {
   download,
   cancel,
   remove,
-  /// Convenience: any embedding model in Ready status?
+  /// True once the embedding model (managed by fastembed) has loaded into
+  /// process memory. The first semantic-rerank kicks the download/load.
   get embeddingReady() {
-    return state.models.some(
-      (m) => m.kind === "embedding" && m.status.kind === "ready"
-    );
+    return state.embeddingLoaded;
   },
   /// Convenience: any LLM model in Ready status?
   get llmReady() {

@@ -53,21 +53,13 @@ impl ModelEntry {
 
 pub static REGISTRY: Lazy<Vec<ModelEntry>> = Lazy::new(|| {
     vec![
-        // ---- Embedding models -------------------------------------------
-        ModelEntry {
-            id: "bge-small-en-v1.5",
-            kind: ModelKind::Embedding,
-            display_name: "BGE Small EN v1.5",
-            hf_repo: "Qdrant/bge-small-en-v1.5-onnx-Q",
-            hf_filename: "model.onnx",
-            approx_bytes: 33_000_000, // ~33 MB quantized ONNX
-            // SHA256 left empty intentionally — verification is enforced
-            // only when populated. Pin after first successful download
-            // by reading the on-disk file's sha256 and pasting it here.
-            sha256: "",
-            description: "384-dim sentence embeddings. ~33 MB. Used for semantic reranking of search results.",
-            is_default: true,
-        },
+        // The embedding model (BGE-Small-EN-v1.5) is intentionally NOT listed
+        // here. `fastembed` manages its own download + on-disk cache via
+        // `crate::ai::embeddings::EmbeddingModel::init()`, so a parallel
+        // entry in this registry was duplicate work AND its hardcoded
+        // HF URL went 404 when the upstream repo moved. Embedding readiness
+        // is exposed to the UI via the `is_embedding_loaded` Tauri command.
+        //
         // ---- LLM models -------------------------------------------------
         ModelEntry {
             id: "qwen2.5-3b-instruct-q4_k_m",

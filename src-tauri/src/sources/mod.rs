@@ -9,7 +9,6 @@ pub mod marginalia_html;
 pub mod meta_search;
 pub mod mojeek_html;
 pub mod openalex;
-pub mod searxng;
 pub mod semantic_scholar;
 pub mod startpage_html;
 pub mod web_common;
@@ -43,7 +42,6 @@ pub const SOURCE_IDS: &[&str] = &[
     "mojeek",
     "marginalia",
     "startpage",
-    "searxng",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -81,12 +79,12 @@ impl Document {
     }
 }
 
-/// Per-source configuration delivered from the frontend (e.g. SearXNG instance URL).
+/// Per-source configuration delivered from the frontend. Currently empty —
+/// every backend builds itself from the shared HTTP client. Kept as an
+/// extension point so adding per-source knobs later doesn't ripple through
+/// every callsite of `build_source`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct SourceOptions {
-    #[serde(default)]
-    pub instance_url: Option<String>,
-}
+pub struct SourceOptions {}
 
 #[async_trait]
 pub trait Source: Send + Sync {
@@ -101,7 +99,7 @@ pub trait Source: Send + Sync {
     ) -> BoxStream<'static, anyhow::Result<Document>>;
 }
 
-/// Build a source by id; `searxng` may return `None` if no instance URL is configured.
+/// Build a source by id. Returns `None` for unknown ids.
 pub fn build_source(
     name: &str,
     _options: SourceOptions,
@@ -125,17 +123,6 @@ pub fn build_source(
         "marginalia" => Some(Box::new(marginalia_html::MarginaliaHtmlSource::new(client))),
         "startpage" => Some(Box::new(startpage_html::StartpageHtmlSource::new(client))),
         "meta_search" => Some(Box::new(meta_search::MetaSearchSource::new(client))),
-        "searxng" => {
-            let raw = _options.instance_url
-                .unwrap_or_else(|| "http://localhost:8080".to_string());
-            // Only allow http/https — reject file://, internal SSRF attempts, etc.
-            let url = url::Url::parse(&raw)
-                .ok()
-                .filter(|u| u.scheme() == "http" || u.scheme() == "https")
-                .map(|u| u.to_string())
-                .unwrap_or_else(|| "http://localhost:8080".to_string());
-            Some(Box::new(searxng::SearXNGSource::new(client, url)))
-        }
         _ => None,
     }
 }

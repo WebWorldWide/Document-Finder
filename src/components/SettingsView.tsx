@@ -4,7 +4,6 @@ import { api, type LogInfo } from "@/lib/tauri";
 import { settings, setSettings, saveSettings, type Quality } from "@/stores/settings";
 import { modelsStore } from "@/stores/models";
 import ModelDownloadCard from "./ModelDownloadCard";
-import SearxngSetupPanel from "./SearxngSetupPanel";
 import { formatBytes } from "@/lib/utils";
 
 export default function SettingsView() {
@@ -83,12 +82,33 @@ export default function SettingsView() {
               {formatBytes(modelsStore.totalDiskBytes)} on disk
             </p>
           </Show>
-          <p class="mb-4 text-xs leading-relaxed text-[var(--color-muted-foreground)]">
-            Two local models power Tier 2 (semantic reranking) and Tier 3
-            (LLM query expansion + borderline filtering). Everything runs
-            offline — no API keys, no telemetry. Models can be deleted any
-            time to reclaim disk.
+          <p class="mb-3 text-xs leading-relaxed text-[var(--color-muted-foreground)]">
+            Local AI models power semantic reranking and LLM query expansion +
+            borderline filtering. Everything runs offline — no API keys, no
+            telemetry. Models can be deleted any time to reclaim disk.
           </p>
+
+          {/* Embedding model is managed by fastembed itself — no explicit
+            * download button. Show a passive status row so the user knows
+            * what's happening on first semantic search. */}
+          <div class="surface-raised-subtle mb-3 flex items-center gap-2 px-3 py-2 text-[11px]">
+            <Show
+              when={modelsStore.state.embeddingLoaded}
+              fallback={
+                <>
+                  <Loader2 size={12} class="text-[var(--color-foreground-muted)]" />
+                  <span class="font-medium">Embedding model</span>
+                  <span class="text-[var(--color-foreground-muted)]">
+                    · auto-managed · loads on first semantic search
+                  </span>
+                </>
+              }
+            >
+              <CheckCircle2 size={12} style={{ color: "var(--color-success)" }} />
+              <span class="font-medium">Embedding model</span>
+              <span class="text-[var(--color-foreground-muted)]">· ready</span>
+            </Show>
+          </div>
           {/* Three explicit states: error → red banner + retry, loading →
             * spinner, loaded → cards. Previously a single Show with a
             * "Loading…" fallback masked rejected listModels() calls
@@ -202,106 +222,16 @@ export default function SettingsView() {
         {/* Web search */}
         <section class="material-linen p-5">
           <h2 class="mb-1 text-sm font-semibold text-embossed">Web Search</h2>
-          <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
-            Document-Finder includes a built-in meta-search across DuckDuckGo,
-            Brave, Bing, Mojeek, Marginalia, and Startpage — no Docker, no
-            setup, no API keys. It's enabled by default in Discover.
+          <p class="mb-3 text-xs leading-relaxed text-[var(--color-foreground-muted)]">
+            Six engines are queried in parallel and deduped into a single
+            result stream — no Docker, no setup, no API keys.
           </p>
-          <div class="surface-pressed-sm mb-4 p-3 text-xs leading-relaxed">
-            <p class="flex items-start gap-2">
-              <CheckCircle2 size={14} class="mt-0.5 shrink-0" style={{ color: "var(--color-success)" }} />
-              <span>
-                <span class="font-medium">Built-in meta-search is active.</span>
-                {" "}Six independent engines are queried in parallel and
-                deduped into a single result stream. Toggle individual
-                engines below if you want to narrow it down.
-              </span>
-            </p>
+          <div class="surface-pressed-sm flex items-start gap-2 p-3 text-xs leading-relaxed">
+            <CheckCircle2 size={14} class="mt-0.5 shrink-0" style={{ color: "var(--color-success)" }} />
+            <span>
+              DuckDuckGo · Brave · Bing · Mojeek · Marginalia · Startpage
+            </span>
           </div>
-
-          <details class="surface-raised-subtle">
-            <summary class="cursor-pointer px-3 py-2 text-xs font-medium text-[var(--color-foreground-muted)] hover:text-[var(--color-foreground)]">
-              Advanced: SearXNG (public instance or local Docker)
-            </summary>
-            <div class="space-y-4 px-3 pb-3 pt-1">
-              <p class="text-[11px] text-[var(--color-foreground-muted)]">
-                SearXNG aggregates dozens more engines than the built-in
-                set. Most users don't need it.
-              </p>
-
-              <label class="block">
-                <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">
-                  SearXNG instance URL
-                </span>
-                <input
-                  type="text"
-                  value={settings.searxngUrl}
-                  onInput={(e) => {
-                    setSettings("searxngUrl", e.currentTarget.value);
-                    saveSettings();
-                  }}
-                  placeholder="https://searx.be"
-                  class="surface-input w-full px-3 py-2 font-mono text-xs outline-none"
-                />
-                <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
-                  Paste any public instance from{" "}
-                  <a
-                    href="https://searx.space"
-                    target="_blank"
-                    rel="noreferrer"
-                    class="underline hover:text-[var(--color-primary)]"
-                  >
-                    searx.space
-                  </a>
-                  {" "}— or pick one below.
-                </p>
-              </label>
-
-              <div class="flex flex-wrap gap-1.5">
-                <For
-                  each={[
-                    "https://searx.be",
-                    "https://searx.tiekoetter.com",
-                    "https://search.disroot.org",
-                    "https://priv.au",
-                  ]}
-                >
-                  {(url) => {
-                    const active = () => settings.searxngUrl === url;
-                    return (
-                      <button
-                        onClick={() => {
-                          setSettings("searxngUrl", url);
-                          saveSettings();
-                        }}
-                        class="tag-pill px-2.5 py-0.5 text-[10px] font-mono"
-                        classList={{ "is-active": active() }}
-                        style={
-                          active()
-                            ? { "background-color": "var(--color-source-searxng)", color: "white" }
-                            : { color: "var(--color-foreground-muted)" }
-                        }
-                      >
-                        {url.replace("https://", "")}
-                      </button>
-                    );
-                  }}
-                </For>
-              </div>
-
-              <details>
-                <summary class="cursor-pointer text-[11px] font-medium text-[var(--color-foreground-muted)]">
-                  Spin up a local instance with Docker
-                </summary>
-                <div class="pt-2">
-                  <p class="mb-2 text-[11px] text-[var(--color-foreground-muted)]">
-                    Requires Docker installed and running.
-                  </p>
-                  <SearxngSetupPanel />
-                </div>
-              </details>
-            </div>
-          </details>
         </section>
 
         {/* Run log */}
@@ -397,6 +327,16 @@ function QualityTab(props: {
   active: boolean;
   disabled?: boolean;
 }) {
+  // Pill sits on a white surface inside the dark felt-green section, so
+  // we override the inherited light-green text color with the standard
+  // foreground colors. Active uses the indigo primary on both lines for
+  // a clear "this one is selected" cue.
+  const labelColor = () =>
+    props.active ? "var(--color-primary)" : "var(--color-foreground)";
+  const captionColor = () =>
+    props.active
+      ? "color-mix(in oklch, var(--color-primary) 75%, transparent)"
+      : "var(--color-foreground-muted)";
   return (
     <button
       onClick={() => {
@@ -408,8 +348,10 @@ function QualityTab(props: {
       class="pill-toggle flex-1 px-3 py-2 text-center"
       classList={{ "is-active": props.active, "opacity-55 cursor-not-allowed": !!props.disabled }}
     >
-      <div class="text-[12px] font-semibold leading-tight">{props.label}</div>
-      <div class="mt-0.5 text-[10px] leading-tight" style={{ color: props.active ? "var(--color-primary)" : "oklch(0.85 0.05 148)" }}>
+      <div class="text-[12px] font-semibold leading-tight" style={{ color: labelColor() }}>
+        {props.label}
+      </div>
+      <div class="mt-0.5 text-[10px] leading-tight" style={{ color: captionColor() }}>
         {props.caption}
       </div>
     </button>

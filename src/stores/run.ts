@@ -317,9 +317,6 @@ async function startSearch(query: string) {
       use_citation_graph: settings.useCitationGraph,
       ...flags,
       llm_model_id: settings.llmModelId || null,
-      source_options: {
-        searxng: { instance_url: settings.searxngUrl },
-      },
     });
   } catch (e) {
     setState("running", false);
