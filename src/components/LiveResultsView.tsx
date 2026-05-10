@@ -79,7 +79,7 @@ export default function LiveResultsView() {
 
       {/* Header — counters + bulk actions */}
       <div class="flex items-center justify-between gap-3 px-4 py-3">
-        <div class="surface-raised-sm surface-bevel-sm flex items-center gap-1 p-1">
+        <div class="surface-raised-sm flex items-center gap-1 p-1">
           <LaneTab
             id="found"
             label="All Found"
@@ -169,11 +169,8 @@ function LaneTab(props: {
   return (
     <button
       onClick={() => props.onSelect(props.id)}
-      class="px-3 py-1.5 text-[12px] font-medium transition-all duration-150"
-      classList={{
-        "surface-pressed-sm": props.active,
-        "btn-tactile": !props.active,
-      }}
+      class="pill-toggle px-3 py-1.5 text-[12px] font-medium"
+      classList={{ "is-active": props.active }}
       style={{
         color: props.active ? "var(--color-primary)" : "var(--color-foreground-muted)",
       }}

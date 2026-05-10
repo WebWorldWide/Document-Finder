@@ -68,6 +68,33 @@ pub struct SourceDonePayload {
 pub struct SourceErrorPayload {
     pub source: String,
     pub error: String,
+    /// Coarse classification so the frontend can dedup repeat errors of the
+    /// same category (e.g. 8× "rate_limit" from Brave become a single row
+    /// with a count badge). Values: "rate_limit" | "forbidden" |
+    /// "server_error" | "timeout" | "parse_error" | "other".
+    pub kind: String,
+}
+
+/// Map an error string to a coarse class for UI dedup. Cheap heuristics —
+/// we don't need precision, just stable buckets.
+pub fn classify_source_error(msg: &str) -> &'static str {
+    let lower = msg.to_lowercase();
+    if lower.contains("429") || lower.contains("rate limit") || lower.contains("too many requests") {
+        "rate_limit"
+    } else if lower.contains("403") || lower.contains("401") || lower.contains("forbidden")
+        || lower.contains("unauthorized") || lower.contains("blocked") {
+        "forbidden"
+    } else if lower.contains("500") || lower.contains("502") || lower.contains("503")
+        || lower.contains("504") || lower.contains("server error") {
+        "server_error"
+    } else if lower.contains("timeout") || lower.contains("timed out") || lower.contains("operation took") {
+        "timeout"
+    } else if lower.contains("parse") || lower.contains("regex") || lower.contains("decode")
+        || lower.contains("non-json") || lower.contains("missing") {
+        "parse_error"
+    } else {
+        "other"
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

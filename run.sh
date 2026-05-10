@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Document Finder — build + install + launch.
 # Edit code, run this, see the changes. One step.
+#
+# This builds with the `release-fast` Cargo profile (parallelized codegen +
+# thin LTO) so the build pins all CPU cores instead of crawling on one. For
+# a *much* faster iteration loop while developing (~3–5s per Rust change,
+# instant frontend hot reload), use `pnpm tauri dev` instead — it skips the
+# bundle step and uses the debug profile.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -37,10 +43,13 @@ if [ ! -d "node_modules" ]; then
 fi
 
 # Build --------------------------------------------------------------------
-echo -e "${BLUE}→ Building app (first build takes ~2 min while Rust compiles)...${NC}"
-pnpm tauri build
+# `-- --profile release-fast` passes through to cargo. The custom profile
+# parallelizes codegen so this finishes in ~30–40s on a warm cache instead
+# of the ~2 min the strict `release` profile takes.
+echo -e "${BLUE}→ Building app (parallel codegen — should pin all CPU cores)...${NC}"
+pnpm tauri build -- --profile release-fast
 
-APP_PATH="src-tauri/target/release/bundle/macos/Document Finder.app"
+APP_PATH="src-tauri/target/release-fast/bundle/macos/Document Finder.app"
 if [ ! -d "$APP_PATH" ]; then
   echo -e "${RED}✗ Build finished but '$APP_PATH' not found.${NC}"
   exit 1

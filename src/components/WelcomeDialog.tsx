@@ -67,8 +67,8 @@ export default function WelcomeDialog() {
               class="surface-glossy flex h-8 w-8 items-center justify-center rounded-lg text-white"
               style={{
                 background:
-                  "linear-gradient(135deg, var(--color-accent-warm) 0%, var(--color-primary) 60%, var(--color-accent-cool) 100%)",
-                "box-shadow": "var(--shadow-raised-xs), inset 0 1px 0 oklch(1 0 0 / 0.6), inset 0 -1px 0 oklch(0 0 0 / 0.18)",
+                  "linear-gradient(135deg, var(--color-accent-warm) 0%, var(--color-primary) 55%, var(--color-accent-cool) 100%)",
+                "box-shadow": "var(--shadow-raised-xs), inset 0 1px 0 oklch(1 0 0 / 0.5), inset 0 -1px 0 oklch(0 0 0 / 0.20)",
               }}
             >
               <Sparkles size={16} />

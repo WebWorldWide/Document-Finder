@@ -3,41 +3,39 @@
 @custom-variant dark (&:is(.dark *));
 
 /* =============================================================================
- * Neumorphic / Skeumorphic design system — logo-aligned.
+ * Neumorphic / Skeumorphic design system — Mavericks/iOS-6 era palette.
  *
- * Palette derives from the app icon: a yellow-green→emerald→sky-blue
- * gradient over a white document with pale aqua accents. Canvas is a pale
- * mint pulled from the gradient's mid-stop, lightened heavily so it reads
- * as "very light" without going white. Brand primary is the emerald.
+ * Canvas is a warm-neutral grey-beige (hue 80) so the iOS-6 textures
+ * (linen, brushed metal, paper, leather, felt) read as their actual
+ * materials instead of picking up a green tint. Primary is a saturated
+ * deep-blue (hue 250) so CTAs have real hue contrast against the warm
+ * canvas. Emerald is preserved as the *success-only* accent.
  *
- * Surfaces never separate by hue — only by paired shadows (light from
- * top-left, dark from bottom-right). Shadow offsets are intentionally
- * tight (<= 6px) so adjacent raised siblings don't blot into each other.
- * For dense lists, raise the *container* and use `.surface-raised-subtle`
- * (or flat with dividers) for the rows inside.
+ * Shadows MUST follow the canvas hue or they render as colored halos.
+ * All shadow tokens use hue 80 to match.
  * ========================================================================= */
 
 @theme {
-  /* ---- Canvas + surfaces (logo mint) ----------------------------------- */
-  --color-canvas:       oklch(0.97 0.018 145);
-  --color-surface:      oklch(0.97 0.018 145);   /* same as canvas — invariant */
-  --color-surface-soft: oklch(0.985 0.014 145);
-  --color-surface-deep: oklch(0.94 0.022 145);
+  /* ---- Canvas + surfaces (warm-neutral grey-beige, hue 80) ------------- */
+  --color-canvas:       oklch(0.945 0.008 80);
+  --color-surface:      oklch(0.945 0.008 80);   /* same as canvas — invariant */
+  --color-surface-soft: oklch(0.97 0.006 80);
+  --color-surface-deep: oklch(0.91 0.010 80);
 
-  /* ---- Text ------------------------------------------------------------ */
-  --color-foreground:         oklch(0.22 0.020 165);
-  --color-foreground-muted:   oklch(0.50 0.025 165);
+  /* ---- Text (warm dark) ------------------------------------------------ */
+  --color-foreground:         oklch(0.20 0.012 80);
+  --color-foreground-muted:   oklch(0.48 0.014 80);
 
-  /* ---- Brand: emerald (#52C86F) + accents from the gradient ----------- */
-  --color-primary:            oklch(0.66 0.18 148);
+  /* ---- Brand: deep iOS-blue primary + warm/cool accents --------------- */
+  --color-primary:            oklch(0.55 0.20 250);
   --color-primary-foreground: oklch(0.99 0 0);
-  --color-accent-warm:        oklch(0.86 0.13 110);   /* #D2E468 yellow-green */
-  --color-accent-cool:        oklch(0.88 0.06 220);   /* #B1E6FF pale aqua */
+  --color-accent-warm:        oklch(0.78 0.16 70);    /* warm amber */
+  --color-accent-cool:        oklch(0.84 0.10 230);   /* icy blue */
 
-  /* ---- Status colors retuned for the mint canvas ---------------------- */
-  --color-destructive:           oklch(0.58 0.20 25);
+  /* ---- Status colors retuned for the warm canvas ---------------------- */
+  --color-destructive:           oklch(0.55 0.22 25);
   --color-destructive-foreground: oklch(0.99 0 0);
-  --color-success:               oklch(0.62 0.16 148);
+  --color-success:               oklch(0.60 0.16 148);
   --color-success-fg:            oklch(0.30 0.10 148);
   --color-success-bg:            oklch(0.95 0.04 148);
 
@@ -57,61 +55,58 @@
   --color-source-marginalia:       oklch(0.5 0.18 100);
   --color-source-startpage:        oklch(0.5 0.18 220);
 
-  /* ---- Backwards-compatible aliases (resolve to canvas hue) ----------- */
-  --color-background:           oklch(0.97 0.018 145);
-  --color-card:                 oklch(0.97 0.018 145);
-  --color-card-foreground:      oklch(0.22 0.020 165);
-  --color-popover:              oklch(0.97 0.018 145);
-  --color-popover-foreground:   oklch(0.22 0.020 165);
-  --color-secondary:            oklch(0.94 0.020 145);
-  --color-secondary-foreground: oklch(0.25 0.020 165);
-  --color-muted:                oklch(0.95 0.018 145);
-  --color-muted-foreground:     oklch(0.50 0.025 165);
-  --color-accent:               oklch(0.93 0.025 130);
-  --color-accent-foreground:    oklch(0.22 0.020 165);
-  --color-border:               oklch(0.88 0.020 145);
-  --color-input:                oklch(0.985 0.014 145);
-  --color-ring:                 oklch(0.66 0.18 148);
+  /* ---- Backwards-compatible aliases (resolve to warm canvas hue) ------ */
+  --color-background:           oklch(0.945 0.008 80);
+  --color-card:                 oklch(0.945 0.008 80);
+  --color-card-foreground:      oklch(0.20 0.012 80);
+  --color-popover:              oklch(0.945 0.008 80);
+  --color-popover-foreground:   oklch(0.20 0.012 80);
+  --color-secondary:            oklch(0.91 0.010 80);
+  --color-secondary-foreground: oklch(0.25 0.012 80);
+  --color-muted:                oklch(0.93 0.008 80);
+  --color-muted-foreground:     oklch(0.48 0.014 80);
+  --color-accent:               oklch(0.92 0.012 80);
+  --color-accent-foreground:    oklch(0.20 0.012 80);
+  --color-border:               oklch(0.84 0.012 80);
+  --color-input:                oklch(0.97 0.006 80);
+  --color-ring:                 oklch(0.55 0.20 250);
 
   /* ---- Geometry -------------------------------------------------------- */
   --radius:    1rem;
   --radius-sm: 0.625rem;
   --radius-pill: 9999px;
 
-  /* ---- Depth shadows: tighter offsets so adjacent siblings don't blot. */
+  /* ---- Depth shadows — hue-matched to the warm canvas ------------------ */
   --shadow-raised:
-    6px 6px 12px oklch(0.86 0.022 145 / 0.55),
+    6px 6px 12px oklch(0.84 0.010 80 / 0.55),
     -6px -6px 12px oklch(1 0 0 / 0.95);
 
   --shadow-raised-sm:
-    3px 3px 6px oklch(0.86 0.022 145 / 0.5),
+    3px 3px 6px oklch(0.84 0.010 80 / 0.5),
     -3px -3px 6px oklch(1 0 0 / 0.9);
 
   --shadow-raised-xs:
-    2px 2px 3px oklch(0.86 0.022 145 / 0.45),
+    2px 2px 3px oklch(0.84 0.010 80 / 0.45),
     -1px -1px 2px oklch(1 0 0 / 0.85);
 
-  /* Subtle raise — for items inside an already-raised container.
-   * Keeps depth perception without compounding shadows on the parent. */
   --shadow-raised-subtle:
-    2px 2px 4px oklch(0.86 0.022 145 / 0.32),
+    2px 2px 4px oklch(0.84 0.010 80 / 0.32),
     -1px -1px 2px oklch(1 0 0 / 0.6);
 
   --shadow-pressed:
-    inset 3px 3px 6px oklch(0.82 0.025 145 / 0.85),
+    inset 3px 3px 6px oklch(0.80 0.012 80 / 0.85),
     inset -3px -3px 6px oklch(1 0 0 / 0.95);
 
   --shadow-pressed-sm:
-    inset 1.5px 1.5px 3px oklch(0.82 0.025 145 / 0.7),
+    inset 1.5px 1.5px 3px oklch(0.80 0.012 80 / 0.7),
     inset -1.5px -1.5px 3px oklch(1 0 0 / 0.85);
 
-  /* Floating — modals + the most prominent surfaces */
   --shadow-floating:
-    16px 16px 32px oklch(0.78 0.025 145 / 0.5),
+    16px 16px 32px oklch(0.76 0.012 80 / 0.5),
     -8px -8px 24px oklch(1 0 0 / 0.85);
 
   --shadow-hover:
-    8px 8px 14px oklch(0.84 0.022 145 / 0.6),
+    8px 8px 14px oklch(0.82 0.010 80 / 0.6),
     -8px -8px 14px oklch(1 0 0 / 0.92);
 }
 
@@ -225,7 +220,7 @@ h1, h2, h3, h4 {
 }
 .surface-input:focus, .surface-input:focus-within {
   box-shadow: var(--shadow-pressed-sm),
-              0 0 0 2px oklch(0.66 0.18 148 / 0.32);
+              0 0 0 2px oklch(0.55 0.20 250 / 0.32);
 }
 
 /* Flat outline pill — used for source/example tags in dense wraps where
@@ -264,6 +259,11 @@ h1, h2, h3, h4 {
 .btn-tactile:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+.btn-tactile:disabled:hover {
+  /* Prevent the hover shadow lift on disabled buttons. */
+  box-shadow: var(--shadow-raised-sm);
+  transform: none;
 }
 
 /* Pill toggle: pressed when active, raised when inactive */
@@ -342,19 +342,24 @@ h1, h2, h3, h4 {
 
 /* Sharper iOS-6-style bevel: 2px stacked highlights on top, 1px hard hairline
  * underneath, plus the existing raised paired shadow. Reads as a real
- * stamped edge instead of a faint inset. */
+ * stamped edge instead of a faint inset.
+ *
+ * IMPORTANT: never stack `.surface-bevel` and `.surface-bevel-sm` on the
+ * same element — the inset shadows compound and create visual mush. Pick
+ * one. The `.material-*` classes already include a bevel; don't add
+ * `.surface-bevel*` on top of them. */
 .surface-bevel {
   box-shadow: var(--shadow-raised),
               inset 0 1px 0 oklch(1 0 0 / 0.95),
               inset 0 2px 0 oklch(1 0 0 / 0.45),
-              inset 0 -1px 0 oklch(0.55 0.03 145 / 0.18),
+              inset 0 -1px 0 oklch(0.55 0.012 80 / 0.18),
               inset 1px 0 0 oklch(1 0 0 / 0.55),
-              inset -1px 0 0 oklch(0.55 0.03 145 / 0.12);
+              inset -1px 0 0 oklch(0.55 0.012 80 / 0.12);
 }
 .surface-bevel-sm {
   box-shadow: var(--shadow-raised-sm),
               inset 0 1px 0 oklch(1 0 0 / 0.9),
-              inset 0 -1px 0 oklch(0.55 0.03 145 / 0.16);
+              inset 0 -1px 0 oklch(0.55 0.012 80 / 0.16);
 }
 
 /* iOS 5/6 gloss: stronger top sheen with a sharper midpoint break, plus an
@@ -411,11 +416,11 @@ h1, h2, h3, h4 {
     180deg,
     oklch(1 0 0 / 0.45) 0%,
     transparent 50%,
-    oklch(0.86 0.022 145 / 0.18) 100%
+    oklch(0.84 0.010 80 / 0.18) 100%
   ), var(--color-surface);
   box-shadow: var(--shadow-raised-sm),
               inset 1px 1px 0 oklch(1 0 0 / 0.85),
-              inset -1px -1px 0 oklch(0.78 0.025 145 / 0.42);
+              inset -1px -1px 0 oklch(0.78 0.012 80 / 0.42);
   border-radius: var(--radius-sm);
   border: none;
   transition: box-shadow 100ms ease-out, transform 100ms ease-out, background 100ms ease-out;
@@ -424,16 +429,16 @@ h1, h2, h3, h4 {
 .btn-skeu:hover:not(:disabled) {
   box-shadow: var(--shadow-hover),
               inset 1px 1px 0 oklch(1 0 0 / 0.9),
-              inset -1px -1px 0 oklch(0.78 0.025 145 / 0.45);
+              inset -1px -1px 0 oklch(0.78 0.012 80 / 0.45);
 }
 .btn-skeu:active:not(:disabled) {
   background: linear-gradient(
     180deg,
-    oklch(0.86 0.022 145 / 0.1) 0%,
+    oklch(0.84 0.010 80 / 0.1) 0%,
     oklch(1 0 0 / 0.25) 100%
   ), var(--color-surface);
   box-shadow: var(--shadow-pressed-sm),
-              inset 1px 1px 0 oklch(0.78 0.025 145 / 0.35),
+              inset 1px 1px 0 oklch(0.78 0.012 80 / 0.35),
               inset -1px -1px 0 oklch(1 0 0 / 0.6);
   transform: translate(0, 1px);
 }
@@ -447,15 +452,15 @@ h1, h2, h3, h4 {
 .chrome-brushed {
   background:
     linear-gradient(180deg,
-      oklch(0.96 0.012 145) 0%,
-      oklch(0.92 0.015 145) 100%),
+      oklch(0.94 0.008 80) 0%,
+      oklch(0.90 0.010 80) 100%),
     repeating-linear-gradient(90deg,
-      oklch(0.92 0.015 145 / 0.6) 0px,
-      oklch(0.96 0.012 145 / 0.6) 1px,
-      oklch(0.92 0.015 145 / 0.6) 2px);
+      oklch(0.90 0.010 80 / 0.6) 0px,
+      oklch(0.94 0.008 80 / 0.6) 1px,
+      oklch(0.90 0.010 80 / 0.6) 2px);
   box-shadow:
     inset 0 1px 0 oklch(1 0 0 / 0.8),
-    inset 0 -1px 0 oklch(0.78 0.025 145 / 0.5),
+    inset 0 -1px 0 oklch(0.78 0.012 80 / 0.5),
     0 1px 0 oklch(1 0 0 / 0.4);
 }
 
@@ -467,31 +472,31 @@ h1, h2, h3, h4 {
  * tiny (~300–500 bytes each) so they ship inline in the CSS bundle.
  * ========================================================================= */
 
-/* Linen weave: notification-center grey crosshatch. Cranked from 0.06 → 0.20. */
+/* Linen weave: notification-center grey crosshatch (warm-neutral). */
 .texture-linen {
   background-image:
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18  0 0 0 0 0.22  0 0 0 0 0.18  0 0 0 0.20 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18  0 0 0 0 0.18  0 0 0 0 0.18  0 0 0 0.20 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
   background-size: 80px 80px;
   background-repeat: repeat;
 }
 
-/* Paper grain: warm hairlines. Cranked from 0.045 → 0.18. */
+/* Paper grain: warm hairlines. */
 .texture-paper {
   background-image:
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.32  0 0 0 0 0.28  0 0 0 0 0.18  0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23p)'/></svg>");
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.30  0 0 0 0 0.26  0 0 0 0 0.18  0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23p)'/></svg>");
   background-size: 100px 100px;
   background-repeat: repeat;
 }
 
-/* Brushed metal: horizontal anisotropic streaks. Cranked from 0.07 → 0.22. */
+/* Brushed metal: horizontal anisotropic streaks (cool-neutral). */
 .texture-brushed {
   background-image:
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='40' viewBox='0 0 200 40'><filter id='b'><feTurbulence type='fractalNoise' baseFrequency='0.04 0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.55  0 0 0 0 0.55  0 0 0 0.22 0'/></filter><rect width='100%25' height='100%25' filter='url(%23b)'/></svg>");
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='40' viewBox='0 0 200 40'><filter id='b'><feTurbulence type='fractalNoise' baseFrequency='0.04 0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.55  0 0 0 0 0.55  0 0 0 0 0.52  0 0 0 0.22 0'/></filter><rect width='100%25' height='100%25' filter='url(%23b)'/></svg>");
   background-size: 200px 40px;
   background-repeat: repeat;
 }
 
-/* Felt: tight noise like iOS 6 Game Center pad. Cranked from 0.05 → 0.18. */
+/* Felt: tight noise like iOS 6 Game Center pad (kept green — it IS felt). */
 .texture-felt {
   background-image:
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18  0 0 0 0 0.32  0 0 0 0 0.22  0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23f)'/></svg>");
@@ -524,50 +529,50 @@ h1, h2, h3, h4 {
     /* gloss top */
     linear-gradient(180deg, oklch(1 0 0 / 0.50) 0%, oklch(1 0 0 / 0.18) 30%, transparent 55%),
     /* texture */
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18  0 0 0 0 0.22  0 0 0 0 0.18  0 0 0 0.20 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18  0 0 0 0 0.18  0 0 0 0 0.18  0 0 0 0.20 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
   background-size: 100% 100%, 80px 80px;
   background-repeat: no-repeat, repeat;
   border-radius: var(--radius);
   box-shadow: var(--shadow-raised),
               inset 0 1px 0 oklch(1 0 0 / 0.95),
               inset 0 2px 0 oklch(1 0 0 / 0.40),
-              inset 0 -1px 0 oklch(0.55 0.03 145 / 0.20);
+              inset 0 -1px 0 oklch(0.55 0.012 80 / 0.20);
 }
 
 .material-aluminum {
   position: relative;
   overflow: hidden;
-  background-color: oklch(0.93 0.014 145);
+  background-color: oklch(0.91 0.008 80);
   background-image:
     /* gloss top */
     linear-gradient(180deg, oklch(1 0 0 / 0.55) 0%, oklch(1 0 0 / 0.20) 28%, transparent 55%),
     /* anisotropic streaks */
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='40' viewBox='0 0 200 40'><filter id='b'><feTurbulence type='fractalNoise' baseFrequency='0.04 0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.55  0 0 0 0 0.55  0 0 0 0.22 0'/></filter><rect width='100%25' height='100%25' filter='url(%23b)'/></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='40' viewBox='0 0 200 40'><filter id='b'><feTurbulence type='fractalNoise' baseFrequency='0.04 0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.55  0 0 0 0 0.55  0 0 0 0 0.52  0 0 0 0.22 0'/></filter><rect width='100%25' height='100%25' filter='url(%23b)'/></svg>"),
     /* base aluminum tonal gradient (top-to-bottom) */
-    linear-gradient(180deg, oklch(0.96 0.012 145) 0%, oklch(0.90 0.015 145) 100%);
+    linear-gradient(180deg, oklch(0.94 0.008 80) 0%, oklch(0.88 0.010 80) 100%);
   background-size: 100% 100%, 200px 40px, 100% 100%;
   background-repeat: no-repeat, repeat, no-repeat;
   border-radius: var(--radius);
   box-shadow: var(--shadow-raised),
               inset 0 1px 0 oklch(1 0 0 / 0.85),
-              inset 0 -1px 0 oklch(0.55 0.03 145 / 0.30);
+              inset 0 -1px 0 oklch(0.55 0.012 80 / 0.30);
 }
 
 .material-paper {
   position: relative;
   overflow: hidden;
-  background-color: oklch(0.985 0.014 145);
+  background-color: oklch(0.97 0.008 80);
   background-image:
     /* very subtle warm gloss */
     linear-gradient(180deg, oklch(1 0 0 / 0.30) 0%, transparent 50%),
     /* paper grain */
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.32  0 0 0 0 0.28  0 0 0 0 0.18  0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23p)'/></svg>");
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.30  0 0 0 0 0.26  0 0 0 0 0.18  0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23p)'/></svg>");
   background-size: 100% 100%, 100px 100px;
   background-repeat: no-repeat, repeat;
   border-radius: var(--radius);
   box-shadow: var(--shadow-raised-sm),
               inset 0 1px 0 oklch(1 0 0 / 0.95),
-              inset 0 -1px 0 oklch(0.55 0.03 145 / 0.16);
+              inset 0 -1px 0 oklch(0.55 0.012 80 / 0.16);
 }
 
 .material-leather {
@@ -610,7 +615,7 @@ h1, h2, h3, h4 {
  * Pure CSS — `outline` for the inner dashed line because it doesn't take up
  * space and won't shift content. */
 .border-stitched {
-  border: 1px solid oklch(0.55 0.03 145 / 0.32);
+  border: 1px solid oklch(0.55 0.012 80 / 0.32);
   outline: 1.5px dashed oklch(1 0 0 / 0.55);
   outline-offset: -5px;
 }
@@ -629,8 +634,8 @@ h1, h2, h3, h4 {
       45deg,
       transparent 0px,
       transparent 3px,
-      oklch(0.55 0.03 145 / 0.04) 3px,
-      oklch(0.55 0.03 145 / 0.04) 4px
+      oklch(0.55 0.012 80 / 0.04) 3px,
+      oklch(0.55 0.012 80 / 0.04) 4px
     );
 }
 
@@ -639,8 +644,8 @@ h1, h2, h3, h4 {
   --shadow-deep-bevel:
     0 1px 0 oklch(1 0 0 / 0.85) inset,
     0 -1px 0 oklch(0 0 0 / 0.18) inset,
-    0 1px 2px oklch(0.55 0.03 145 / 0.35),
-    0 2px 4px oklch(0.55 0.03 145 / 0.20);
+    0 1px 2px oklch(0.55 0.012 80 / 0.35),
+    0 2px 4px oklch(0.55 0.012 80 / 0.20);
 }
 
 /* Embossed type — adds a 1px white drop shadow + 1px dark inverse so headings
@@ -648,7 +653,7 @@ h1, h2, h3, h4 {
 .text-embossed {
   text-shadow:
     0 1px 0 oklch(1 0 0 / 0.85),
-    0 -1px 0 oklch(0.78 0.025 145 / 0.25);
+    0 -1px 0 oklch(0.78 0.012 80 / 0.25);
 }
 .text-embossed-on-dark {
   text-shadow:
@@ -661,24 +666,24 @@ h1, h2, h3, h4 {
 .progress-capsule-track {
   background: linear-gradient(
     180deg,
-    oklch(0.86 0.025 145 / 0.5) 0%,
-    oklch(0.92 0.018 145 / 0.4) 100%
+    oklch(0.84 0.012 80 / 0.5) 0%,
+    oklch(0.90 0.010 80 / 0.4) 100%
   );
   box-shadow:
-    inset 0 1px 2px oklch(0.78 0.028 145 / 0.55),
+    inset 0 1px 2px oklch(0.76 0.014 80 / 0.55),
     inset 0 -1px 0 oklch(1 0 0 / 0.7);
   border-radius: 9999px;
 }
 .progress-capsule-fill {
   background: linear-gradient(
     180deg,
-    oklch(0.78 0.18 148) 0%,
-    oklch(0.66 0.18 148) 50%,
-    oklch(0.58 0.18 148) 100%
+    oklch(0.68 0.20 250) 0%,
+    oklch(0.55 0.20 250) 50%,
+    oklch(0.46 0.18 250) 100%
   );
   box-shadow:
     inset 0 1px 0 oklch(1 0 0 / 0.55),
-    inset 0 -1px 1px oklch(0.45 0.16 148 / 0.6);
+    inset 0 -1px 1px oklch(0.32 0.16 250 / 0.6);
   border-radius: 9999px;
   position: relative;
   overflow: hidden;
@@ -703,8 +708,8 @@ h1, h2, h3, h4 {
 /* Felt-edge inner shadow on scrollable canvases — content reads as sunk. */
 .scroll-inset {
   box-shadow:
-    inset 0 6px 8px -6px oklch(0.78 0.025 145 / 0.25),
-    inset 0 -6px 8px -6px oklch(0.78 0.025 145 / 0.18);
+    inset 0 6px 8px -6px oklch(0.78 0.012 80 / 0.25),
+    inset 0 -6px 8px -6px oklch(0.78 0.012 80 / 0.18);
 }
 
 /* Apply gloss to every .btn-tactile automatically — keeps existing markup

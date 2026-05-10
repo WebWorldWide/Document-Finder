@@ -18,6 +18,17 @@ const PRIMARY_SOURCES: readonly SourceId[] = ALL_SOURCES.filter(
   (s) => !META_SEARCH_COVERED.includes(s)
 );
 
+function humanIssueKind(kind: string): string {
+  switch (kind) {
+    case "rate_limit": return "rate limited";
+    case "forbidden": return "blocked";
+    case "server_error": return "server error";
+    case "timeout": return "timed out";
+    case "parse_error": return "parse";
+    default: return "issue";
+  }
+}
+
 const EXAMPLES = [
   "machine learning survey 2024",
   "climate change adaptation policy",
@@ -184,17 +195,17 @@ export default function FindTab() {
         >
           <div class="flex h-full flex-col">
             {/* Status row + post-run actions — raised pills on canvas */}
-            <div class="flex flex-wrap items-center gap-2 px-4 py-3 text-[12px]">
-              <span class="surface-raised-xs px-2.5 py-1 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
+            <div class="flex flex-wrap items-center gap-2 px-4 py-3 text-[11px]">
+              <span class="surface-raised-xs px-3 py-1.5 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
                 <strong class="text-[var(--color-foreground)]">{rs().found}</strong>{" "}
                 found
               </span>
-              <span class="surface-raised-xs px-2.5 py-1 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
+              <span class="surface-raised-xs px-3 py-1.5 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
                 <strong style={{ color: "var(--color-success)" }}>{rs().done}</strong>{" "}
                 saved
               </span>
               <Show when={rs().failed > 0}>
-                <span class="surface-raised-xs px-2.5 py-1 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
+                <span class="surface-raised-xs px-3 py-1.5 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
                   <strong class="text-[var(--color-destructive)]">
                     {rs().failed}
                   </strong>{" "}
@@ -204,14 +215,16 @@ export default function FindTab() {
               <ModelStatusBadge />
 
               <Show when={rs().total > 0}>
-                <span class="ml-auto text-[10px] font-mono text-[var(--color-foreground-muted)]">
-                  {runStore.overallPct}%
-                </span>
-                <div class="surface-pressed-sm h-1.5 w-32 overflow-hidden">
-                  <div
-                    class="h-full rounded-full bg-[var(--color-primary)] transition-all duration-500"
-                    style={{ width: `${runStore.overallPct}%` }}
-                  />
+                <div class="ml-auto flex items-center gap-2">
+                  <span class="text-[10px] font-mono text-[var(--color-foreground-muted)]">
+                    {runStore.overallPct}%
+                  </span>
+                  <div class="surface-pressed-sm h-1.5 w-32 overflow-hidden">
+                    <div
+                      class="h-full rounded-full bg-[var(--color-primary)] transition-all duration-500"
+                      style={{ width: `${runStore.overallPct}%` }}
+                    />
+                  </div>
                 </div>
               </Show>
 
@@ -220,7 +233,7 @@ export default function FindTab() {
                   <button
                     onClick={handleExport}
                     disabled={exporting()}
-                    class="btn-tactile flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
+                    class="btn-tactile flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium"
                   >
                     <Show when={exporting()} fallback={<Archive size={11} />}>
                       <Loader2 size={11} class="animate-spin" />
@@ -229,14 +242,14 @@ export default function FindTab() {
                   </button>
                   <button
                     onClick={handleOpenLibrary}
-                    class="btn-tactile flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
+                    class="btn-tactile flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium"
                   >
                     <BookOpen size={11} />
                     Library
                   </button>
                   <button
                     onClick={() => rs().folder && api.revealInFinder(rs().folder!)}
-                    class="btn-tactile flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
+                    class="btn-tactile flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium"
                   >
                     <FolderOpen size={11} />
                     Folder
@@ -310,11 +323,19 @@ export default function FindTab() {
                   <div class="space-y-1 pb-3 pt-1">
                     <For each={rs().sourceIssues}>
                       {(issue) => (
-                        <div class="flex gap-2 text-[11px]">
+                        <div class="flex items-baseline gap-2 text-[11px]">
                           <span class="shrink-0 font-medium text-amber-600">
                             {issue.source}
                           </span>
-                          <span class="text-[var(--color-foreground-muted)]">
+                          <span class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-mono"
+                            style={{
+                              "background-color": "color-mix(in oklch, var(--color-foreground-muted) 18%, transparent)",
+                              color: "var(--color-foreground-muted)",
+                            }}
+                          >
+                            {humanIssueKind(issue.kind)}{issue.count > 1 ? ` ×${issue.count}` : ""}
+                          </span>
+                          <span class="text-[var(--color-foreground-muted)] truncate">
                             {issue.error}
                           </span>
                         </div>
@@ -354,7 +375,7 @@ function FullHeader(props: {
   setShowOptions: (v: boolean) => void;
 }) {
   return (
-    <div class="p-6 pt-10 space-y-5">
+    <div class="p-6 pt-10 space-y-4">
       {/* Inset query input */}
       <div class="relative">
         <textarea
@@ -574,7 +595,7 @@ function WelcomeBody(props: { onPickExample: (ex: string) => void }) {
           </For>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-4 gap-2">
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
           <For each={PIPELINE_STAGES}>
             {(stage, i) => (
               <div class="surface-raised-subtle surface-bevel-sm p-3 text-center">

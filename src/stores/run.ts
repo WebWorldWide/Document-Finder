@@ -2,7 +2,7 @@ import { createStore, produce } from "solid-js/store";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api, type ExportResult } from "@/lib/tauri";
 import type { CandidatePayload, DfEvent } from "@/lib/events";
-import { settings } from "@/stores/settings";
+import { settings, qualityToFlags } from "@/stores/settings";
 import { pipelineStore } from "@/stores/pipeline";
 
 export interface InFlight {
@@ -28,6 +28,11 @@ export interface CompletedItem {
 export interface SourceIssue {
   source: string;
   error: string;
+  /// One of: rate_limit, forbidden, server_error, timeout, parse_error, other.
+  /// Used for dedup — repeated errors of the same (source, kind) combine
+  /// into a single row with a count badge instead of stacking.
+  kind: string;
+  count: number;
   ts: number;
 }
 
@@ -131,12 +136,29 @@ function apply(ev: DfEvent) {
       break;
 
     case "source_error":
+      // Dedup by (source, kind) — repeats of the same category bump the
+      // count on the existing row instead of stacking new ones. The
+      // backend already drops parse_error before emitting and dedups
+      // within a single task, so the frontend just needs to handle the
+      // cross-task / cross-subquery overlap.
       setState(
         produce((s) => {
-          s.sourceIssues = [
-            ...s.sourceIssues,
-            { source: ev.payload.source, error: ev.payload.error, ts: Date.now() },
-          ].slice(-50);
+          const { source, error, kind } = ev.payload;
+          const existing = s.sourceIssues.find(
+            (i) => i.source === source && i.kind === kind
+          );
+          if (existing) {
+            existing.count += 1;
+            existing.ts = Date.now();
+            // Keep the freshest message verbatim — useful when the backend
+            // includes a slightly different detail each time.
+            existing.error = error;
+          } else {
+            s.sourceIssues = [
+              ...s.sourceIssues,
+              { source, error, kind, count: 1, ts: Date.now() },
+            ].slice(-50);
+          }
         })
       );
       addLog("warn", `   ${ev.payload.source}: ${ev.payload.error}`);
@@ -283,6 +305,7 @@ async function startSearch(query: string) {
   setState("running", true);
 
   try {
+    const flags = qualityToFlags(settings.quality);
     await api.startRun({
       query: query.trim(),
       sources: settings.selectedSources,
@@ -292,9 +315,7 @@ async function startSearch(query: string) {
       concurrency: settings.concurrency,
       extract: true,
       use_citation_graph: settings.useCitationGraph,
-      use_semantic_rerank: settings.useSemanticRerank,
-      use_llm_expansion: settings.useLlmExpansion,
-      use_llm_filter: settings.useLlmFilter,
+      ...flags,
       llm_model_id: settings.llmModelId || null,
       source_options: {
         searxng: { instance_url: settings.searxngUrl },

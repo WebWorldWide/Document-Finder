@@ -1,7 +1,7 @@
 import { createSignal, onMount, Show, For } from "solid-js";
 import { FolderOpen, FileText, Loader2, CheckCircle2, Sparkles, RefreshCw, AlertCircle } from "lucide-solid";
 import { api, type LogInfo } from "@/lib/tauri";
-import { settings, setSettings, saveSettings } from "@/stores/settings";
+import { settings, setSettings, saveSettings, type Quality } from "@/stores/settings";
 import { modelsStore } from "@/stores/models";
 import ModelDownloadCard from "./ModelDownloadCard";
 import SearxngSetupPanel from "./SearxngSetupPanel";
@@ -34,7 +34,7 @@ export default function SettingsView() {
         {/* Discovery settings */}
         <section class="material-linen p-5">
           <h2 class="mb-4 text-sm font-semibold text-embossed">Discovery</h2>
-          <div class="grid grid-cols-3 gap-4">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <label class="block">
               <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">Per source</span>
               <input
@@ -74,15 +74,15 @@ export default function SettingsView() {
 
         {/* AI Models */}
         <section class="material-aluminum p-5">
-          <div class="mb-3 flex items-center gap-2">
+          <div class="mb-1 flex items-center gap-2">
             <Sparkles size={14} class="text-[var(--color-primary)]" />
             <h2 class="text-sm font-semibold text-embossed">AI Models</h2>
-            <Show when={modelsStore.totalDiskBytes > 0}>
-              <span class="ml-auto text-[10px] text-[var(--color-muted-foreground)]">
-                {formatBytes(modelsStore.totalDiskBytes)} on disk
-              </span>
-            </Show>
           </div>
+          <Show when={modelsStore.totalDiskBytes > 0}>
+            <p class="mb-2 text-[10px] text-[var(--color-muted-foreground)]">
+              {formatBytes(modelsStore.totalDiskBytes)} on disk
+            </p>
+          </Show>
           <p class="mb-4 text-xs leading-relaxed text-[var(--color-muted-foreground)]">
             Two local models power Tier 2 (semantic reranking) and Tier 3
             (LLM query expansion + borderline filtering). Everything runs
@@ -134,57 +134,52 @@ export default function SettingsView() {
           </Show>
         </section>
 
-        {/* Ranking */}
+        {/* Search quality — collapsed from 4 confusing toggles to one pill */}
         <section class="material-feltgreen p-5">
-          <h2 class="mb-1 text-sm font-semibold text-embossed-on-dark">Ranking</h2>
-          <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
-            Cross-source dedup, TF-IDF, and Reciprocal Rank Fusion are always on.
-            The toggles below add additional ranking signals.
+          <h2 class="mb-1 text-sm font-semibold text-embossed-on-dark">Search Quality</h2>
+          <p class="mb-4 text-xs leading-relaxed" style={{ color: "oklch(0.92 0.04 148)" }}>
+            How hard the app works to rank your results. The keyword baseline
+            (TF-IDF, RRF, authority) always runs.
           </p>
-          <div class="space-y-2.5">
-            <RankingToggle
-              checked={settings.useSemanticRerank}
-              onToggle={(v) => {
-                setSettings("useSemanticRerank", v);
-                saveSettings();
-              }}
-              label="Semantic reranking"
-              detail="bge-small-en-v1.5"
+
+          <div class="surface-raised-sm flex items-center gap-1 p-1 mb-3">
+            <QualityTab
+              q="fast"
+              label="Fast"
+              caption="Lexical only · instant"
+              active={settings.quality === "fast"}
+            />
+            <QualityTab
+              q="balanced"
+              label="Balanced"
+              caption={modelsStore.embeddingReady ? "+ semantic rerank · ~5s" : "needs embedding model"}
+              active={settings.quality === "balanced"}
               disabled={!modelsStore.embeddingReady}
-              disabledHint="Download the embedding model above to enable."
             />
-            <RankingToggle
-              checked={settings.useLlmExpansion}
-              onToggle={(v) => {
-                setSettings("useLlmExpansion", v);
-                saveSettings();
-              }}
-              label="LLM query expansion"
-              detail="generates 5–8 alternative search phrasings before discovery"
+            <QualityTab
+              q="thorough"
+              label="Thorough"
+              caption={modelsStore.llmReady ? "+ LLM expand & filter · slower" : "needs LLM model"}
+              active={settings.quality === "thorough"}
               disabled={!modelsStore.llmReady}
-              disabledHint="Download an LLM model above to enable."
-            />
-            <RankingToggle
-              checked={settings.useLlmFilter}
-              onToggle={(v) => {
-                setSettings("useLlmFilter", v);
-                saveSettings();
-              }}
-              label="LLM borderline filter"
-              detail="judges 50–70th percentile candidates for topical fit"
-              disabled={!modelsStore.llmReady}
-              disabledHint="Download an LLM model above to enable."
-            />
-            <RankingToggle
-              checked={settings.useCitationGraph}
-              onToggle={(v) => {
-                setSettings("useCitationGraph", v);
-                saveSettings();
-              }}
-              label="Citation-graph reasoning"
-              detail="Semantic Scholar refs/cites — slower, deeper"
             />
           </div>
+
+          <p class="mb-4 text-[11px] leading-relaxed" style={{ color: "oklch(0.92 0.04 148)" }}>
+            {settings.quality === "fast" && "Keyword scoring across all sources. Returns immediately. No models needed."}
+            {settings.quality === "balanced" && "Adds semantic reranking via the embedding model — top 100 results re-scored by query meaning, not just keyword overlap."}
+            {settings.quality === "thorough" && "Full AI pipeline: LLM generates extra sub-queries before discovery, semantic reranking, then LLM borderline-filter pass on the middle band. Several seconds slower."}
+          </p>
+
+          <RankingToggle
+            checked={settings.useCitationGraph}
+            onToggle={(v) => {
+              setSettings("useCitationGraph", v);
+              saveSettings();
+            }}
+            label="Citation-graph reasoning"
+            detail="Cross-references Semantic Scholar — boosts papers cited by other top results. Slow."
+          />
         </section>
 
         {/* Library folder */}
@@ -389,5 +384,34 @@ function RankingToggle(props: {
         </Show>
       </span>
     </label>
+  );
+}
+
+/// One of three quality pills. Stacks label + caption vertically so the
+/// per-state explanation lives directly under the choice without needing
+/// a tooltip. Disabled when the prerequisite model isn't downloaded yet.
+function QualityTab(props: {
+  q: Quality;
+  label: string;
+  caption: string;
+  active: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={() => {
+        if (props.disabled) return;
+        setSettings("quality", props.q);
+        saveSettings();
+      }}
+      disabled={props.disabled}
+      class="pill-toggle flex-1 px-3 py-2 text-center"
+      classList={{ "is-active": props.active, "opacity-55 cursor-not-allowed": !!props.disabled }}
+    >
+      <div class="text-[12px] font-semibold leading-tight">{props.label}</div>
+      <div class="mt-0.5 text-[10px] leading-tight" style={{ color: props.active ? "var(--color-primary)" : "oklch(0.85 0.05 148)" }}>
+        {props.caption}
+      </div>
+    </button>
   );
 }

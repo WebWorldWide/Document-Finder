@@ -242,6 +242,7 @@ pub async fn run_pipeline(
                     SourceErrorPayload {
                         source: sname.clone(),
                         error: "unknown source".into(),
+                        kind: "other".into(),
                     },
                 );
                 continue;
@@ -271,6 +272,12 @@ pub async fn run_pipeline(
 
                 let mut count = 0usize;
                 let mut rank_in_source = 0usize;
+                // Per-task dedup so a source spamming the same error class
+                // (typical: 8× "429 rate limit" from Brave during a multi-page
+                // scrape) collapses into a single UI surface instead of
+                // hammering the issues panel.
+                let mut seen_kinds: std::collections::HashSet<&'static str> =
+                    std::collections::HashSet::new();
                 let mut stream = src.search(keywords_t.clone(), per_source).await;
 
                 while let Some(item) = stream.next().await {
@@ -311,16 +318,31 @@ pub async fn run_pipeline(
                         }
                         Err(e) => {
                             let err_str = e.to_string();
+                            // Always log to the runlog file so post-mortem
+                            // analysis stays complete.
                             runlog::log(runlog::Event::SourceError {
                                 source: &sname_t,
                                 error: &err_str,
                                 sub_query: Some(&sub_t),
                             });
+                            let kind = crate::events::classify_source_error(&err_str);
+                            // Parse-class errors mean HTML markup drift —
+                            // users can't act on them. Silent.
+                            if kind == "parse_error" {
+                                continue;
+                            }
+                            // Don't re-emit the same class within this task —
+                            // the frontend dedups by (source, kind) too, but
+                            // suppressing here keeps the event stream lean.
+                            if !seen_kinds.insert(kind) {
+                                continue;
+                            }
                             let _ = app_t.emit(
                                 EV_SOURCE_ERROR,
                                 SourceErrorPayload {
                                     source: sname_t.clone(),
                                     error: err_str,
+                                    kind: kind.into(),
                                 },
                             );
                         }
