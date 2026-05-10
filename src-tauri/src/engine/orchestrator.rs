@@ -113,6 +113,9 @@ pub async fn run_pipeline(
     cancel: CancellationToken,
 ) -> anyhow::Result<()> {
     let client = Arc::new(make_client());
+    // `mut` is only consumed by the LLM expansion block below — without
+    // ai-llm, sub_queries is read-only.
+    #[cfg_attr(not(feature = "ai-llm"), allow(unused_mut))]
     let mut sub_queries = expand_query(&req.query);
 
     // Tier 3a: LLM query expansion (best-effort, gracefully no-op if model
@@ -378,7 +381,7 @@ pub async fn run_pipeline(
 
     // Rank everything we found, then flag rejects so the UI can show greyed
     // entries with explanations rather than silently dropping low-relevance
-    // candidates the way the old `relevance_score == 0` filter did.
+    // candidates.
     emit_stage(&app, "rank", "started", None, None, None);
     let mut ranked: Vec<RankedDoc> = flag_rejects(rank_candidates(&all_keywords, merged));
     let kept_after_rank = ranked.iter().filter(|r| r.reject_reason.is_none()).count();

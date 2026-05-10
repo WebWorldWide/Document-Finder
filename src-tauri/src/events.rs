@@ -20,7 +20,6 @@ pub const EV_DOWNLOAD_FAILED: &str = "df:download_failed";
 pub const EV_CANCELLED: &str = "df:cancelled";
 pub const EV_COMPLETE: &str = "df:complete";
 pub const EV_ERROR: &str = "df:error";
-pub const EV_FILTERED: &str = "df:filtered";
 
 // SearXNG setup streaming events
 pub const EV_SEARXNG_LOG: &str = "df:searxng_setup_log";
@@ -129,12 +128,6 @@ pub struct CompletePayload {
     pub total: usize,
     pub folder: String,
     pub manifest: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct FilteredPayload {
-    pub source: String,
-    pub count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]

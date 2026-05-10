@@ -94,24 +94,6 @@ pub fn expand_query(q: &str) -> Vec<String> {
     }
 }
 
-/// Number of distinct keywords that appear (case-insensitive substring match)
-/// in `text`. Used as a relevance signal when filtering candidates before
-/// download — a paper that doesn't mention any of the query's load-bearing
-/// words in its title or abstract is almost certainly off-topic.
-pub fn relevance_score(keywords: &[String], text: &str) -> usize {
-    if keywords.is_empty() {
-        return 0;
-    }
-    let lower = text.to_lowercase();
-    keywords
-        .iter()
-        .filter(|k| {
-            let kl = k.to_lowercase();
-            !kl.is_empty() && lower.contains(&kl)
-        })
-        .count()
-}
-
 /// Folder-safe slug derived from a query string.
 /// A short Unix timestamp suffix is appended so concurrent or repeated runs
 /// with similar queries never collide on the same output directory.
@@ -168,37 +150,4 @@ mod tests {
         assert!(suffix.parse::<u64>().is_ok(), "non-numeric suffix: {}", suffix);
     }
 
-    #[test]
-    fn relevance_zero_when_no_match() {
-        let kw = vec!["christian".to_string(), "patristic".to_string()];
-        assert_eq!(relevance_score(&kw, "Effect of Inquiry Learning Model"), 0);
-    }
-
-    #[test]
-    fn relevance_counts_distinct_matches() {
-        let kw = vec!["christian".to_string(), "bibles".to_string()];
-        assert_eq!(
-            relevance_score(&kw, "A history of Christian bibles in Africa"),
-            2
-        );
-    }
-
-    #[test]
-    fn relevance_is_case_insensitive() {
-        let kw = vec!["CHRISTIAN".to_string()];
-        assert_eq!(relevance_score(&kw, "christian migration patterns"), 1);
-    }
-
-    #[test]
-    fn relevance_handles_substrings() {
-        let kw = vec!["christian".to_string()];
-        // "Christianization" contains "christian" — counted as match.
-        assert_eq!(relevance_score(&kw, "Christianization in early Europe"), 1);
-    }
-
-    #[test]
-    fn relevance_empty_keywords() {
-        let kw: Vec<String> = vec![];
-        assert_eq!(relevance_score(&kw, "anything"), 0);
-    }
 }

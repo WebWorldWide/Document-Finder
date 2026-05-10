@@ -36,11 +36,6 @@ export interface SourceErrorPayload {
   error: string;
 }
 
-export interface FilteredPayload {
-  source: string;
-  count: number;
-}
-
 export interface DownloadStartedPayload {
   url: string;
   title: string;
@@ -171,7 +166,6 @@ export type DfEvent =
   | { type: "source_start"; payload: SourceStartPayload }
   | { type: "source_done"; payload: SourceDonePayload }
   | { type: "source_error"; payload: SourceErrorPayload }
-  | { type: "filtered"; payload: FilteredPayload }
   | { type: "download_started"; payload: DownloadStartedPayload }
   | { type: "download_progress"; payload: DownloadProgressPayload }
   | { type: "download_done"; payload: DownloadDonePayload }
@@ -198,7 +192,6 @@ const EVENTS = [
   "download_failed",
   "cancelled",
   "complete",
-  "filtered",
   "error",
   "candidate",
   "ranking_done",

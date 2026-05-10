@@ -48,7 +48,6 @@ interface RunState {
   failed: number;
   total: number;
   active: number;
-  filteredCount: number;
   inFlight: Record<string, InFlight>;
   completed: CompletedItem[];
   sourceIssues: SourceIssue[];
@@ -72,7 +71,6 @@ const [state, setState] = createStore<RunState>({
   failed: 0,
   total: 0,
   active: 0,
-  filteredCount: 0,
   inFlight: {},
   completed: [],
   sourceIssues: [],
@@ -100,7 +98,6 @@ function reset(query: string) {
     failed: 0,
     total: 0,
     active: 0,
-    filteredCount: 0,
     inFlight: {},
     completed: [],
     sourceIssues: [],
@@ -239,11 +236,6 @@ function apply(ev: DfEvent) {
           ? `Cancelled. Saved ${ev.payload.done} file(s).`
           : `Done. ${ev.payload.done} saved, ${ev.payload.failed} failed.`
       );
-      break;
-
-    case "filtered":
-      setState("filteredCount", (prev) => prev + ev.payload.count);
-      addLog("info", `   ${ev.payload.source}: filtered ${ev.payload.count} off-topic`);
       break;
 
     case "error":
