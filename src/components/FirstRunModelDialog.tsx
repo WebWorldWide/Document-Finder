@@ -40,7 +40,7 @@ export default function FirstRunModelDialog() {
   return (
     <Show when={open()}>
       <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm animate-fade-in">
-        <div class="surface-floating relative w-full max-w-lg p-6">
+        <div class="surface-floating surface-bevel surface-glossy texture-linen relative w-full max-w-lg p-6">
           <button
             onClick={dismiss}
             aria-label="Dismiss"
@@ -50,10 +50,13 @@ export default function FirstRunModelDialog() {
           </button>
 
           <div class="mb-4 flex items-center gap-2">
-            <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--color-primary)] text-white">
+            <div
+              class="surface-glossy flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--color-primary)] text-white"
+              style={{ "box-shadow": "var(--shadow-raised-xs), inset 0 1px 0 oklch(1 0 0 / 0.6), inset 0 -1px 0 oklch(0 0 0 / 0.18)" }}
+            >
               <Sparkles size={16} />
             </div>
-            <h2 class="text-base font-semibold">Enable smarter search</h2>
+            <h2 class="text-base font-semibold text-embossed">Enable smarter search</h2>
           </div>
 
           <p class="mb-4 text-xs leading-relaxed text-[var(--color-muted-foreground)]">
