@@ -43,7 +43,7 @@ export default function PipelineStrip() {
   });
 
   return (
-    <div class="surface-raised-sm surface-bevel-sm mx-4 mb-2 flex items-center gap-2 px-3 py-2">
+    <div class="surface-raised-sm mx-4 mb-2 flex items-center gap-2 px-3 py-2">
       <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--color-foreground-muted)] text-embossed shrink-0">
         Pipeline
       </span>

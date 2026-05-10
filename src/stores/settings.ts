@@ -35,6 +35,29 @@ function safeBool(v: unknown, fallback: boolean): boolean {
   return typeof v === "boolean" ? v : fallback;
 }
 
+/// One of three search-quality presets. The orchestrator's three AI booleans
+/// (semantic rerank, LLM expansion, LLM filter) are derived from this in
+/// `qualityToFlags` below — single source of truth for the user.
+export type Quality = "fast" | "balanced" | "thorough";
+
+function safeQuality(v: unknown, fallback: Quality): Quality {
+  return v === "fast" || v === "balanced" || v === "thorough" ? v : fallback;
+}
+
+/// Best-effort migration from the old per-flag settings (round-3) to the
+/// new quality enum. Only runs once on first load if the new key is absent.
+function migrateQuality(saved: Record<string, unknown>): Quality {
+  if (saved.quality !== undefined) return safeQuality(saved.quality, "balanced");
+  const sem = !!saved.useSemanticRerank;
+  const exp = !!saved.useLlmExpansion;
+  const fil = !!saved.useLlmFilter;
+  if (exp || fil) return "thorough";
+  if (sem) return "balanced";
+  // If the user had explicitly turned everything off, respect that.
+  if (saved.useSemanticRerank === false) return "fast";
+  return "balanced";
+}
+
 export const [settings, setSettings] = createStore({
   libraryRoot:     safeStr(saved.libraryRoot, ""),
   perSource:       posInt(saved.perSource, 100),
@@ -43,14 +66,32 @@ export const [settings, setSettings] = createStore({
   selectedSources: safeSources(saved.selectedSources),
   searxngUrl:      safeUrl(saved.searxngUrl, "http://localhost:8080"),
   useCitationGraph: safeBool(saved.useCitationGraph, false),
-  // AI / Tier 2 + 3 (default true; auto-no-ops if model not downloaded)
-  useSemanticRerank: safeBool(saved.useSemanticRerank, true),
-  useLlmExpansion:   safeBool(saved.useLlmExpansion, true),
-  useLlmFilter:      safeBool(saved.useLlmFilter, true),
-  llmModelId:        safeStr(saved.llmModelId, "qwen2.5-3b-instruct-q4_k_m"),
+  /// Search quality preset — replaces the previous useSemanticRerank /
+  /// useLlmExpansion / useLlmFilter trio. See `qualityToFlags` for the
+  /// concrete flag mapping.
+  quality:         migrateQuality(saved),
+  llmModelId:      safeStr(saved.llmModelId, "qwen2.5-3b-instruct-q4_k_m"),
   // Whether to dismiss the first-run AI download prompt (sticky once dismissed)
   aiOnboardingDismissed: safeBool(saved.aiOnboardingDismissed, false),
 });
+
+/// Maps the user-facing `quality` enum to the three booleans the
+/// orchestrator's `RunRequest` still consumes. Kept here so the
+/// translation lives next to the enum definition.
+export function qualityToFlags(q: Quality): {
+  use_semantic_rerank: boolean;
+  use_llm_expansion: boolean;
+  use_llm_filter: boolean;
+} {
+  switch (q) {
+    case "fast":
+      return { use_semantic_rerank: false, use_llm_expansion: false, use_llm_filter: false };
+    case "balanced":
+      return { use_semantic_rerank: true, use_llm_expansion: false, use_llm_filter: false };
+    case "thorough":
+      return { use_semantic_rerank: true, use_llm_expansion: true, use_llm_filter: true };
+  }
+}
 
 if (!settings.libraryRoot) {
   api.defaultLibraryDir()

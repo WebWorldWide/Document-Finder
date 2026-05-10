@@ -96,3 +96,15 @@ codegen-units = 1
 lto = true
 opt-level = 3
 strip = true
+
+# Day-to-day "release that compiles in a reasonable amount of time" profile.
+# Full LTO + codegen-units=1 (the `release` profile above) literally serializes
+# code generation onto one CPU core — that's why builds didn't pin CPU.
+# `release-fast` keeps opt-level=3 but parallelizes codegen and uses thin LTO
+# instead of fat. Roughly 3–4× faster compile, binary ~5% larger, performance
+# indistinguishable for a Tauri app. `run.sh` uses this; the strict `release`
+# profile stays available for actual ship builds (DMG distributions etc.).
+[profile.release-fast]
+inherits = "release"
+codegen-units = 16
+lto = "thin"

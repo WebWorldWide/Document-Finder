@@ -31,9 +31,18 @@ export interface SourceDonePayload {
   count: number;
 }
 
+export type SourceErrorKind =
+  | "rate_limit"
+  | "forbidden"
+  | "server_error"
+  | "timeout"
+  | "parse_error"
+  | "other";
+
 export interface SourceErrorPayload {
   source: string;
   error: string;
+  kind: SourceErrorKind;
 }
 
 export interface DownloadStartedPayload {

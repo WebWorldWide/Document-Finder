@@ -156,7 +156,7 @@ export default function LibraryView() {
         </Show>
 
         <Show when={!loading() && libraries().length > 0}>
-          <div class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             <For each={libraries()}>
               {(lib) => {
                 const isActive = () => uiStore.activeLibrary?.path === lib.path;
@@ -167,7 +167,7 @@ export default function LibraryView() {
                   <div
                     role="button"
                     tabindex="0"
-                    class="group p-5 cursor-pointer outline-none transition-all duration-200 hover:translate-y-[-2px]"
+                    class="group p-4 cursor-pointer outline-none transition-all duration-200 hover:translate-y-[-2px]"
                     classList={{
                       "surface-pressed": isActive(),
                       "material-paper border-stitched": !isActive(),
