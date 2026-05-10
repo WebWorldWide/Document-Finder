@@ -1,6 +1,10 @@
 [[permission]]
 identifier = "allow-app-access"
 description = "Grants full access to the Document Finder library and core app commands."
+# This list MUST stay in sync with `tauri::generate_handler![...]` in
+# src/lib.rs. The integration test in tests/permissions_in_sync.rs fails the
+# build if they diverge — Tauri 2 silently denies any command not listed here
+# and the user only sees "Command X not allowed by ACL" at runtime.
 commands.allow = [
   "default_library_dir",
   "start_run",
@@ -11,5 +15,10 @@ commands.allow = [
   "reveal_in_finder",
   "run_log_info",
   "run_log_tail",
-  "setup_searxng"
+  "setup_searxng",
+  "list_models",
+  "download_model",
+  "cancel_model_download",
+  "delete_model",
+  "delete_library"
 ]
