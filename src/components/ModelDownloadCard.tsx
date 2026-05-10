@@ -113,9 +113,9 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
       </div>
 
       <Show when={m().status.kind === "downloading"}>
-        <div class="surface-pressed-sm mt-2 h-1.5 w-full overflow-hidden">
+        <div class="progress-capsule-track mt-2 h-2.5 w-full overflow-hidden">
           <div
-            class="h-full rounded-full bg-[var(--color-primary)] transition-all duration-300"
+            class="progress-capsule-fill h-full transition-all duration-300"
             style={{ width: `${pct()}%` }}
           />
         </div>

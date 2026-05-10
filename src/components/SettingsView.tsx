@@ -99,11 +99,11 @@ export default function SettingsView() {
   return (
     <div class="h-full overflow-y-auto">
       <div class="mx-auto max-w-2xl space-y-6 p-6 pt-10">
-        <h1 class="text-xl font-semibold">Settings</h1>
+        <h1 class="text-xl font-semibold text-embossed">Settings</h1>
 
         {/* Discovery settings */}
-        <section class="surface-raised p-5">
-          <h2 class="mb-4 text-sm font-semibold">Discovery</h2>
+        <section class="surface-raised surface-bevel surface-glossy texture-linen p-5">
+          <h2 class="mb-4 text-sm font-semibold text-embossed">Discovery</h2>
           <div class="grid grid-cols-3 gap-4">
             <label class="block">
               <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">Per source</span>
@@ -143,10 +143,10 @@ export default function SettingsView() {
         </section>
 
         {/* AI Models */}
-        <section class="surface-raised p-5">
+        <section class="surface-raised surface-bevel surface-glossy texture-brushed p-5">
           <div class="mb-3 flex items-center gap-2">
             <Sparkles size={14} class="text-[var(--color-primary)]" />
-            <h2 class="text-sm font-semibold">AI Models</h2>
+            <h2 class="text-sm font-semibold text-embossed">AI Models</h2>
             <Show when={modelsStore.totalDiskBytes > 0}>
               <span class="ml-auto text-[10px] text-[var(--color-muted-foreground)]">
                 {formatBytes(modelsStore.totalDiskBytes)} on disk
@@ -176,8 +176,8 @@ export default function SettingsView() {
         </section>
 
         {/* Ranking */}
-        <section class="surface-raised p-5">
-          <h2 class="mb-1 text-sm font-semibold">Ranking</h2>
+        <section class="surface-raised surface-bevel surface-glossy texture-felt p-5">
+          <h2 class="mb-1 text-sm font-semibold text-embossed">Ranking</h2>
           <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
             Cross-source dedup, TF-IDF, and Reciprocal Rank Fusion are always on.
             The toggles below add additional ranking signals.
@@ -229,8 +229,8 @@ export default function SettingsView() {
         </section>
 
         {/* Library folder */}
-        <section class="surface-raised p-5">
-          <h2 class="mb-3 text-sm font-semibold">Library Folder</h2>
+        <section class="surface-raised surface-bevel surface-glossy texture-paper p-5">
+          <h2 class="mb-3 text-sm font-semibold text-embossed">Library Folder</h2>
           <label>
             <span class="sr-only">Library folder path</span>
             <input
@@ -246,8 +246,8 @@ export default function SettingsView() {
         </section>
 
         {/* Web search */}
-        <section class="surface-raised p-5">
-          <h2 class="mb-1 text-sm font-semibold">Web Search</h2>
+        <section class="surface-raised surface-bevel surface-glossy texture-linen p-5">
+          <h2 class="mb-1 text-sm font-semibold text-embossed">Web Search</h2>
           <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
             Document-Finder includes a built-in meta-search across DuckDuckGo,
             Brave, Bing, Mojeek, Marginalia, and Startpage — no Docker, no
@@ -433,8 +433,8 @@ export default function SettingsView() {
         </section>
 
         {/* Run log */}
-        <section class="surface-raised p-5">
-          <h2 class="mb-1 text-sm font-semibold">Run Log</h2>
+        <section class="surface-raised surface-bevel surface-glossy texture-paper p-5">
+          <h2 class="mb-1 text-sm font-semibold text-embossed">Run Log</h2>
           <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
             Every query, source error, and download outcome is logged here.
             Share this file when reporting issues.

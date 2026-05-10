@@ -31,6 +31,7 @@ export default function LibraryView() {
       .then((libs) => {
         if (!cancelled) {
           setLibraries(libs);
+          uiStore.setKnownLibraries(libs);
           setLoading(false);
         }
       })
@@ -95,7 +96,7 @@ export default function LibraryView() {
   return (
     <div class="flex h-full flex-col overflow-hidden">
       <div class="px-6 py-5 pt-10">
-        <h1 class="text-xl font-semibold">Library</h1>
+        <h1 class="text-xl font-semibold text-embossed">Library</h1>
         <p class="mt-0.5 text-sm text-[var(--color-foreground-muted)]">
           Your saved research collections.
         </p>
@@ -136,11 +137,11 @@ export default function LibraryView() {
         </Show>
 
         <Show when={!loading() && !error() && libraries().length === 0}>
-          <div class="surface-raised flex flex-col items-center justify-center py-16 text-center mx-auto max-w-md">
+          <div class="surface-raised surface-bevel surface-glossy texture-paper flex flex-col items-center justify-center py-16 text-center mx-auto max-w-md">
             <div class="surface-pressed-sm mb-4 p-5" style={{ "border-radius": "9999px" }}>
               <Archive size={28} class="text-[var(--color-foreground-muted)]" />
             </div>
-            <p class="text-sm font-semibold">No libraries yet</p>
+            <p class="text-sm font-semibold text-embossed">No libraries yet</p>
             <p class="mt-1 text-sm text-[var(--color-foreground-muted)]">
               Run a search to build your first collection.
             </p>
@@ -169,7 +170,7 @@ export default function LibraryView() {
                     class="group p-5 cursor-pointer outline-none transition-all duration-200 hover:translate-y-[-2px]"
                     classList={{
                       "surface-pressed": isActive(),
-                      "surface-raised": !isActive(),
+                      "surface-raised surface-bevel-sm surface-glossy texture-paper": !isActive(),
                       "opacity-60 pointer-events-none": isDeleting(),
                     }}
                     onClick={() => uiStore.setActiveLibrary(lib)}

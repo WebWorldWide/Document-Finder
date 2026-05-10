@@ -542,16 +542,27 @@ function CompactHeader(props: {
   );
 }
 
+const PIPELINE_STAGES: { label: string; detail: string }[] = [
+  { label: "Discover", detail: "Search 13 academic + web sources in parallel" },
+  { label: "Rank", detail: "Cross-source dedup · TF-IDF · RRF · authority" },
+  { label: "Filter", detail: "Optional semantic + LLM borderline judging" },
+  { label: "Download", detail: "Concurrent fetch · resume · text extraction" },
+];
+
 function WelcomeBody(props: { onPickExample: (ex: string) => void }) {
   return (
-    <div class="flex h-full items-center justify-center p-6">
-      <div class="surface-raised max-w-md text-center space-y-4 p-8">
-        <p class="text-sm text-[var(--color-foreground-muted)]">
-          Pick a source set above and run a search. Live results, ranking, and
-          downloads will fill this view.
-        </p>
+    <div class="flex h-full items-center justify-center overflow-y-auto p-6 scroll-inset">
+      <div class="surface-floating surface-bevel surface-glossy texture-linen max-w-2xl w-full p-8 space-y-6">
+        <div class="text-center space-y-2">
+          <h2 class="text-lg font-semibold text-embossed">Find documents anywhere</h2>
+          <p class="text-sm text-[var(--color-foreground-muted)] leading-relaxed">
+            Pick a source set, type a query, and watch results stream in.
+            <br />Built-in meta-search hits 6 web engines in parallel — no setup.
+          </p>
+        </div>
+
         <div class="flex flex-wrap justify-center gap-1.5">
-          <For each={EXAMPLES.slice(0, 3)}>
+          <For each={EXAMPLES}>
             {(ex) => (
               <button
                 onClick={() => props.onPickExample(ex)}
@@ -559,6 +570,26 @@ function WelcomeBody(props: { onPickExample: (ex: string) => void }) {
               >
                 {ex}
               </button>
+            )}
+          </For>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-4 gap-2">
+          <For each={PIPELINE_STAGES}>
+            {(stage, i) => (
+              <div class="surface-raised-subtle surface-bevel-sm p-3 text-center">
+                <div class="mb-1 flex items-center justify-center gap-1">
+                  <span class="font-mono text-[10px] text-[var(--color-foreground-muted)]">
+                    {String(i() + 1).padStart(2, "0")}
+                  </span>
+                  <span class="text-[11px] font-semibold text-embossed">
+                    {stage.label}
+                  </span>
+                </div>
+                <p class="text-[9.5px] leading-snug text-[var(--color-foreground-muted)]">
+                  {stage.detail}
+                </p>
+              </div>
             )}
           </For>
         </div>
