@@ -711,7 +711,31 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn list_models(app: AppHandle, state: State<'_, AiState>) -> Result<Vec<ModelInfo>, String> {
-    Ok(snapshot(&app, &state))
+    // Wrap in catch_unwind so a panic anywhere in `from_entry` (mutex poison,
+    // path resolution, registry access) becomes a real error string the UI
+    // can show instead of a hung promise.
+    //
+    // AppHandle and State refs aren't UnwindSafe (they hold Arcs into mutex
+    // chains); AssertUnwindSafe is appropriate because if a panic does occur
+    // we're going to surface and bail, not continue using the borrowed state.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        snapshot(&app, &state)
+    }));
+    match result {
+        Ok(list) => {
+            tracing::info!("list_models: returning {} entries", list.len());
+            Ok(list)
+        }
+        Err(payload) => {
+            let detail = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "<non-string panic payload>".to_string());
+            tracing::error!("list_models panicked: {}", detail);
+            Err(format!("list_models panicked: {}", detail))
+        }
+    }
 }
 
 #[tauri::command]
@@ -785,12 +809,126 @@ pub async fn delete_model(
 
     let dir = ai::storage::model_dir(&app, entry).map_err(|e| e.to_string())?;
     if dir.exists() {
-        tokio::fs::remove_dir_all(&dir)
+        let stage = force_remove_dir(&dir)
             .await
             .map_err(|e| format!("failed to delete {}: {}", dir.display(), e))?;
+        tracing::info!("delete_model: removed {} via {}", dir.display(), stage);
     }
     state.set_status(&model_id, ModelStatus::NotDownloaded);
     Ok(())
+}
+
+// =============================================================================
+// ACL-proof directory removal
+// =============================================================================
+
+/// Recursively delete a directory, working around macOS Extended ACLs and
+/// quarantine xattrs that block `unlink` even when the user owns the file.
+///
+/// On macOS, `chmod +a` ACLs (or those inherited from a parent dir) cause
+/// `tokio::fs::remove_dir_all` to fail with `PermissionDenied` — *not*
+/// because anything has the file open, but because the ACL denies
+/// `delete`. Same with the `com.apple.quarantine` xattr after a download.
+///
+/// The fallback chain:
+///   1. plain `remove_dir_all` (the normal path)
+///   2. `chmod -RN` to strip ACLs, then `xattr -rc` to clear xattrs, then retry
+///   3. last-resort shell `rm -rf` (path is already validated by the caller
+///      to live inside Documents/the app's controlled tree)
+///
+/// On success, returns the stage name that succeeded so the caller can log
+/// it. On failure, returns the chain of error messages.
+async fn force_remove_dir(path: &Path) -> Result<&'static str, String> {
+    // Stage 1: the easy path.
+    if let Err(e) = tokio::fs::remove_dir_all(path).await {
+        let stage1_msg = format!("remove_dir_all: {} ({:?})", e, e.kind());
+        tracing::info!(
+            "force_remove_dir stage 1 failed for {}: {}",
+            path.display(),
+            stage1_msg
+        );
+
+        // If the directory is already gone, treat as success — this can
+        // happen if a previous attempt half-succeeded.
+        if e.kind() == std::io::ErrorKind::NotFound {
+            return Ok("already gone");
+        }
+
+        // Stage 2: strip macOS ACLs + xattrs, then retry.
+        #[cfg(target_os = "macos")]
+        {
+            let chmod_status = tokio::process::Command::new("chmod")
+                .arg("-RN")
+                .arg(path)
+                .output()
+                .await;
+            let xattr_status = tokio::process::Command::new("xattr")
+                .arg("-rc")
+                .arg(path)
+                .output()
+                .await;
+            let chmod_ok = chmod_status
+                .as_ref()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            let xattr_ok = xattr_status
+                .as_ref()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            tracing::info!(
+                "force_remove_dir stage 2 (chmod -RN ok={}, xattr -rc ok={}) for {}",
+                chmod_ok,
+                xattr_ok,
+                path.display()
+            );
+
+            if let Err(e2) = tokio::fs::remove_dir_all(path).await {
+                let stage2_msg = format!("after-strip remove_dir_all: {}", e2);
+                tracing::info!(
+                    "force_remove_dir stage 2 failed for {}: {}",
+                    path.display(),
+                    stage2_msg
+                );
+
+                // Stage 3: shell `rm -rf` as a last resort.
+                let rm_out = tokio::process::Command::new("rm")
+                    .arg("-rf")
+                    .arg(path)
+                    .output()
+                    .await
+                    .map_err(|spawn_err| {
+                        format!(
+                            "all delete strategies failed; final stage couldn't even spawn rm: {} (stage 1: {}, stage 2: {})",
+                            spawn_err, stage1_msg, stage2_msg
+                        )
+                    })?;
+                if !rm_out.status.success() {
+                    let stderr = String::from_utf8_lossy(&rm_out.stderr).into_owned();
+                    return Err(format!(
+                        "all delete strategies failed.\n  stage 1 (remove_dir_all): {}\n  stage 2 (after chmod -RN + xattr -rc): {}\n  stage 3 (rm -rf): {}",
+                        stage1_msg, stage2_msg, stderr.trim()
+                    ));
+                }
+                tracing::info!(
+                    "force_remove_dir stage 3 (rm -rf) succeeded for {}",
+                    path.display()
+                );
+                return Ok("rm -rf");
+            }
+            tracing::info!(
+                "force_remove_dir stage 2 (post chmod/xattr) succeeded for {}",
+                path.display()
+            );
+            return Ok("chmod -RN + xattr -rc");
+        }
+
+        // Non-macOS: no ACL stripping toolchain assumed; just propagate.
+        #[cfg(not(target_os = "macos"))]
+        {
+            return Err(stage1_msg);
+        }
+    }
+    Ok("remove_dir_all")
 }
 
 // =============================================================================
@@ -836,16 +974,10 @@ pub async fn delete_library(path: String) -> Result<(), String> {
         tracing::warn!("delete_library: {}", msg);
         return Err(msg);
     }
-    tokio::fs::remove_dir_all(&p).await.map_err(|e| {
-        let kind_hint = match e.kind() {
-            std::io::ErrorKind::PermissionDenied => " (permission denied — close any app that has files in this folder open)",
-            std::io::ErrorKind::NotFound => " (folder vanished mid-delete)",
-            _ => "",
-        };
-        let msg = format!("delete failed: {}{}", e, kind_hint);
-        tracing::warn!("delete_library: {} (path={})", msg, p.display());
-        msg
+    let stage = force_remove_dir(&p).await.map_err(|e| {
+        tracing::warn!("delete_library: {} (path={})", e, p.display());
+        e
     })?;
-    tracing::info!("delete_library: removed {}", p.display());
+    tracing::info!("delete_library: removed {} via {}", p.display(), stage);
     Ok(())
 }

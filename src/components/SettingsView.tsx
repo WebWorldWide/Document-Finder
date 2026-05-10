@@ -1,90 +1,20 @@
 import { createSignal, onMount, Show, For } from "solid-js";
-import { Server, FolderOpen, FileText, Loader2, CheckCircle2, Sparkles } from "lucide-solid";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { FolderOpen, FileText, Loader2, CheckCircle2, Sparkles, RefreshCw, AlertCircle } from "lucide-solid";
 import { api, type LogInfo } from "@/lib/tauri";
 import { settings, setSettings, saveSettings } from "@/stores/settings";
 import { modelsStore } from "@/stores/models";
 import ModelDownloadCard from "./ModelDownloadCard";
+import SearxngSetupPanel from "./SearxngSetupPanel";
 import { formatBytes } from "@/lib/utils";
-
-interface SearxLogLine {
-  stream: "stdout" | "stderr" | "info";
-  line: string;
-}
-interface SearxStage {
-  stage:
-    | "checking_docker"
-    | "checking_port"
-    | "pulling"
-    | "starting"
-    | "waiting_health"
-    | "ok"
-    | "failed";
-  detail?: string | null;
-}
-
-const STAGE_LABEL: Record<SearxStage["stage"], string> = {
-  checking_docker: "Checking Docker…",
-  checking_port: "Checking port availability…",
-  pulling: "Pulling SearXNG image…",
-  starting: "Starting container…",
-  waiting_health: "Waiting for JSON health check…",
-  ok: "Healthy",
-  failed: "Failed",
-};
 
 export default function SettingsView() {
   const [logInfo, setLogInfo] = createSignal<LogInfo | null>(null);
-  const [settingUpSearx, setSettingUpSearx] = createSignal(false);
-  const [searxResult, setSearxResult] = createSignal<string | null>(null);
-  const [searxError, setSearxError] = createSignal<string | null>(null);
-  const [searxLog, setSearxLog] = createSignal<SearxLogLine[]>([]);
-  const [searxStage, setSearxStage] = createSignal<SearxStage | null>(null);
 
   onMount(async () => {
     setLogInfo(await api.runLogInfo().catch(() => null));
     void modelsStore.refresh();
     void modelsStore.ensureSubscribed();
   });
-
-  async function handleSetupSearx() {
-    setSettingUpSearx(true);
-    setSearxResult(null);
-    setSearxError(null);
-    setSearxLog([]);
-    setSearxStage(null);
-
-    const unsubs: UnlistenFn[] = [];
-    unsubs.push(
-      await listen<SearxLogLine>("df:searxng_setup_log", (ev) => {
-        setSearxLog((prev) => {
-          const next = prev.concat(ev.payload);
-          // Cap to last 500 lines so the modal doesn't grow unbounded.
-          return next.length > 500 ? next.slice(next.length - 500) : next;
-        });
-      }),
-    );
-    unsubs.push(
-      await listen<SearxStage>("df:searxng_setup_stage", (ev) => {
-        setSearxStage(ev.payload);
-      }),
-    );
-
-    try {
-      const output = await api.setupSearXNG();
-      setSearxResult(output);
-      const match = output.match(/^SEARXNG_URL=(.+)$/m);
-      if (match) {
-        setSettings("searxngUrl", match[1].trim());
-        saveSettings();
-      }
-    } catch (e) {
-      setSearxError(String(e));
-    } finally {
-      setSettingUpSearx(false);
-      unsubs.forEach((u) => u());
-    }
-  }
 
   function numInput(field: "perSource" | "maxTotal" | "concurrency") {
     return (e: InputEvent & { currentTarget: HTMLInputElement }) => {
@@ -102,7 +32,7 @@ export default function SettingsView() {
         <h1 class="text-xl font-semibold text-embossed">Settings</h1>
 
         {/* Discovery settings */}
-        <section class="surface-raised surface-bevel surface-glossy texture-linen p-5">
+        <section class="material-linen p-5">
           <h2 class="mb-4 text-sm font-semibold text-embossed">Discovery</h2>
           <div class="grid grid-cols-3 gap-4">
             <label class="block">
@@ -143,7 +73,7 @@ export default function SettingsView() {
         </section>
 
         {/* AI Models */}
-        <section class="surface-raised surface-bevel surface-glossy texture-brushed p-5">
+        <section class="material-aluminum p-5">
           <div class="mb-3 flex items-center gap-2">
             <Sparkles size={14} class="text-[var(--color-primary)]" />
             <h2 class="text-sm font-semibold text-embossed">AI Models</h2>
@@ -159,14 +89,43 @@ export default function SettingsView() {
             offline — no API keys, no telemetry. Models can be deleted any
             time to reclaim disk.
           </p>
-          <Show
-            when={modelsStore.state.models.length > 0}
-            fallback={
-              <p class="text-[11px] text-[var(--color-muted-foreground)]">
-                Loading…
-              </p>
-            }
-          >
+          {/* Three explicit states: error → red banner + retry, loading →
+            * spinner, loaded → cards. Previously a single Show with a
+            * "Loading…" fallback masked rejected listModels() calls
+            * forever. */}
+          <Show when={modelsStore.state.error}>
+            <div class="surface-raised-sm flex items-start gap-2 p-3 text-xs text-[var(--color-destructive)]">
+              <AlertCircle size={14} class="mt-0.5 shrink-0" />
+              <div class="flex-1">
+                <p class="font-medium">Couldn't load models</p>
+                <p class="mt-0.5 break-words opacity-90">
+                  {modelsStore.state.error}
+                </p>
+                <button
+                  onClick={() => void modelsStore.refresh()}
+                  class="btn-tactile mt-2 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium"
+                >
+                  <RefreshCw size={11} />
+                  Retry
+                </button>
+              </div>
+            </div>
+          </Show>
+
+          <Show when={!modelsStore.state.error && modelsStore.state.loading && modelsStore.state.models.length === 0}>
+            <div class="flex items-center gap-2 text-[11px] text-[var(--color-muted-foreground)]">
+              <Loader2 size={12} class="animate-spin" />
+              Loading…
+            </div>
+          </Show>
+
+          <Show when={!modelsStore.state.error && !modelsStore.state.loading && modelsStore.state.models.length === 0}>
+            <p class="text-[11px] italic text-[var(--color-muted-foreground)]">
+              The model registry is empty. This shouldn't happen — please file an issue.
+            </p>
+          </Show>
+
+          <Show when={modelsStore.state.models.length > 0}>
             <div class="space-y-2">
               <For each={modelsStore.state.models}>
                 {(model) => <ModelDownloadCard model={model} />}
@@ -176,8 +135,8 @@ export default function SettingsView() {
         </section>
 
         {/* Ranking */}
-        <section class="surface-raised surface-bevel surface-glossy texture-felt p-5">
-          <h2 class="mb-1 text-sm font-semibold text-embossed">Ranking</h2>
+        <section class="material-feltgreen p-5">
+          <h2 class="mb-1 text-sm font-semibold text-embossed-on-dark">Ranking</h2>
           <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
             Cross-source dedup, TF-IDF, and Reciprocal Rank Fusion are always on.
             The toggles below add additional ranking signals.
@@ -229,7 +188,7 @@ export default function SettingsView() {
         </section>
 
         {/* Library folder */}
-        <section class="surface-raised surface-bevel surface-glossy texture-paper p-5">
+        <section class="material-paper border-stitched p-5">
           <h2 class="mb-3 text-sm font-semibold text-embossed">Library Folder</h2>
           <label>
             <span class="sr-only">Library folder path</span>
@@ -246,7 +205,7 @@ export default function SettingsView() {
         </section>
 
         {/* Web search */}
-        <section class="surface-raised surface-bevel surface-glossy texture-linen p-5">
+        <section class="material-linen p-5">
           <h2 class="mb-1 text-sm font-semibold text-embossed">Web Search</h2>
           <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
             Document-Finder includes a built-in meta-search across DuckDuckGo,
@@ -339,93 +298,11 @@ export default function SettingsView() {
                 <summary class="cursor-pointer text-[11px] font-medium text-[var(--color-foreground-muted)]">
                   Spin up a local instance with Docker
                 </summary>
-                <div class="space-y-3 pt-2">
-                  <p class="text-[11px] text-[var(--color-foreground-muted)]">
+                <div class="pt-2">
+                  <p class="mb-2 text-[11px] text-[var(--color-foreground-muted)]">
                     Requires Docker installed and running.
                   </p>
-                  <button
-                    onClick={handleSetupSearx}
-                    disabled={settingUpSearx()}
-                    class="btn-tactile flex items-center gap-2 px-3 py-1.5 text-xs font-medium"
-                  >
-                    <Show when={settingUpSearx()} fallback={<Server size={12} />}>
-                      <Loader2 size={12} class="animate-spin" />
-                    </Show>
-                    {settingUpSearx() ? "Setting up…" : "Setup SearXNG with Docker"}
-                  </button>
-
-                  <Show when={searxStage()}>
-                    {(stage) => (
-                      <div class="surface-pressed-sm p-3 text-xs">
-                        <div class="flex items-center gap-2 font-medium">
-                          <Show
-                            when={stage().stage !== "ok" && stage().stage !== "failed"}
-                            fallback={
-                              <Show
-                                when={stage().stage === "ok"}
-                                fallback={<span class="text-[var(--color-destructive)]">●</span>}
-                              >
-                                <CheckCircle2 size={12} style={{ color: "var(--color-success)" }} />
-                              </Show>
-                            }
-                          >
-                            <Loader2 size={12} class="animate-spin" />
-                          </Show>
-                          <span>{STAGE_LABEL[stage().stage]}</span>
-                          <Show when={stage().detail}>
-                            <span class="font-mono text-[10px] text-[var(--color-muted-foreground)]">
-                              {stage().detail}
-                            </span>
-                          </Show>
-                        </div>
-                      </div>
-                    )}
-                  </Show>
-
-                  <Show when={searxLog().length > 0}>
-                    <div class="rounded-lg border border-[var(--color-border)] bg-black/90 p-2">
-                      <pre class="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[10px] text-green-400/90 leading-snug">
-                        <For each={searxLog()}>
-                          {(line) => (
-                            <div
-                              class={
-                                line.stream === "stderr"
-                                  ? "text-red-300/90"
-                                  : line.stream === "info"
-                                  ? "text-cyan-300/80"
-                                  : ""
-                              }
-                            >
-                              {line.line}
-                            </div>
-                          )}
-                        </For>
-                      </pre>
-                    </div>
-                  </Show>
-
-                  <Show when={searxResult() !== null && !searxError()}>
-                    <div class="flex items-start gap-2 rounded-lg border p-3"
-                      style={{ "border-color": "color-mix(in oklch, var(--color-success) 30%, transparent)", "background-color": "var(--color-success-bg)" }}
-                    >
-                      <CheckCircle2 size={14} class="mt-0.5 shrink-0" style={{ color: "var(--color-success)" }} />
-                      <div>
-                        <p class="text-xs font-medium" style={{ color: "var(--color-success-fg)" }}>SearXNG is running at {settings.searxngUrl}</p>
-                        <Show when={searxResult()}>
-                          <pre class="mt-1 max-h-24 overflow-auto whitespace-pre-wrap font-mono text-[10px] opacity-80" style={{ color: "var(--color-success-fg)" }}>
-                            {searxResult()}
-                          </pre>
-                        </Show>
-                      </div>
-                    </div>
-                  </Show>
-
-                  <Show when={searxError()}>
-                    <div class="rounded-lg border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 p-3 text-xs text-[var(--color-destructive)]">
-                      <p class="font-medium">Setup failed</p>
-                      <p class="mt-0.5 opacity-80 whitespace-pre-wrap">{searxError()}</p>
-                    </div>
-                  </Show>
+                  <SearxngSetupPanel />
                 </div>
               </details>
             </div>
@@ -433,7 +310,7 @@ export default function SettingsView() {
         </section>
 
         {/* Run log */}
-        <section class="surface-raised surface-bevel surface-glossy texture-paper p-5">
+        <section class="material-paper border-stitched p-5">
           <h2 class="mb-1 text-sm font-semibold text-embossed">Run Log</h2>
           <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
             Every query, source error, and download outcome is logged here.

@@ -25,9 +25,9 @@ export default function Sidebar() {
   const stats = () => uiStore.lifetimeStats;
 
   return (
-    <nav class="flex h-full w-56 flex-col chrome-brushed pt-8 pb-4 px-3 shrink-0">
+    <nav class="material-aluminum flex h-full w-56 flex-col pt-8 pb-4 px-3 shrink-0" style={{ "border-radius": 0 }}>
       {/* Header — embossed brand chip on brushed-metal canvas */}
-      <div class="surface-raised-sm surface-bevel-sm mx-1 mb-5 flex items-center gap-2.5 px-3 py-2.5">
+      <div class="material-paper border-stitched mx-1 mb-5 flex items-center gap-2.5 px-3 py-2.5">
         <div
           class="surface-glossy flex h-7 w-7 items-center justify-center rounded-lg text-white shrink-0"
           style={{
@@ -44,7 +44,7 @@ export default function Sidebar() {
       {/* Active library — floating tile inside the canvas */}
       <Show when={uiStore.activeLibrary}>
         {(lib) => (
-          <div class="surface-raised-sm surface-bevel-sm mx-1 mb-5 p-3">
+          <div class="material-paper border-stitched mx-1 mb-5 p-3">
             <p class="text-[10px] font-medium uppercase tracking-wider text-[var(--color-foreground-muted)] mb-1 text-embossed">
               Active Library
             </p>
@@ -77,7 +77,7 @@ export default function Sidebar() {
 
       {/* Nav — single raised container, flat buttons inside.
        * Eliminates the per-button shadow blot between siblings. */}
-      <div class="surface-raised-sm surface-bevel-sm mx-1 p-1.5 flex flex-col gap-1">
+      <div class="material-linen mx-1 p-1.5 flex flex-col gap-1">
         <For each={navItems}>
           {(item) => {
             const active = () => uiStore.view === item.id;
@@ -116,7 +116,7 @@ export default function Sidebar() {
       {/* Footer stats tile — paper-textured, sits at the bottom of the sidebar
        * so the otherwise-empty space below the nav carries useful info. */}
       <div class="mt-auto">
-        <div class="surface-raised-sm surface-bevel-sm texture-paper mx-1 px-3 py-2.5">
+        <div class="material-paper border-stitched mx-1 px-3 py-2.5">
           <div class="flex items-center gap-2 mb-1.5">
             <Library size={12} class="text-[var(--color-foreground-muted)]" />
             <p class="text-[9px] font-semibold uppercase tracking-wider text-[var(--color-foreground-muted)] text-embossed">

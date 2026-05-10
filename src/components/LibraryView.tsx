@@ -137,12 +137,12 @@ export default function LibraryView() {
         </Show>
 
         <Show when={!loading() && !error() && libraries().length === 0}>
-          <div class="surface-raised surface-bevel surface-glossy texture-paper flex flex-col items-center justify-center py-16 text-center mx-auto max-w-md">
-            <div class="surface-pressed-sm mb-4 p-5" style={{ "border-radius": "9999px" }}>
-              <Archive size={28} class="text-[var(--color-foreground-muted)]" />
+          <div class="material-leather border-stitched-dark flex flex-col items-center justify-center py-16 text-center mx-auto max-w-md">
+            <div class="surface-pressed-sm mb-4 p-5" style={{ "border-radius": "9999px", background: "oklch(0.32 0.05 50)" }}>
+              <Archive size={28} style={{ color: "oklch(0.85 0.05 50)" }} />
             </div>
-            <p class="text-sm font-semibold text-embossed">No libraries yet</p>
-            <p class="mt-1 text-sm text-[var(--color-foreground-muted)]">
+            <p class="text-sm font-semibold text-embossed-on-dark">No libraries yet</p>
+            <p class="mt-1 text-sm" style={{ color: "oklch(0.85 0.05 50)" }}>
               Run a search to build your first collection.
             </p>
             <button
@@ -170,7 +170,7 @@ export default function LibraryView() {
                     class="group p-5 cursor-pointer outline-none transition-all duration-200 hover:translate-y-[-2px]"
                     classList={{
                       "surface-pressed": isActive(),
-                      "surface-raised surface-bevel-sm surface-glossy texture-paper": !isActive(),
+                      "material-paper border-stitched": !isActive(),
                       "opacity-60 pointer-events-none": isDeleting(),
                     }}
                     onClick={() => uiStore.setActiveLibrary(lib)}

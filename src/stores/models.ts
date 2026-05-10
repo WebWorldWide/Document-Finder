@@ -6,6 +6,11 @@ import type { ModelProgressPayload, ModelStatusPayload } from "@/lib/events";
 interface ModelsState {
   models: ModelInfo[];
   loading: boolean;
+  /// Set when the most recent refresh attempt failed. Cleared on the next
+  /// successful refresh. Surfaced in the Settings AI Models card so the
+  /// user can see the actual failure instead of staring at "Loading…"
+  /// forever (the previous behavior swallowed the error in console.error).
+  error: string | null;
   // Per-model bytes/sec for the UI ETA, keyed by model_id.
   bytesPerSec: Record<string, number>;
   // Last activity status for the model (e.g. "embedding 23/100", "llm_warming").
@@ -18,6 +23,7 @@ interface ModelsState {
 const [state, setState] = createStore<ModelsState>({
   models: [],
   loading: false,
+  error: null,
   bytesPerSec: {},
   activity: {},
 });
@@ -27,11 +33,14 @@ let unsubStatus: UnlistenFn | null = null;
 
 async function refresh() {
   setState("loading", true);
+  setState("error", null);
   try {
     const list = await api.listModels();
     setState("models", list);
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
     console.error("listModels failed", e);
+    setState("error", msg);
   } finally {
     setState("loading", false);
   }

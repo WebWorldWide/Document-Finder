@@ -552,7 +552,7 @@ const PIPELINE_STAGES: { label: string; detail: string }[] = [
 function WelcomeBody(props: { onPickExample: (ex: string) => void }) {
   return (
     <div class="flex h-full items-center justify-center overflow-y-auto p-6 scroll-inset">
-      <div class="surface-floating surface-bevel surface-glossy texture-linen max-w-2xl w-full p-8 space-y-6">
+      <div class="material-linen border-stitched max-w-2xl w-full p-8 space-y-6">
         <div class="text-center space-y-2">
           <h2 class="text-lg font-semibold text-embossed">Find documents anywhere</h2>
           <p class="text-sm text-[var(--color-foreground-muted)] leading-relaxed">

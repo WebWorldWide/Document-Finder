@@ -329,30 +329,37 @@ h1, h2, h3, h4 {
 .animate-pulse-soft { animation: pulse-soft 1.6s ease-in-out infinite; }
 
 /* =============================================================================
- * Skeumorphic overlays — bevel, gloss, textures (iOS 6 / Mavericks era).
+ * Skeumorphic overlays — bevels, gloss, textures (iOS 5/6 / Mavericks era).
  *
- * These layer on top of the existing neumorphic surface classes. Apply by
- * chaining: `class="surface-raised surface-bevel surface-glossy"`. The
- * effects are pure CSS (gradients + box-shadow) and inline-SVG textures, so
- * the bundle stays tiny and the canvas-derived oklch palette is preserved.
+ * These layer on top of the neumorphic surface classes. Apply by chaining:
+ * `class="surface-raised surface-bevel surface-glossy"`, OR use one of the
+ * `.material-*` classes below which bake all three together for a specific
+ * material (linen / aluminum / paper / leather / felt).
+ *
+ * Effects are pure CSS (gradients + box-shadow) and inline-SVG textures —
+ * tiny bundle, palette preserved.
  * ========================================================================= */
 
-/* Stamped 1px bevel: bright top/left highlight + darker bottom/right shadow,
- * inset so it reads as the *edge* of the surface instead of an extra glow. */
+/* Sharper iOS-6-style bevel: 2px stacked highlights on top, 1px hard hairline
+ * underneath, plus the existing raised paired shadow. Reads as a real
+ * stamped edge instead of a faint inset. */
 .surface-bevel {
   box-shadow: var(--shadow-raised),
-              inset 1px 1px 0 oklch(1 0 0 / 0.85),
-              inset -1px -1px 0 oklch(0.78 0.025 145 / 0.45);
+              inset 0 1px 0 oklch(1 0 0 / 0.95),
+              inset 0 2px 0 oklch(1 0 0 / 0.45),
+              inset 0 -1px 0 oklch(0.55 0.03 145 / 0.18),
+              inset 1px 0 0 oklch(1 0 0 / 0.55),
+              inset -1px 0 0 oklch(0.55 0.03 145 / 0.12);
 }
 .surface-bevel-sm {
   box-shadow: var(--shadow-raised-sm),
-              inset 1px 1px 0 oklch(1 0 0 / 0.8),
-              inset -1px -1px 0 oklch(0.78 0.025 145 / 0.4);
+              inset 0 1px 0 oklch(1 0 0 / 0.9),
+              inset 0 -1px 0 oklch(0.55 0.03 145 / 0.16);
 }
 
-/* iOS 6-style gloss: a top-half white-to-transparent gradient overlay. Use
- * via ::before so it doesn't inherit the parent's text color. The `.glossy`
- * itself just declares positioning + overflow; the pseudo holds the shine. */
+/* iOS 5/6 gloss: stronger top sheen with a sharper midpoint break, plus an
+ * inverse bottom dim that simulates the surface curving away from the
+ * light. Use via ::before/::after so children stay readable. */
 .surface-glossy {
   position: relative;
   overflow: hidden;
@@ -363,12 +370,30 @@ h1, h2, h3, h4 {
   top: 0;
   left: 0;
   right: 0;
-  height: 55%;
+  height: 50%;
   background: linear-gradient(
     180deg,
-    oklch(1 0 0 / 0.55) 0%,
-    oklch(1 0 0 / 0.18) 45%,
+    oklch(1 0 0 / 0.65) 0%,
+    oklch(1 0 0 / 0.32) 35%,
+    oklch(1 0 0 / 0.05) 90%,
     transparent 100%
+  );
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+}
+.surface-glossy::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 25%;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    oklch(0 0 0 / 0.04) 60%,
+    oklch(0 0 0 / 0.08) 100%
   );
   border-radius: inherit;
   pointer-events: none;
@@ -437,41 +462,185 @@ h1, h2, h3, h4 {
 /* =============================================================================
  * Tileable textures (inline SVG data-URIs).
  *
- * Each renders at very low opacity so the canvas-derived oklch surface still
- * dominates. The SVGs are tiny (under 400 bytes each) so they ship inside
- * the CSS bundle — no extra HTTP, no raster blob.
+ * Cranked to iOS-5/6 visibility: alpha 0.16–0.22 in the feColorMatrix last
+ * column. Weave/grain/streaks are clearly visible without zooming. SVGs are
+ * tiny (~300–500 bytes each) so they ship inline in the CSS bundle.
  * ========================================================================= */
 
-/* Linen weave: subtle crosshatch like a Mavericks Notification Center. */
+/* Linen weave: notification-center grey crosshatch. Cranked from 0.06 → 0.20. */
 .texture-linen {
   background-image:
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18  0 0 0 0 0.22  0 0 0 0 0.18  0 0 0 0.06 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18  0 0 0 0 0.22  0 0 0 0 0.18  0 0 0 0.20 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
   background-size: 80px 80px;
   background-repeat: repeat;
 }
 
-/* Paper grain: warmer, slightly larger noise — for library cards. */
+/* Paper grain: warm hairlines. Cranked from 0.045 → 0.18. */
 .texture-paper {
   background-image:
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.32  0 0 0 0 0.28  0 0 0 0 0.18  0 0 0 0.045 0'/></filter><rect width='100%25' height='100%25' filter='url(%23p)'/></svg>");
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.32  0 0 0 0 0.28  0 0 0 0 0.18  0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23p)'/></svg>");
   background-size: 100px 100px;
   background-repeat: repeat;
 }
 
-/* Brushed metal: horizontal anisotropic streaks — for AI Models section. */
+/* Brushed metal: horizontal anisotropic streaks. Cranked from 0.07 → 0.22. */
 .texture-brushed {
   background-image:
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='40' viewBox='0 0 200 40'><filter id='b'><feTurbulence type='fractalNoise' baseFrequency='0.04 0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.55  0 0 0 0 0.55  0 0 0 0.07 0'/></filter><rect width='100%25' height='100%25' filter='url(%23b)'/></svg>");
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='40' viewBox='0 0 200 40'><filter id='b'><feTurbulence type='fractalNoise' baseFrequency='0.04 0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.55  0 0 0 0 0.55  0 0 0 0.22 0'/></filter><rect width='100%25' height='100%25' filter='url(%23b)'/></svg>");
   background-size: 200px 40px;
   background-repeat: repeat;
 }
 
-/* Felt: short tight noise like the iOS 6 Game Center / Notes pad. */
+/* Felt: tight noise like iOS 6 Game Center pad. Cranked from 0.05 → 0.18. */
 .texture-felt {
   background-image:
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18  0 0 0 0 0.32  0 0 0 0 0.22  0 0 0 0.05 0'/></filter><rect width='100%25' height='100%25' filter='url(%23f)'/></svg>");
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18  0 0 0 0 0.32  0 0 0 0 0.22  0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23f)'/></svg>");
   background-size: 60px 60px;
   background-repeat: repeat;
+}
+
+/* Leather: slightly larger noise + warm brown tint, for empty states + the
+ * old-school "wrapped journal" feel. Alpha 0.16 reads strongly. */
+.texture-leather {
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'><filter id='l'><feTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.32  0 0 0 0 0.18  0 0 0 0 0.10  0 0 0 0.16 0'/></filter><rect width='100%25' height='100%25' filter='url(%23l)'/></svg>");
+  background-size: 120px 120px;
+  background-repeat: repeat;
+}
+
+/* =============================================================================
+ * Material classes — bake background + texture + bevel + gloss together.
+ *
+ * Use these instead of chaining `surface-raised surface-bevel surface-glossy
+ * texture-X`. One class per material, each tuned for a specific iOS-5/6 era
+ * surface. All on the existing oklch palette — no new hues.
+ * ========================================================================= */
+
+.material-linen {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--color-surface);
+  background-image:
+    /* gloss top */
+    linear-gradient(180deg, oklch(1 0 0 / 0.50) 0%, oklch(1 0 0 / 0.18) 30%, transparent 55%),
+    /* texture */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18  0 0 0 0 0.22  0 0 0 0 0.18  0 0 0 0.20 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  background-size: 100% 100%, 80px 80px;
+  background-repeat: no-repeat, repeat;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-raised),
+              inset 0 1px 0 oklch(1 0 0 / 0.95),
+              inset 0 2px 0 oklch(1 0 0 / 0.40),
+              inset 0 -1px 0 oklch(0.55 0.03 145 / 0.20);
+}
+
+.material-aluminum {
+  position: relative;
+  overflow: hidden;
+  background-color: oklch(0.93 0.014 145);
+  background-image:
+    /* gloss top */
+    linear-gradient(180deg, oklch(1 0 0 / 0.55) 0%, oklch(1 0 0 / 0.20) 28%, transparent 55%),
+    /* anisotropic streaks */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='40' viewBox='0 0 200 40'><filter id='b'><feTurbulence type='fractalNoise' baseFrequency='0.04 0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.55  0 0 0 0 0.55  0 0 0 0.22 0'/></filter><rect width='100%25' height='100%25' filter='url(%23b)'/></svg>"),
+    /* base aluminum tonal gradient (top-to-bottom) */
+    linear-gradient(180deg, oklch(0.96 0.012 145) 0%, oklch(0.90 0.015 145) 100%);
+  background-size: 100% 100%, 200px 40px, 100% 100%;
+  background-repeat: no-repeat, repeat, no-repeat;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-raised),
+              inset 0 1px 0 oklch(1 0 0 / 0.85),
+              inset 0 -1px 0 oklch(0.55 0.03 145 / 0.30);
+}
+
+.material-paper {
+  position: relative;
+  overflow: hidden;
+  background-color: oklch(0.985 0.014 145);
+  background-image:
+    /* very subtle warm gloss */
+    linear-gradient(180deg, oklch(1 0 0 / 0.30) 0%, transparent 50%),
+    /* paper grain */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.32  0 0 0 0 0.28  0 0 0 0 0.18  0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23p)'/></svg>");
+  background-size: 100% 100%, 100px 100px;
+  background-repeat: no-repeat, repeat;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-raised-sm),
+              inset 0 1px 0 oklch(1 0 0 / 0.95),
+              inset 0 -1px 0 oklch(0.55 0.03 145 / 0.16);
+}
+
+.material-leather {
+  position: relative;
+  overflow: hidden;
+  background-color: oklch(0.42 0.06 50);
+  background-image:
+    /* dark gloss curve */
+    linear-gradient(180deg, oklch(1 0 0 / 0.18) 0%, oklch(1 0 0 / 0.05) 35%, transparent 70%, oklch(0 0 0 / 0.15) 100%),
+    /* leather grain */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'><filter id='l'><feTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.32  0 0 0 0 0.18  0 0 0 0 0.10  0 0 0 0.32 0'/></filter><rect width='100%25' height='100%25' filter='url(%23l)'/></svg>");
+  background-size: 100% 100%, 120px 120px;
+  background-repeat: no-repeat, repeat;
+  color: oklch(0.95 0.02 50);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-raised),
+              inset 0 1px 0 oklch(1 0 0 / 0.30),
+              inset 0 -1px 0 oklch(0 0 0 / 0.40);
+}
+
+.material-feltgreen {
+  position: relative;
+  overflow: hidden;
+  background-color: oklch(0.40 0.10 148);
+  background-image:
+    /* darker felt gloss */
+    linear-gradient(180deg, oklch(1 0 0 / 0.10) 0%, transparent 45%, oklch(0 0 0 / 0.20) 100%),
+    /* tight felt noise */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18  0 0 0 0 0.32  0 0 0 0 0.22  0 0 0 0.30 0'/></filter><rect width='100%25' height='100%25' filter='url(%23f)'/></svg>");
+  background-size: 100% 100%, 60px 60px;
+  background-repeat: no-repeat, repeat;
+  color: oklch(0.95 0.05 148);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-raised),
+              inset 0 1px 0 oklch(1 0 0 / 0.15),
+              inset 0 -1px 0 oklch(0 0 0 / 0.45);
+}
+
+/* iOS-6 stitched border: hairline border + offset dashed inner stitch line.
+ * Pure CSS — `outline` for the inner dashed line because it doesn't take up
+ * space and won't shift content. */
+.border-stitched {
+  border: 1px solid oklch(0.55 0.03 145 / 0.32);
+  outline: 1.5px dashed oklch(1 0 0 / 0.55);
+  outline-offset: -5px;
+}
+.border-stitched-dark {
+  border: 1px solid oklch(0 0 0 / 0.35);
+  outline: 1.5px dashed oklch(1 0 0 / 0.30);
+  outline-offset: -5px;
+}
+
+/* Pinstripe page background — subtle 1px diagonal lines. The canvas reads as
+ * fabric, not flat color, like the old iOS Settings/Calendar gutters. */
+.bg-pinstripe-light {
+  background-color: var(--color-canvas);
+  background-image:
+    repeating-linear-gradient(
+      45deg,
+      transparent 0px,
+      transparent 3px,
+      oklch(0.55 0.03 145 / 0.04) 3px,
+      oklch(0.55 0.03 145 / 0.04) 4px
+    );
+}
+
+/* Deep bevel shadow token used by raised primary buttons. */
+:root {
+  --shadow-deep-bevel:
+    0 1px 0 oklch(1 0 0 / 0.85) inset,
+    0 -1px 0 oklch(0 0 0 / 0.18) inset,
+    0 1px 2px oklch(0.55 0.03 145 / 0.35),
+    0 2px 4px oklch(0.55 0.03 145 / 0.20);
 }
 
 /* Embossed type — adds a 1px white drop shadow + 1px dark inverse so headings

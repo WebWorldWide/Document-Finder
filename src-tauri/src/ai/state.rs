@@ -36,8 +36,13 @@ pub struct AiState {
 
 impl AiState {
     pub fn set_status(&self, model_id: &str, status: ModelStatus) {
-        if let Ok(mut s) = self.statuses.lock() {
-            s.insert(model_id.to_string(), status);
+        match self.statuses.lock() {
+            Ok(mut s) => {
+                s.insert(model_id.to_string(), status);
+            }
+            Err(e) => {
+                tracing::warn!("AiState.set_status: statuses mutex poisoned: {}", e);
+            }
         }
     }
 
