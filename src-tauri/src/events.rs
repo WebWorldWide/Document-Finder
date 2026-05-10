@@ -37,6 +37,10 @@ pub const EV_RANKING_DONE: &str = "df:ranking_done";
 pub const EV_MODEL_PROGRESS: &str = "df:model_progress";
 pub const EV_MODEL_STATUS: &str = "df:model_status";
 
+// Universal pipeline-stage event. Emitted at the boundary of every
+// orchestrator phase so the UI can render an at-a-glance progress strip.
+pub const EV_PIPELINE_STAGE: &str = "df:pipeline_stage";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct KeywordsPayload {
     pub query: String,
@@ -192,4 +196,22 @@ pub struct ModelStatusPayload {
     /// "embedding", "llm_warming", "llm_expanding", "llm_filtering".
     pub status: String,
     pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PipelineStagePayload {
+    /// One of: "discovery", "rank", "semantic_rerank", "llm_expand",
+    /// "llm_filter", "citation_enrich", "download", "extract".
+    pub stage: String,
+    /// "started" | "progress" | "done" | "skipped"
+    pub state: String,
+    /// Optional progress numerator (e.g. files extracted so far).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u64>,
+    /// Optional progress denominator (e.g. total candidates to filter).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+    /// Free-form detail for the UI (e.g. "12 sources active").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }

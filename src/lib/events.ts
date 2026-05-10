@@ -143,6 +143,26 @@ export interface ModelStatusPayload {
   detail: string | null;
 }
 
+export type PipelineStage =
+  | "discovery"
+  | "rank"
+  | "semantic_rerank"
+  | "llm_expand"
+  | "llm_filter"
+  | "citation_enrich"
+  | "download"
+  | "extract";
+
+export type PipelineState = "started" | "progress" | "done" | "skipped";
+
+export interface PipelineStagePayload {
+  stage: PipelineStage;
+  state: PipelineState;
+  count?: number;
+  total?: number;
+  message?: string;
+}
+
 export type DfEvent =
   | { type: "found"; payload: FoundPayload }
   | { type: "found_total"; payload: FoundTotalPayload }

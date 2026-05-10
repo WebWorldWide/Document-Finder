@@ -3,6 +3,7 @@ import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api, type ExportResult } from "@/lib/tauri";
 import type { CandidatePayload, DfEvent } from "@/lib/events";
 import { settings } from "@/stores/settings";
+import { pipelineStore } from "@/stores/pipeline";
 
 export interface InFlight {
   url: string;
@@ -283,6 +284,10 @@ async function startSearch(query: string) {
   if (settings.selectedSources.length === 0) return;
 
   reset(query.trim());
+  // Pipeline strip should clear from the previous run before stage events
+  // for the new run start arriving.
+  pipelineStore.reset();
+  void pipelineStore.ensureSubscribed();
   setState("running", true);
 
   try {

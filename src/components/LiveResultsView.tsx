@@ -8,6 +8,7 @@ import {
 } from "@/stores/run";
 import { api } from "@/lib/tauri";
 import { formatBytes, SOURCE_LABELS, sourceColor } from "@/lib/utils";
+import PipelineStrip from "./PipelineStrip";
 
 type Lane = "found" | "downloading" | "completed" | "failed";
 
@@ -73,6 +74,9 @@ export default function LiveResultsView() {
 
   return (
     <div class="flex h-full flex-col">
+      {/* Pipeline progress strip — every stage of the run, all in one glance */}
+      <PipelineStrip />
+
       {/* Header — counters + bulk actions */}
       <div class="flex items-center justify-between gap-3 px-4 py-3">
         <div class="surface-raised-sm surface-bevel-sm flex items-center gap-1 p-1">

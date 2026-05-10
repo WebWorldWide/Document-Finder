@@ -85,6 +85,28 @@ fn default_extract() -> bool {
     true
 }
 
+/// Emit a stage transition. State strings: "started" | "progress" | "done"
+/// | "skipped". Helper so callsites stay tidy.
+fn emit_stage(
+    app: &AppHandle,
+    stage: &str,
+    state: &str,
+    count: Option<u64>,
+    total: Option<u64>,
+    message: Option<String>,
+) {
+    let _ = app.emit(
+        EV_PIPELINE_STAGE,
+        PipelineStagePayload {
+            stage: stage.to_string(),
+            state: state.to_string(),
+            count,
+            total,
+            message,
+        },
+    );
+}
+
 pub async fn run_pipeline(
     app: AppHandle,
     req: RunRequest,
@@ -97,34 +119,50 @@ pub async fn run_pipeline(
     // isn't loaded). Runs before discovery so the new sub-queries hit every
     // source on the same parallel pass as the original.
     #[cfg(feature = "ai-llm")]
-    if req.use_llm_expansion && !cancel.is_cancelled() {
-        if let Some(llm) = ensure_llm_loaded(&app).await {
-            let _ = app.emit(
-                crate::events::EV_MODEL_STATUS,
-                crate::events::ModelStatusPayload {
-                    model_id: req.llm_model_id.clone().unwrap_or_else(|| "llm".into()),
-                    status: "llm_expanding".to_string(),
-                    detail: None,
-                },
-            );
-            let prompt = crate::ai::llm::expansion_prompt(&req.query);
-            let original = req.query.clone();
-            let llm_for_task = llm.clone();
-            let raw = tokio::task::spawn_blocking(move || {
-                // Async mutex inside a blocking thread — use blocking_lock.
-                let guard = llm_for_task.blocking_lock();
-                guard.generate(&prompt, 200)
-            })
-            .await;
-            if let Ok(Ok(text)) = raw {
-                let extras = crate::ai::llm::parse_expansion(&text, &original);
-                if !extras.is_empty() {
-                    tracing::info!("LLM expanded query into {} extras", extras.len());
-                    sub_queries.extend(extras);
+    {
+        if req.use_llm_expansion && !cancel.is_cancelled() {
+            emit_stage(&app, "llm_expand", "started", None, None, None);
+            if let Some(llm) = ensure_llm_loaded(&app).await {
+                let _ = app.emit(
+                    crate::events::EV_MODEL_STATUS,
+                    crate::events::ModelStatusPayload {
+                        model_id: req.llm_model_id.clone().unwrap_or_else(|| "llm".into()),
+                        status: "llm_expanding".to_string(),
+                        detail: None,
+                    },
+                );
+                let prompt = crate::ai::llm::expansion_prompt(&req.query);
+                let original = req.query.clone();
+                let llm_for_task = llm.clone();
+                let raw = tokio::task::spawn_blocking(move || {
+                    // Async mutex inside a blocking thread — use blocking_lock.
+                    let guard = llm_for_task.blocking_lock();
+                    guard.generate(&prompt, 200)
+                })
+                .await;
+                if let Ok(Ok(text)) = raw {
+                    let extras = crate::ai::llm::parse_expansion(&text, &original);
+                    let n = extras.len() as u64;
+                    if n > 0 {
+                        tracing::info!("LLM expanded query into {} extras", n);
+                        sub_queries.extend(extras);
+                    }
+                    emit_stage(&app, "llm_expand", "done", Some(n), None,
+                        if n > 0 { Some(format!("+{} sub-queries", n)) } else { None });
+                } else {
+                    emit_stage(&app, "llm_expand", "done", None, None, None);
                 }
+            } else {
+                emit_stage(&app, "llm_expand", "skipped", None, None,
+                    Some("LLM model not downloaded".into()));
             }
+        } else {
+            emit_stage(&app, "llm_expand", "skipped", None, None, None);
         }
     }
+    #[cfg(not(feature = "ai-llm"))]
+    emit_stage(&app, "llm_expand", "skipped", None, None,
+        Some("LLM feature disabled at build time".into()));
 
     runlog::log(runlog::Event::RunStart {
         query: &req.query,
@@ -166,6 +204,9 @@ pub async fn run_pipeline(
     // EV_FOUND still fires per discovery to keep the existing live UI happy;
     // the new EV_CANDIDATE event fires once per merged candidate after
     // ranking, with rejection reasons attached.
+
+    emit_stage(&app, "discovery", "started", None, None,
+        Some(format!("{} sources × {} sub-queries", req.sources.len(), sub_queries.len())));
 
     let dedup: Arc<AsyncMutex<Deduplicator>> = Arc::new(AsyncMutex::new(Deduplicator::new()));
     // Aggregate per-(sub_query) keyword set for ranking later.
@@ -307,6 +348,8 @@ pub async fn run_pipeline(
         let dlock = std::mem::take(&mut *dedup.lock().await);
         dlock.into_docs()
     };
+    emit_stage(&app, "discovery", "done", Some(merged.len() as u64), None,
+        Some(format!("{} unique candidates", merged.len())));
     let _ = app.emit(
         EV_FOUND_TOTAL,
         FoundTotalPayload {
@@ -336,19 +379,25 @@ pub async fn run_pipeline(
     // Rank everything we found, then flag rejects so the UI can show greyed
     // entries with explanations rather than silently dropping low-relevance
     // candidates the way the old `relevance_score == 0` filter did.
+    emit_stage(&app, "rank", "started", None, None, None);
     let mut ranked: Vec<RankedDoc> = flag_rejects(rank_candidates(&all_keywords, merged));
+    let kept_after_rank = ranked.iter().filter(|r| r.reject_reason.is_none()).count();
+    emit_stage(&app, "rank", "done", Some(kept_after_rank as u64), Some(ranked.len() as u64),
+        Some(format!("{} kept · {} rejected", kept_after_rank, ranked.len() - kept_after_rank)));
 
     // Tier 2: optional semantic reranking via local embedding model.
     // Falls back silently to Tier 1 if the model isn't available — the
     // user gets no error, just lexical-only ranking.
     #[cfg(feature = "ai-embeddings")]
     if req.use_semantic_rerank && !cancel.is_cancelled() {
+        let to_rerank = ranked.len().min(100) as u64;
+        emit_stage(&app, "semantic_rerank", "started", None, Some(to_rerank), None);
         let _ = app.emit(
             crate::events::EV_MODEL_STATUS,
             crate::events::ModelStatusPayload {
                 model_id: "bge-small-en-v1.5".to_string(),
                 status: "embedding".to_string(),
-                detail: Some(format!("{} candidates", ranked.len().min(100))),
+                detail: Some(format!("{} candidates", to_rerank)),
             },
         );
         let query_for_rerank = req.query.clone();
@@ -361,17 +410,29 @@ pub async fn run_pipeline(
         match result {
             Ok((reranked, Ok(()))) => {
                 ranked = reranked;
+                emit_stage(&app, "semantic_rerank", "done", Some(to_rerank), Some(to_rerank), None);
             }
             Ok((reranked, Err(e))) => {
                 tracing::warn!("semantic rerank failed, falling back to Tier 1: {}", e);
                 ranked = reranked;
+                emit_stage(&app, "semantic_rerank", "skipped", None, None,
+                    Some("model not loaded — using lexical only".into()));
             }
             Err(e) => {
                 tracing::warn!("rerank task panicked: {}", e);
+                emit_stage(&app, "semantic_rerank", "skipped", None, None,
+                    Some(format!("rerank task panicked: {}", e)));
                 // ranked is empty here because of std::mem::take — that's fine
                 // because the task only panics after taking ownership.
             }
         }
+    }
+    #[cfg(not(feature = "ai-embeddings"))]
+    emit_stage(&app, "semantic_rerank", "skipped", None, None,
+        Some("embeddings feature disabled at build time".into()));
+    #[cfg(feature = "ai-embeddings")]
+    if !req.use_semantic_rerank {
+        emit_stage(&app, "semantic_rerank", "skipped", None, None, None);
     }
 
     // Tier 3b: LLM borderline filter. Asks the LLM yes/no whether each
@@ -379,6 +440,7 @@ pub async fn run_pipeline(
     // query. Bounded scope = bounded latency.
     #[cfg(feature = "ai-llm")]
     if req.use_llm_filter && !cancel.is_cancelled() && ranked.len() >= 4 {
+        emit_stage(&app, "llm_filter", "started", None, None, None);
         if let Some(llm) = ensure_llm_loaded(&app).await {
             // Determine the borderline band on the kept set only.
             let kept_indices: Vec<usize> = ranked
@@ -434,23 +496,44 @@ pub async fn run_pipeline(
                 .await
                 .unwrap_or_else(|_| vec![true; borderline.len()]);
 
+                let mut rejected_by_llm = 0u64;
                 for (i, idx) in borderline.iter().enumerate() {
                     if !keeps.get(i).copied().unwrap_or(true) {
                         ranked[*idx].reject_reason = Some("LLM judged off-topic".to_string());
+                        rejected_by_llm += 1;
                     }
                 }
+                emit_stage(&app, "llm_filter", "done", Some(rejected_by_llm),
+                    Some(borderline.len() as u64),
+                    Some(format!("dropped {} of {} borderline", rejected_by_llm, borderline.len())));
+            } else {
+                emit_stage(&app, "llm_filter", "skipped", None, None,
+                    Some("not enough kept candidates to filter".into()));
             }
+        } else {
+            emit_stage(&app, "llm_filter", "skipped", None, None,
+                Some("LLM model not downloaded".into()));
         }
+    } else {
+        #[cfg(feature = "ai-llm")]
+        emit_stage(&app, "llm_filter", "skipped", None, None, None);
     }
+    #[cfg(not(feature = "ai-llm"))]
+    emit_stage(&app, "llm_filter", "skipped", None, None,
+        Some("LLM feature disabled at build time".into()));
 
     // Tier 4: optional citation-graph enrichment. Boosts papers that are
     // referenced or cited by other top-scoring candidates. Off by default
     // because each enabled run hits Semantic Scholar's rate limits hard.
     if req.use_citation_graph && !cancel.is_cancelled() {
+        emit_stage(&app, "citation_enrich", "started", None, None, None);
         ranked = enrich_with_citation_graph(client.clone(), ranked).await;
         // Re-flag rejects: scores changed, but the absolute TF-IDF cutoff
         // didn't, so this is mostly a no-op. Cheap to be defensive though.
         ranked = flag_rejects(ranked);
+        emit_stage(&app, "citation_enrich", "done", None, None, None);
+    } else {
+        emit_stage(&app, "citation_enrich", "skipped", None, None, None);
     }
 
     // Emit one EV_CANDIDATE per ranked doc with full scoring breakdown +
@@ -501,6 +584,15 @@ pub async fn run_pipeline(
         .filter(|r| r.reject_reason.is_none())
         .map(|r| r.doc.doc)
         .collect();
+
+    emit_stage(&app, "download", "started", None, Some(candidates.len() as u64),
+        Some(format!("{} kept candidates", candidates.len())));
+    if req.extract {
+        emit_stage(&app, "extract", "started", None, Some(candidates.len() as u64), None);
+    } else {
+        emit_stage(&app, "extract", "skipped", None, None,
+            Some("text extraction disabled".into()));
+    }
 
     // -------- Phase 2: parallel downloads + parallel extraction --------
     //
@@ -735,6 +827,11 @@ pub async fn run_pipeline(
         let c = counters.lock().await;
         *c
     };
+    emit_stage(&app, "download", "done", Some(done as u64), Some(total as u64),
+        Some(format!("{} saved · {} failed", done, failed)));
+    if req.extract {
+        emit_stage(&app, "extract", "done", Some(done as u64), Some(total as u64), None);
+    }
 
     let folder_str = folder.to_string_lossy().to_string();
     runlog::log(runlog::Event::RunComplete {
