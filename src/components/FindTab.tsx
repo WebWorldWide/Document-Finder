@@ -9,7 +9,14 @@ import { runStore } from "@/stores/run";
 import { settings, toggleSource } from "@/stores/settings";
 import { uiStore } from "@/stores/ui";
 import { api } from "@/lib/tauri";
-import { ALL_SOURCES, SOURCE_LABELS } from "@/lib/utils";
+import { ALL_SOURCES, META_SEARCH_COVERED, SOURCE_LABELS, type SourceId } from "@/lib/utils";
+
+// Top-level toggle row hides the six engines covered by `meta_search` to
+// avoid clutter — they're still selectable from the "Individual engines"
+// expander when meta_search is off or the user wants surgical control.
+const PRIMARY_SOURCES: readonly SourceId[] = ALL_SOURCES.filter(
+  (s) => !META_SEARCH_COVERED.includes(s)
+);
 
 const EXAMPLES = [
   "machine learning survey 2024",
@@ -105,7 +112,7 @@ export default function FindTab() {
             <span class="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-foreground-muted)] mr-2">
               Sources
             </span>
-            <For each={ALL_SOURCES}>
+            <For each={PRIMARY_SOURCES}>
               {(src) => {
                 const active = () => settings.selectedSources.includes(src);
                 return (
@@ -128,6 +135,35 @@ export default function FindTab() {
               }}
             </For>
           </div>
+          <details>
+            <summary class="cursor-pointer text-[10px] font-medium text-[var(--color-foreground-muted)] hover:text-[var(--color-foreground)]">
+              Individual web engines (advanced)
+            </summary>
+            <div class="mt-2 flex flex-wrap items-center gap-1.5">
+              <For each={META_SEARCH_COVERED}>
+                {(src) => {
+                  const active = () => settings.selectedSources.includes(src);
+                  return (
+                    <button
+                      onClick={() => toggleSource(src)}
+                      class="tag-pill px-2.5 py-0.5 text-[10px] font-medium"
+                      classList={{ "is-active": active() }}
+                      style={
+                        active()
+                          ? {
+                              "background-color": `var(--color-source-${src})`,
+                              color: "white",
+                            }
+                          : { color: "var(--color-foreground-muted)" }
+                      }
+                    >
+                      {SOURCE_LABELS[src]}
+                    </button>
+                  );
+                }}
+              </For>
+            </div>
+          </details>
           <Show when={settings.selectedSources.length === 0}>
             <p class="text-[10px] text-[var(--color-destructive)]">
               Select at least one source to search.
@@ -354,29 +390,60 @@ function FullHeader(props: {
       </div>
 
       {/* Source toggles — flat outlined tags; active fills with source color */}
-      <div class="flex flex-wrap gap-2">
-        <For each={ALL_SOURCES}>
-          {(src) => {
-            const active = () => settings.selectedSources.includes(src);
-            return (
-              <button
-                onClick={() => toggleSource(src)}
-                class="tag-pill px-3 py-1 text-[11px] font-medium"
-                classList={{ "is-active": active() }}
-                style={
-                  active()
-                    ? {
-                        "background-color": `var(--color-source-${src})`,
-                        color: "white",
-                      }
-                    : { color: "var(--color-foreground-muted)" }
-                }
-              >
-                {SOURCE_LABELS[src]}
-              </button>
-            );
-          }}
-        </For>
+      <div class="space-y-2">
+        <div class="flex flex-wrap gap-2">
+          <For each={PRIMARY_SOURCES}>
+            {(src) => {
+              const active = () => settings.selectedSources.includes(src);
+              return (
+                <button
+                  onClick={() => toggleSource(src)}
+                  class="tag-pill px-3 py-1 text-[11px] font-medium"
+                  classList={{ "is-active": active() }}
+                  style={
+                    active()
+                      ? {
+                          "background-color": `var(--color-source-${src})`,
+                          color: "white",
+                        }
+                      : { color: "var(--color-foreground-muted)" }
+                  }
+                >
+                  {SOURCE_LABELS[src]}
+                </button>
+              );
+            }}
+          </For>
+        </div>
+        <details>
+          <summary class="cursor-pointer text-[11px] font-medium text-[var(--color-foreground-muted)] hover:text-[var(--color-foreground)]">
+            Individual web engines (advanced)
+          </summary>
+          <div class="mt-2 flex flex-wrap gap-2">
+            <For each={META_SEARCH_COVERED}>
+              {(src) => {
+                const active = () => settings.selectedSources.includes(src);
+                return (
+                  <button
+                    onClick={() => toggleSource(src)}
+                    class="tag-pill px-3 py-1 text-[11px] font-medium"
+                    classList={{ "is-active": active() }}
+                    style={
+                      active()
+                        ? {
+                            "background-color": `var(--color-source-${src})`,
+                            color: "white",
+                          }
+                        : { color: "var(--color-foreground-muted)" }
+                    }
+                  >
+                    {SOURCE_LABELS[src]}
+                  </button>
+                );
+              }}
+            </For>
+          </div>
+        </details>
       </div>
 
       <Show when={settings.selectedSources.length === 0}>

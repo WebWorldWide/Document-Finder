@@ -24,6 +24,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   internet_archive: "Internet Archive",
   doaj: "DOAJ",
   gutenberg: "Gutenberg",
+  meta_search: "Web (built-in)",
   web: "DuckDuckGo",
   brave: "Brave",
   bing: "Bing",
@@ -40,6 +41,7 @@ export const ALL_SOURCES = [
   "internet_archive",
   "doaj",
   "gutenberg",
+  "meta_search",
   "web",
   "brave",
   "bing",
@@ -51,6 +53,36 @@ export const ALL_SOURCES = [
 
 export type SourceId = (typeof ALL_SOURCES)[number];
 
+/// Sources we ship enabled by default on a fresh install. The built-in
+/// meta-search aggregator (`meta_search`) replaces SearXNG as the default
+/// web backend so the app works zero-config.
+export const DEFAULT_ENABLED_SOURCES: SourceId[] = [
+  "arxiv",
+  "openalex",
+  "semantic_scholar",
+  "internet_archive",
+  "doaj",
+  "gutenberg",
+  "meta_search",
+];
+
+/// Web-engine ids that the meta_search aggregator covers. We keep these as
+/// individually-selectable advanced options but hide them from the main
+/// toggle group when meta_search is active.
+export const META_SEARCH_COVERED: SourceId[] = [
+  "web",
+  "brave",
+  "bing",
+  "mojeek",
+  "marginalia",
+  "startpage",
+];
+
 export function sourceColor(source: string): string {
-  return `var(--color-source-${source.replace(/-/g, "_")}, oklch(0.7 0.1 270))`;
+  // Strip the `meta_search/<engine>` prefix so candidate badges still color
+  // by the originating engine.
+  const key = source.startsWith("meta_search/")
+    ? source.slice("meta_search/".length)
+    : source;
+  return `var(--color-source-${key.replace(/-/g, "_")}, oklch(0.7 0.1 270))`;
 }

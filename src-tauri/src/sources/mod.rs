@@ -6,6 +6,7 @@ pub mod duckduckgo;
 pub mod gutenberg;
 pub mod internet_archive;
 pub mod marginalia_html;
+pub mod meta_search;
 pub mod mojeek_html;
 pub mod openalex;
 pub mod searxng;
@@ -26,7 +27,8 @@ use std::sync::Arc;
 /// browser to evade paywalls — just to stop being blocked at the gate.
 pub const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-/// All known source ids.
+/// All known source ids. `meta_search` is the recommended zero-config web
+/// backend; it fans out to the six individual web scrapers internally.
 pub const SOURCE_IDS: &[&str] = &[
     "arxiv",
     "openalex",
@@ -34,6 +36,7 @@ pub const SOURCE_IDS: &[&str] = &[
     "internet_archive",
     "doaj",
     "gutenberg",
+    "meta_search",
     "web",
     "brave",
     "bing",
@@ -121,6 +124,7 @@ pub fn build_source(
         "mojeek" => Some(Box::new(mojeek_html::MojeekHtmlSource::new(client))),
         "marginalia" => Some(Box::new(marginalia_html::MarginaliaHtmlSource::new(client))),
         "startpage" => Some(Box::new(startpage_html::StartpageHtmlSource::new(client))),
+        "meta_search" => Some(Box::new(meta_search::MetaSearchSource::new(client))),
         "searxng" => {
             let raw = _options.instance_url
                 .unwrap_or_else(|| "http://localhost:8080".to_string());

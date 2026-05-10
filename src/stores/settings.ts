@@ -1,6 +1,6 @@
 import { createStore } from "solid-js/store";
 import { api } from "@/lib/tauri";
-import { ALL_SOURCES, type SourceId } from "@/lib/utils";
+import { ALL_SOURCES, DEFAULT_ENABLED_SOURCES, type SourceId } from "@/lib/utils";
 
 const LS_KEY = "df-settings-v2";
 
@@ -21,9 +21,9 @@ function safeStr(v: unknown, fallback: string): string {
   return typeof v === "string" && v.length > 0 ? v : fallback;
 }
 function safeSources(v: unknown): SourceId[] {
-  if (!Array.isArray(v)) return [...ALL_SOURCES] as SourceId[];
+  if (!Array.isArray(v)) return [...DEFAULT_ENABLED_SOURCES];
   const valid = v.filter((s): s is SourceId => ALL_SOURCES.includes(s as SourceId));
-  return valid.length > 0 ? valid : ([...ALL_SOURCES] as SourceId[]);
+  return valid.length > 0 ? valid : [...DEFAULT_ENABLED_SOURCES];
 }
 function safeUrl(v: unknown, fallback: string): string {
   if (typeof v !== "string") return fallback;
