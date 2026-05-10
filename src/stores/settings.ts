@@ -25,12 +25,6 @@ function safeSources(v: unknown): SourceId[] {
   const valid = v.filter((s): s is SourceId => ALL_SOURCES.includes(s as SourceId));
   return valid.length > 0 ? valid : [...DEFAULT_ENABLED_SOURCES];
 }
-function safeUrl(v: unknown, fallback: string): string {
-  if (typeof v !== "string") return fallback;
-  try { const u = new URL(v); if (u.protocol === "http:" || u.protocol === "https:") return v; } catch {}
-  return fallback;
-}
-
 function safeBool(v: unknown, fallback: boolean): boolean {
   return typeof v === "boolean" ? v : fallback;
 }
@@ -64,7 +58,6 @@ export const [settings, setSettings] = createStore({
   maxTotal:        posInt(saved.maxTotal, 500),
   concurrency:     posInt(saved.concurrency, 8),
   selectedSources: safeSources(saved.selectedSources),
-  searxngUrl:      safeUrl(saved.searxngUrl, "http://localhost:8080"),
   useCitationGraph: safeBool(saved.useCitationGraph, false),
   /// Search quality preset — replaces the previous useSemanticRerank /
   /// useLlmExpansion / useLlmFilter trio. See `qualityToFlags` for the

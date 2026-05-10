@@ -1,23 +1,14 @@
 import { Show, For, onMount, createSignal } from "solid-js";
-import { Sparkles, X, CheckCircle2, Server, Brain } from "lucide-solid";
+import { Sparkles, X, CheckCircle2, Brain } from "lucide-solid";
 import { modelsStore } from "@/stores/models";
 import { settings, setSettings, saveSettings } from "@/stores/settings";
 import ModelDownloadCard from "./ModelDownloadCard";
-import SearxngSetupPanel from "./SearxngSetupPanel";
 import { formatBytes } from "@/lib/utils";
 
-/// One-time welcome experience covering the three things a fresh user
-/// might want to opt into: built-in meta-search (already on, just shown
-/// for confidence), SearXNG via Docker (optional power-user backend),
-/// and the local AI models. Replaces the previous models-only
-/// FirstRunModelDialog.
-///
-/// Surfaces once on first launch (or after wiping app state). Each
-/// section is independent — the user can set up any combination.
+/// One-time welcome experience. Two passive panels: built-in meta-search
+/// (already on, shown for confidence) and the optional AI model downloads.
+/// Surfaces once on first launch (or after wiping app state).
 export default function WelcomeDialog() {
-  // Local UI state for which sections the user has explicitly expanded.
-  // Keep them collapsed by default so the dialog opens compact.
-  const [searxngOpen, setSearxngOpen] = createSignal(false);
   const [modelsOpen, setModelsOpen] = createSignal(true);
 
   onMount(() => {
@@ -98,33 +89,7 @@ export default function WelcomeDialog() {
             </div>
           </section>
 
-          {/* Section 2: SearXNG (optional Docker setup) */}
-          <section class="surface-raised-subtle mb-3 p-4">
-            <button
-              onClick={() => setSearxngOpen((v) => !v)}
-              aria-expanded={searxngOpen()}
-              class="flex w-full items-start gap-3 text-left"
-            >
-              <Server size={18} class="mt-0.5 shrink-0 text-[var(--color-foreground-muted)]" />
-              <div class="flex-1">
-                <p class="text-sm font-semibold">SearXNG (optional)</p>
-                <p class="mt-0.5 text-[11px] leading-relaxed text-[var(--color-foreground-muted)]">
-                  Add 70+ extra search engines via a local Docker container.
-                  Most users don't need this — the built-in set is broad enough.
-                </p>
-              </div>
-              <span class="ml-auto shrink-0 text-[10px] text-[var(--color-foreground-muted)]">
-                {searxngOpen() ? "−" : "+"}
-              </span>
-            </button>
-            <Show when={searxngOpen()}>
-              <div class="mt-3 border-t border-[var(--color-border)] pt-3">
-                <SearxngSetupPanel compact />
-              </div>
-            </Show>
-          </section>
-
-          {/* Section 3: AI Models (default-expanded since this is the big win) */}
+          {/* Section 2: AI Models (default-expanded since this is the big win) */}
           <section class="surface-raised-subtle mb-4 p-4">
             <button
               onClick={() => setModelsOpen((v) => !v)}

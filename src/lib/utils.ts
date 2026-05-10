@@ -31,7 +31,6 @@ export const SOURCE_LABELS: Record<string, string> = {
   mojeek: "Mojeek",
   marginalia: "Marginalia",
   startpage: "Startpage",
-  searxng: "SearXNG",
 };
 
 export const ALL_SOURCES = [
@@ -48,7 +47,6 @@ export const ALL_SOURCES = [
   "mojeek",
   "marginalia",
   "startpage",
-  "searxng",
 ] as const;
 
 export type SourceId = (typeof ALL_SOURCES)[number];

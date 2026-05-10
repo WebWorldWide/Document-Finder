@@ -22,9 +22,9 @@
   --color-surface-soft: oklch(0.97 0.006 80);
   --color-surface-deep: oklch(0.91 0.010 80);
 
-  /* ---- Text (warm dark) ------------------------------------------------ */
+  /* ---- Text (warm dark; muted bumped down for readability on pinstripe) */
   --color-foreground:         oklch(0.20 0.012 80);
-  --color-foreground-muted:   oklch(0.48 0.014 80);
+  --color-foreground-muted:   oklch(0.40 0.014 80);
 
   /* ---- Brand: deep iOS-blue primary + warm/cool accents --------------- */
   --color-primary:            oklch(0.55 0.20 250);
@@ -50,7 +50,6 @@
   --color-source-meta_search:      oklch(0.55 0.18 165);
   --color-source-brave:            oklch(0.55 0.20 30);
   --color-source-bing:             oklch(0.5 0.16 180);
-  --color-source-searxng:          oklch(0.5 0.18 290);
   --color-source-mojeek:           oklch(0.55 0.18 240);
   --color-source-marginalia:       oklch(0.5 0.18 100);
   --color-source-startpage:        oklch(0.5 0.18 220);
@@ -64,10 +63,10 @@
   --color-secondary:            oklch(0.91 0.010 80);
   --color-secondary-foreground: oklch(0.25 0.012 80);
   --color-muted:                oklch(0.93 0.008 80);
-  --color-muted-foreground:     oklch(0.48 0.014 80);
+  --color-muted-foreground:     oklch(0.40 0.014 80);
   --color-accent:               oklch(0.92 0.012 80);
   --color-accent-foreground:    oklch(0.20 0.012 80);
-  --color-border:               oklch(0.84 0.012 80);
+  --color-border:               oklch(0.78 0.012 80);
   --color-input:                oklch(0.97 0.006 80);
   --color-ring:                 oklch(0.55 0.20 250);
 
@@ -223,17 +222,20 @@ h1, h2, h3, h4 {
               0 0 0 2px oklch(0.55 0.20 250 / 0.32);
 }
 
-/* Flat outline pill — used for source/example tags in dense wraps where
- * per-pill shadows would blot. Active state fills with a tint. */
+/* Flat pill — used for source/example tags in dense wraps where per-pill
+ * shadows would blot. Sits on a solid surface so it reads as tappable
+ * against the pinstripe canvas (transparent background was illegible).
+ * Active state fills with a per-source color via inline style. */
 .tag-pill {
-  background: transparent;
+  background: var(--color-surface);
+  color: var(--color-foreground);
   border: 1.5px solid var(--color-border);
   border-radius: var(--radius-pill);
   transition: background-color 100ms ease-out, border-color 100ms ease-out, color 100ms ease-out;
   cursor: pointer;
 }
 .tag-pill:hover:not(:disabled) {
-  border-color: var(--color-foreground-muted);
+  border-color: var(--color-foreground);
 }
 .tag-pill.is-active {
   border-color: transparent;
