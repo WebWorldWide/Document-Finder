@@ -20,5 +20,6 @@ commands.allow = [
   "download_model",
   "cancel_model_download",
   "delete_model",
-  "delete_library"
+  "delete_library",
+  "reset_ai_state"
 ]

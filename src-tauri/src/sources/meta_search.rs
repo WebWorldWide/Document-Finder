@@ -1,21 +1,19 @@
 //! Built-in meta-search aggregator — the zero-config replacement for SearXNG.
 //!
-//! Fans out the query to all six HTML web scrapers concurrently
-//! (DuckDuckGo, Brave, Bing, Mojeek, Marginalia, Startpage), collects their
-//! result streams into a single unified stream, and dedupes by lowercased
-//! URL so cross-engine duplicates don't double-emit.
-//!
-//! This source is the default web backend so a freshly installed app can
-//! search without any external service running. Heavyweight dedup (by DOI /
-//! normalized title / author+year fingerprint) still happens downstream in
-//! `engine::dedup`; this layer only does cheap URL-level dedup to keep the
-//! stream small and avoid burning rank slots.
+//! Fans out the query to all six HTML web scrapers concurrently, runs a
+//! circuit breaker per backend so repeatedly failing engines are skipped for
+//! 5 minutes, and falls back to public SearxNG instances when all circuits
+//! are open. Emits `df:meta_search_health` after each backend completes so
+//! the UI can show a per-engine health badge.
 
 use async_trait::async_trait;
 use futures::stream::{self, BoxStream, StreamExt};
-use std::collections::HashSet;
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
 use super::bing_html::BingHtmlSource;
@@ -23,34 +21,87 @@ use super::brave_html::BraveHtmlSource;
 use super::duckduckgo::DuckDuckGoSource;
 use super::marginalia_html::MarginaliaHtmlSource;
 use super::mojeek_html::MojeekHtmlSource;
+use super::searxng_pool::SearxngPoolSource;
 use super::startpage_html::StartpageHtmlSource;
 use super::{Document, Source};
+use crate::events::{MetaSearchHealthPayload, EV_META_SEARCH_HEALTH};
 
-/// Per-engine ceiling on how long we'll wait before giving up on its stream.
-/// Slow engines shouldn't hold the aggregate stream hostage.
-const PER_ENGINE_TIMEOUT: Duration = Duration::from_secs(12);
+const BACKEND_TIMEOUT: Duration = Duration::from_secs(8);
+const CIRCUIT_OPEN_FAILURES: u32 = 3;
+const CIRCUIT_OPEN_DURATION: Duration = Duration::from_secs(300);
+
+#[derive(Debug, Default)]
+struct BackendHealth {
+    consecutive_failures: u32,
+    skip_until: Option<Instant>,
+}
+
+impl BackendHealth {
+    fn is_open(&self) -> bool {
+        if let Some(until) = self.skip_until {
+            Instant::now() < until
+        } else {
+            false
+        }
+    }
+
+    fn record_success(&mut self) {
+        self.consecutive_failures = 0;
+        self.skip_until = None;
+    }
+
+    fn record_failure(&mut self) {
+        self.consecutive_failures += 1;
+        if self.consecutive_failures >= CIRCUIT_OPEN_FAILURES {
+            self.skip_until = Some(Instant::now() + CIRCUIT_OPEN_DURATION);
+        }
+    }
+}
+
+static HEALTH: Lazy<Mutex<HashMap<&'static str, BackendHealth>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+struct EngineEntry {
+    name: &'static str,
+    source: Box<dyn Source>,
+}
 
 pub struct MetaSearchSource {
-    engines: Vec<Box<dyn Source>>,
+    engines: Vec<EngineEntry>,
+    app: Option<AppHandle>,
+    fallback: Arc<SearxngPoolSource>,
 }
 
 impl MetaSearchSource {
-    pub fn new(client: Arc<reqwest::Client>) -> Self {
-        let engines: Vec<Box<dyn Source>> = vec![
-            Box::new(DuckDuckGoSource::new(client.clone())),
-            Box::new(BraveHtmlSource::new(client.clone())),
-            Box::new(BingHtmlSource::new(client.clone())),
-            Box::new(MojeekHtmlSource::new(client.clone())),
-            Box::new(MarginaliaHtmlSource::new(client.clone())),
-            Box::new(StartpageHtmlSource::new(client)),
+    pub fn new(client: Arc<reqwest::Client>, app: Option<AppHandle>) -> Self {
+        let engines = vec![
+            EngineEntry { name: "duckduckgo", source: Box::new(DuckDuckGoSource::new(client.clone())) },
+            EngineEntry { name: "brave",      source: Box::new(BraveHtmlSource::new(client.clone())) },
+            EngineEntry { name: "bing",       source: Box::new(BingHtmlSource::new(client.clone())) },
+            EngineEntry { name: "mojeek",     source: Box::new(MojeekHtmlSource::new(client.clone())) },
+            EngineEntry { name: "marginalia", source: Box::new(MarginaliaHtmlSource::new(client.clone())) },
+            EngineEntry { name: "startpage",  source: Box::new(StartpageHtmlSource::new(client.clone())) },
         ];
-        Self { engines }
+        let fallback = Arc::new(SearxngPoolSource::new(client));
+        Self { engines, app, fallback }
+    }
+
+    fn emit_health(&self, backend: &str, status: &str, result_count: usize, latency_ms: u64) {
+        if let Some(app) = &self.app {
+            let _ = app.emit(
+                EV_META_SEARCH_HEALTH,
+                MetaSearchHealthPayload {
+                    backend: backend.to_string(),
+                    status: status.to_string(),
+                    result_count,
+                    latency_ms,
+                },
+            );
+        }
     }
 }
 
 fn dedup_key(url: &str) -> String {
-    // Lowercased URL with trailing slash and fragment stripped. Cheap; the
-    // engine layer in dedup.rs does the smart matching later.
     let trimmed = url.split('#').next().unwrap_or(url);
     trimmed.trim_end_matches('/').to_lowercase()
 }
@@ -66,37 +117,91 @@ impl Source for MetaSearchSource {
         keywords: Vec<String>,
         limit: usize,
     ) -> BoxStream<'static, anyhow::Result<Document>> {
-        // Each engine still does its own internal pagination; we ask each for
-        // up to `limit` results and the merged stream takes the first `limit`
-        // unique URLs.
         let per_engine_limit = limit.max(8);
-
-        // mpsc channel collects results from every engine concurrently.
         let (tx, rx) = mpsc::channel::<anyhow::Result<Document>>(64);
 
-        for engine in &self.engines {
-            let name = engine.name();
-            let stream = engine.search(keywords.clone(), per_engine_limit).await;
+        // Determine active engines after circuit-breaker check.
+        let mut active_count = 0usize;
+        for entry in &self.engines {
+            let is_open = {
+                let health = HEALTH.lock();
+                health.get(entry.name).map(|h| h.is_open()).unwrap_or(false)
+            };
+            if is_open {
+                self.emit_health(entry.name, "circuit_open", 0, 0);
+                continue;
+            }
+            active_count += 1;
+
+            let name = entry.name;
+            let stream = entry.source.search(keywords.clone(), per_engine_limit).await;
             let tx = tx.clone();
+            let app_clone = self.app.clone();
+
             tokio::spawn(async move {
+                let started = Instant::now();
+                let mut count = 0usize;
+                let mut timed_out = false;
+
                 let stream = stream.take(per_engine_limit);
                 tokio::pin!(stream);
-                let _ = tokio::time::timeout(PER_ENGINE_TIMEOUT, async {
+                let result = tokio::time::timeout(BACKEND_TIMEOUT, async {
                     while let Some(item) = stream.next().await {
-                        // If the receiver hung up, stop pumping.
+                        if item.is_ok() { count += 1; }
                         if tx.send(item).await.is_err() {
                             break;
                         }
                     }
-                })
-                .await
-                .map_err(|_| {
+                }).await;
+
+                if result.is_err() {
+                    timed_out = true;
                     tracing::debug!("meta_search: engine {} timed out", name);
-                });
+                }
+
+                let latency_ms = started.elapsed().as_millis() as u64;
+
+                // Update circuit breaker.
+                let (status_str, failed) = if timed_out {
+                    ("timeout", true)
+                } else if count == 0 {
+                    ("error", true)
+                } else {
+                    ("ok", false)
+                };
+
+                {
+                    let mut health = HEALTH.lock();
+                    let entry = health.entry(name).or_default();
+                    if failed {
+                        entry.record_failure();
+                    } else {
+                        entry.record_success();
+                    }
+                }
+
+                // Emit health event.
+                if let Some(app) = app_clone {
+                    let _ = app.emit(
+                        EV_META_SEARCH_HEALTH,
+                        MetaSearchHealthPayload {
+                            backend: name.to_string(),
+                            status: status_str.to_string(),
+                            result_count: count,
+                            latency_ms,
+                        },
+                    );
+                }
             });
         }
-        // Drop our own producer end so the receive stream finishes once all
-        // spawned senders go out of scope.
+
+        // If all circuits are open, fall back to public SearXNG pool.
+        if active_count == 0 {
+            tracing::info!("meta_search: all circuits open, falling back to SearxNG pool");
+            let fallback = Arc::clone(&self.fallback);
+            return fallback.search(keywords, limit).await;
+        }
+
         drop(tx);
 
         let seen: HashSet<String> = HashSet::new();
@@ -106,14 +211,11 @@ impl Source for MetaSearchSource {
                     Ok(mut doc) => {
                         let key = dedup_key(&doc.url);
                         if seen.insert(key) {
-                            // Tag the unified source so the UI knows where it
-                            // came from at a glance.
                             if !matches!(doc.source.as_str(), "meta_search") {
                                 doc.source = format!("meta_search/{}", doc.source);
                             }
                             return Some((Ok(doc), (rx, seen)));
                         }
-                        // Duplicate URL — skip and pull next.
                         continue;
                     }
                     Err(e) => return Some((Err(e), (rx, seen))),
@@ -137,8 +239,20 @@ mod tests {
             dedup_key("https://example.com/path")
         );
         assert_eq!(
-            dedup_key("https://example.com/x#frag"),
-            dedup_key("https://example.com/x")
+            dedup_key("https://example.com/page#section"),
+            dedup_key("https://example.com/page")
         );
+    }
+
+    #[test]
+    fn circuit_breaker_trips_after_threshold() {
+        let mut h = BackendHealth::default();
+        assert!(!h.is_open());
+        for _ in 0..CIRCUIT_OPEN_FAILURES {
+            h.record_failure();
+        }
+        assert!(h.is_open());
+        h.record_success();
+        assert!(!h.is_open());
     }
 }

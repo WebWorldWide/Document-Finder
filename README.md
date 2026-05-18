@@ -15,9 +15,9 @@ Document Finder v2 is a complete rewrite of the original Python-based tool, now 
 - **Library Management**: Manage your collections in the Library tab. View metadata, doc counts, and total sizes.
 - **AI-Ready Exports**: Export libraries as `.zip` files containing PDFs, EPUBs, and extracted plain text — ready to drop into any AI context window.
 - **Blazing Fast**: Rust handles parallel downloads, PDF/EPUB text extraction, and SQLite persistence natively.
-- **Privacy-First Search**: Optionally integrate SearXNG for privacy-respecting web search across dozens of engines.
+- **Privacy-First Meta-Search**: Aggregates DuckDuckGo, Bing, Brave, and public SearXNG instances with a circuit breaker — no Docker required, no setup.
 - **Local AI Ranking**: Two small bundled models — `bge-small-en-v1.5` (~33 MB) for semantic reranking and `Qwen 2.5 3B Instruct` (~2 GB) for query expansion + borderline filtering. Downloaded on first use. Everything runs offline; no API keys, ever.
-- **Neumorphic UI**: Soft-depth design language with paired shadows, tactile press feedback, and a unified warm-cream canvas across every screen.
+- **4-Theme Design System**: Warm (light + dark) and Apple HIG (light + dark) themes switchable from Settings, with full reduced-motion support.
 
 ## Supported Sources
 
@@ -31,8 +31,7 @@ Document Finder v2 is a complete rewrite of the original Python-based tool, now 
 | [Internet Archive](https://archive.org/) | Millions of books, papers, and media |
 | [DOAJ](https://doaj.org/) | Directory of Open Access Journals |
 | [Project Gutenberg](https://www.gutenberg.org/) | 70,000+ free ebooks |
-| **Web** | DuckDuckGo document search (PDF/EPUB discovery) |
-| **SearXNG** *(optional)* | Self-hosted metasearch engine via Docker |
+| **Web** | Meta-search aggregator: DuckDuckGo, Bing, Brave + public SearXNG pool |
 
 ---
 
@@ -81,18 +80,6 @@ pnpm tauri build
 ```
 
 This produces platform-native installers in `src-tauri/target/release/bundle/`.
-
----
-
-## SearXNG (Optional)
-
-For privacy-preserving web search, Document Finder can connect to a local [SearXNG](https://searxng.org/) instance.
-
-**Requirements:** Docker
-
-**Setup:** In the app's Settings tab, click **Setup SearXNG with Docker**. This pulls the container and starts it on `localhost:8080`. The SearXNG source will then appear in the Discover tab.
-
-You can also point to a remote instance by entering its URL in Settings.
 
 ---
 
