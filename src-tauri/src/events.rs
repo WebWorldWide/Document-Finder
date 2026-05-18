@@ -36,6 +36,9 @@ pub const EV_MODEL_STATUS: &str = "df:model_status";
 // orchestrator phase so the UI can render an at-a-glance progress strip.
 pub const EV_PIPELINE_STAGE: &str = "df:pipeline_stage";
 
+// Meta-search backend health (emitted after each fan-out completes)
+pub const EV_META_SEARCH_HEALTH: &str = "df:meta_search_health";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct KeywordsPayload {
     pub query: String,
@@ -215,4 +218,13 @@ pub struct PipelineStagePayload {
     /// Free-form detail for the UI (e.g. "12 sources active").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MetaSearchHealthPayload {
+    pub backend: String,
+    /// "ok" | "timeout" | "circuit_open" | "error"
+    pub status: String,
+    pub result_count: usize,
+    pub latency_ms: u64,
 }

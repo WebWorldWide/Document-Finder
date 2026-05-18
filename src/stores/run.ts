@@ -309,10 +309,6 @@ async function startSearch(query: string) {
 
   try {
     const flags = qualityToFlags(settings.quality);
-    const source_options: Record<string, { instance_url?: string }> = {};
-    if (settings.searxngUrl) {
-      source_options.searxng = { instance_url: settings.searxngUrl };
-    }
     await api.startRun({
       query: query.trim(),
       sources: settings.selectedSources,
@@ -323,7 +319,6 @@ async function startSearch(query: string) {
       use_citation_graph: settings.useCitationGraph,
       ...flags,
       llm_model_id: settings.llmModelId || null,
-      source_options,
     });
   } catch (e) {
     setState("running", false);

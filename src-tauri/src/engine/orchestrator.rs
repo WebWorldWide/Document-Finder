@@ -248,7 +248,7 @@ pub async fn run_pipeline(
                 continue;
             }
             let opts = req.source_options.get(sname).cloned().unwrap_or_default();
-            let Some(src) = build_source(sname, opts, client.clone()) else {
+            let Some(src) = build_source(sname, opts, client.clone(), Some(app.clone())) else {
                 continue;
             };
 
@@ -426,9 +426,10 @@ pub async fn run_pipeline(
             },
         );
         let query_for_rerank = req.query.clone();
+        let app_for_rerank = app.clone();
         let mut taken: Vec<RankedDoc> = std::mem::take(&mut ranked);
         let result = tokio::task::spawn_blocking(move || {
-            let res = crate::ai::embeddings::rerank_blocking(&query_for_rerank, &mut taken, 100);
+            let res = crate::ai::embeddings::rerank_blocking(&app_for_rerank, &query_for_rerank, &mut taken, 100);
             (taken, res)
         })
         .await;

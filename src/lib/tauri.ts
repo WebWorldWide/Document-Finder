@@ -90,7 +90,6 @@ export const api = {
   runLogInfo: () => invoke<LogInfo>("run_log_info"),
   runLogTail: (max?: number) =>
     invoke<unknown[]>("run_log_tail", max != null ? { max } : {}),
-  setupSearXNG: () => invoke<string>("setup_searxng"),
   listModels: () => invoke<ModelInfo[]>("list_models"),
   isEmbeddingLoaded: () => invoke<boolean>("is_embedding_loaded"),
   downloadModel: (modelId: string) =>

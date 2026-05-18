@@ -4,6 +4,7 @@ import { api, type LogInfo } from "@/lib/tauri";
 import { settings, setSettings, saveSettings, type Quality } from "@/stores/settings";
 import { modelsStore } from "@/stores/models";
 import ModelDownloadCard from "./ModelDownloadCard";
+import MetaSearchHealthBar from "./MetaSearchHealthBar";
 import { formatBytes } from "@/lib/utils";
 
 export default function SettingsView() {
@@ -221,17 +222,18 @@ export default function SettingsView() {
 
         {/* Web search */}
         <section class="material-linen p-5">
-          <h2 class="mb-1 text-sm font-semibold text-embossed">Web Search</h2>
+          <h2 class="mb-1 text-sm font-semibold text-embossed">Web Search (no setup required)</h2>
           <p class="mb-3 text-xs leading-relaxed text-[var(--color-foreground-muted)]">
-            Six engines are queried in parallel and deduped into a single
-            result stream — no Docker, no setup, no API keys.
+            Searches multiple web indexes in parallel — no Docker, no API keys,
+            no accounts needed.
           </p>
-          <div class="surface-pressed-sm flex items-start gap-2 p-3 text-xs leading-relaxed">
+          <div class="surface-pressed-sm flex items-start gap-2 p-3 text-xs leading-relaxed mb-3">
             <CheckCircle2 size={14} class="mt-0.5 shrink-0" style={{ color: "var(--color-success)" }} />
             <span>
               DuckDuckGo · Brave · Bing · Mojeek · Marginalia · Startpage
             </span>
           </div>
+          <MetaSearchHealthBar />
         </section>
 
         {/* Run log */}

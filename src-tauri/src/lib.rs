@@ -3,6 +3,7 @@ pub mod commands;
 pub mod engine;
 pub mod events;
 pub mod sources;
+pub mod util;
 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -30,7 +31,6 @@ pub fn run() {
             commands::reveal_in_finder,
             commands::run_log_info,
             commands::run_log_tail,
-            commands::setup_searxng,
             commands::list_models,
             commands::is_embedding_loaded,
             commands::download_model,

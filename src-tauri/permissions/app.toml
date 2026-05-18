@@ -15,7 +15,6 @@ commands.allow = [
   "reveal_in_finder",
   "run_log_info",
   "run_log_tail",
-  "setup_searxng",
   "list_models",
   "is_embedding_loaded",
   "download_model",
