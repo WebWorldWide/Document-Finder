@@ -15,6 +15,7 @@ use crate::engine::runlog;
 use crate::engine::{run_pipeline, RunRequest};
 use crate::events::{ErrorPayload, EV_ERROR};
 use crate::sources::USER_AGENT;
+use crate::util::path_safety::safe_within_library;
 
 /// HTTP client tuned for huge model downloads — connect_timeout fails fast on
 /// dead URLs but there is NO overall .timeout, because the default
@@ -216,7 +217,7 @@ pub async fn list_libraries(root: String) -> Result<Vec<LibraryInfo>, String> {
 
 #[tauri::command]
 pub async fn open_library(path: String) -> Result<LibraryInfo, String> {
-    let p = PathBuf::from(&path);
+    let p = safe_within_library(&PathBuf::from(&path))?;
     let db_path = p.join("library.db");
     if !db_path.exists() {
         return Err("library.db not found".into());
@@ -282,16 +283,9 @@ pub struct ExportResult {
 /// (Claude Projects, ChatGPT, etc.). Skips the BM25 index and OS junk.
 #[tauri::command]
 pub fn export_library_zip(args: ExportArgs) -> Result<ExportResult, String> {
-    let src = PathBuf::from(&args.folder)
-        .canonicalize()
-        .map_err(|e| format!("invalid folder: {}", e))?;
+    let src = safe_within_library(&PathBuf::from(&args.folder))?;
     if !src.is_dir() {
         return Err(format!("not a folder: {}", args.folder));
-    }
-    // Confirm the folder is inside the user's Documents directory.
-    let docs = dirs::document_dir().ok_or("cannot resolve Documents directory")?;
-    if !src.starts_with(&docs) {
-        return Err("folder must be inside your Documents directory".to_string());
     }
     let dest_path = PathBuf::from(&args.dest);
     if let Some(parent) = dest_path.parent() {
@@ -410,17 +404,12 @@ pub fn run_log_tail(max: Option<usize>) -> Result<Vec<serde_json::Value>, String
 
 #[tauri::command]
 pub fn reveal_in_finder(path: String) -> Result<(), String> {
-    let p = PathBuf::from(&path);
-    // Reject relative paths and URI-scheme strings (e.g. "file:///etc").
-    if !p.is_absolute() {
-        return Err("path must be absolute".to_string());
-    }
+    let raw = PathBuf::from(&path);
+    // Block URI schemes (e.g. "file:///etc") before canonicalize is called.
     if path.contains("://") {
         return Err("path must not be a URI".to_string());
     }
-    if !p.exists() {
-        return Err(format!("not found: {}", path));
-    }
+    let p = safe_within_library(&raw)?;
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
