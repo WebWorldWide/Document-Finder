@@ -17,7 +17,6 @@ export interface RunRequest {
   out_dir: string;
   per_source?: number;
   max_total?: number;
-  concurrency?: number;
   extract?: boolean;
   use_citation_graph?: boolean;
   use_semantic_rerank?: boolean;
@@ -100,4 +99,5 @@ export const api = {
     invoke<void>("cancel_model_download", { modelId }),
   deleteModel: (modelId: string) => invoke<void>("delete_model", { modelId }),
   deleteLibrary: (path: string) => invoke<void>("delete_library", { path }),
+  resetAiState: () => invoke<void>("reset_ai_state"),
 };

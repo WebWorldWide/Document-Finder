@@ -19,8 +19,9 @@ use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
+use std::panic::AssertUnwindSafe;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use tokio::sync::Mutex as AsyncMutex;
 
 /// One backend per process — initializing twice is undefined behavior.
@@ -140,11 +141,29 @@ impl LlmModel {
     /// (llama.cpp contexts aren't shareable across calls), but the
     /// orchestration overhead drops to O(1).
     ///
-    /// On any individual error we conservatively keep the candidate (true).
+    /// On any individual error or panic we conservatively keep the candidate
+    /// (true). `catch_unwind` around each call guards against llama.cpp C FFI
+    /// panics permanently hanging the async mutex on the blocking thread.
+    ///
+    /// SAFETY: llama.cpp is not formally unwind-safe (C FFI), but we accept a
+    /// potential small resource leak in exchange for not deadlocking the mutex.
     pub fn batch_yes_no(&self, prompts: &[String]) -> Vec<bool> {
         prompts
             .iter()
-            .map(|p| self.yes_no(p).unwrap_or(true))
+            .map(|p| {
+                let result = std::panic::catch_unwind(AssertUnwindSafe(|| self.yes_no(p)));
+                match result {
+                    Ok(Ok(v)) => v,
+                    Ok(Err(e)) => {
+                        tracing::warn!("llm yes_no error (conservative keep): {e}");
+                        true
+                    }
+                    Err(_) => {
+                        tracing::error!("llm yes_no panicked — conservative keep");
+                        true
+                    }
+                }
+            })
             .collect()
     }
 }
@@ -160,29 +179,61 @@ fn parse_yes(raw: &str) -> bool {
 }
 
 // =============================================================================
-// Singleton — one model per process. Inference is gated by an async mutex
-// because llama.cpp contexts can't run two decodes in parallel.
+// Singleton — one model per process, resettable on demand.
+//
+// Uses RwLock<Option<...>> so reset_llm_model() can drop the model and force
+// re-initialization on the next search. Inference is gated by the inner
+// AsyncMutex because llama.cpp contexts can't run two decodes in parallel.
 // =============================================================================
 
-static MODEL: OnceLock<Arc<AsyncMutex<LlmModel>>> = OnceLock::new();
+static MODEL: OnceLock<RwLock<Option<Arc<AsyncMutex<LlmModel>>>>> = OnceLock::new();
 
-/// Load the LLM if not already loaded. Idempotent — second call returns
-/// the cached handle without touching disk.
+fn model_lock() -> &'static RwLock<Option<Arc<AsyncMutex<LlmModel>>>> {
+    MODEL.get_or_init(|| RwLock::new(None))
+}
+
+/// Load the LLM if not already loaded. Idempotent — second call returns the
+/// cached handle without touching disk. Always called from `spawn_blocking`.
 pub fn load_blocking(path: &Path) -> anyhow::Result<Arc<AsyncMutex<LlmModel>>> {
-    if let Some(m) = MODEL.get() {
+    // Fast path.
+    {
+        let guard = model_lock().read().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref m) = *guard {
+            return Ok(m.clone());
+        }
+    }
+
+    // Slow path: initialize under write lock.
+    let mut guard = model_lock().write().unwrap_or_else(|e| e.into_inner());
+    if let Some(ref m) = *guard {
         return Ok(m.clone());
     }
+
     let model = Arc::new(AsyncMutex::new(LlmModel::load(path)?));
-    let _ = MODEL.set(model.clone());
+    *guard = Some(model.clone());
     Ok(model)
 }
 
 pub fn try_get() -> Option<Arc<AsyncMutex<LlmModel>>> {
-    MODEL.get().cloned()
+    model_lock()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+/// Drop the loaded model so the next call to `load_blocking` re-initializes.
+/// Called by the `reset_ai_state` Tauri command after an inference error.
+pub fn reset_llm_model() {
+    let mut guard = model_lock().write().unwrap_or_else(|e| e.into_inner());
+    *guard = None;
+    tracing::info!("llm model reset");
 }
 
 pub fn is_loaded() -> bool {
-    MODEL.get().is_some()
+    model_lock()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some()
 }
 
 // =============================================================================
