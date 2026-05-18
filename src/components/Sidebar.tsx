@@ -91,6 +91,7 @@ export default function Sidebar() {
                     (document.getElementById("main-content") as HTMLElement)?.focus()
                   );
                 }}
+                aria-current={active() ? "page" : undefined}
                 class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium w-full text-left transition-colors duration-100 focus-ring-inset"
                 classList={{
                   "bg-[var(--color-primary)]/12": active(),

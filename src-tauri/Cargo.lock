@@ -1088,6 +1088,7 @@ dependencies = [
  "md-5",
  "num_cpus",
  "once_cell",
+ "parking_lot",
  "pdf-extract",
  "percent-encoding",
  "quick-xml 0.36.2",

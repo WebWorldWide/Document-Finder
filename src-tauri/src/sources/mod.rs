@@ -9,6 +9,7 @@ pub mod marginalia_html;
 pub mod meta_search;
 pub mod mojeek_html;
 pub mod openalex;
+pub mod searxng_pool;
 pub mod semantic_scholar;
 pub mod startpage_html;
 pub mod web_common;
@@ -20,6 +21,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tauri::AppHandle;
 
 /// Browser-shaped UA. Some publishers (Sage, OUP, Brill) 403 generic crawler
 /// UAs even when the article is open access. We're not pretending to be a
@@ -104,6 +106,7 @@ pub fn build_source(
     name: &str,
     _options: SourceOptions,
     client: Arc<reqwest::Client>,
+    app: Option<AppHandle>,
 ) -> Option<Box<dyn Source>> {
     match name {
         "arxiv" => Some(Box::new(arxiv::ArxivSource::new(client))),
@@ -122,7 +125,7 @@ pub fn build_source(
         "mojeek" => Some(Box::new(mojeek_html::MojeekHtmlSource::new(client))),
         "marginalia" => Some(Box::new(marginalia_html::MarginaliaHtmlSource::new(client))),
         "startpage" => Some(Box::new(startpage_html::StartpageHtmlSource::new(client))),
-        "meta_search" => Some(Box::new(meta_search::MetaSearchSource::new(client))),
+        "meta_search" => Some(Box::new(meta_search::MetaSearchSource::new(client, app))),
         _ => None,
     }
 }

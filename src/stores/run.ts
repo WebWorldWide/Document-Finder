@@ -263,6 +263,9 @@ function apply(ev: DfEvent) {
     case "error":
       setState({ running: false, fatalError: ev.payload.message });
       addLog("error", `Error: ${ev.payload.message}`);
+      // Reset AI singletons so the next search can re-initialize them cleanly
+      // without requiring an app restart after an inference crash.
+      api.resetAiState().catch((e) => console.error("reset_ai_state failed:", e));
       break;
 
     case "candidate":
@@ -312,7 +315,6 @@ async function startSearch(query: string) {
       out_dir: settings.libraryRoot,
       per_source: settings.perSource,
       max_total: settings.maxTotal,
-      concurrency: settings.concurrency,
       extract: true,
       use_citation_graph: settings.useCitationGraph,
       ...flags,

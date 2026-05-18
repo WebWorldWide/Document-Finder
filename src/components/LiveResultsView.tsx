@@ -324,6 +324,7 @@ function CandidateRow(props: {
       <Show when={isRejected()}>
         <button
           onClick={props.onOverrideHint}
+          aria-label="Force download (rejected by ranker)"
           class="btn-tactile shrink-0 p-1.5 text-[var(--color-foreground-muted)]"
           title="Force download (rejected by ranker)"
         >
