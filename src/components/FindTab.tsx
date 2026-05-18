@@ -379,6 +379,7 @@ function FullHeader(props: {
       {/* Inset query input */}
       <div class="relative">
         <textarea
+          aria-label="Search query"
           class="surface-input w-full resize-none px-4 py-3 pr-12 text-sm leading-relaxed outline-none placeholder:text-[var(--color-foreground-muted)]"
           placeholder="What are you looking for? (Ctrl+Enter to search)"
           rows={2}

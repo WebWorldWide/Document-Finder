@@ -5,6 +5,7 @@ import { settings, setSettings, saveSettings, type Quality } from "@/stores/sett
 import { modelsStore } from "@/stores/models";
 import ModelDownloadCard from "./ModelDownloadCard";
 import MetaSearchHealthBar from "./MetaSearchHealthBar";
+import ThemePicker from "./ThemePicker";
 import { formatBytes } from "@/lib/utils";
 
 export default function SettingsView() {
@@ -30,6 +31,16 @@ export default function SettingsView() {
     <div class="h-full overflow-y-auto">
       <div class="mx-auto max-w-2xl space-y-6 p-6 pt-10">
         <h1 class="text-xl font-semibold text-embossed">Settings</h1>
+
+        {/* Appearance */}
+        <section class="material-linen p-5">
+          <h2 class="mb-3 text-sm font-semibold text-embossed">Appearance</h2>
+          <p class="mb-3 text-xs leading-relaxed text-[var(--color-foreground-muted)]">
+            Choose a theme. Warm uses the skeumorphic iOS-6 palette.
+            Apple HIG uses the clean system look.
+          </p>
+          <ThemePicker />
+        </section>
 
         {/* Discovery settings */}
         <section class="material-linen p-5">
