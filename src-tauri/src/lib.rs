@@ -30,12 +30,14 @@ pub fn run() {
             commands::reveal_in_finder,
             commands::run_log_info,
             commands::run_log_tail,
+            commands::setup_searxng,
             commands::list_models,
             commands::is_embedding_loaded,
             commands::download_model,
             commands::cancel_model_download,
             commands::delete_model,
             commands::delete_library,
+            commands::reset_ai_state,
         ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())
@@ -43,6 +45,10 @@ pub fn run() {
 }
 
 fn install_panic_hook() {
+    // This hook fires for both std::thread panics AND tokio::spawn task panics
+    // (tokio routes task panics through the standard panic machinery before
+    // propagating the JoinError). Logging here gives us a stack-trace line
+    // even when the JoinHandle is dropped rather than awaited.
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let location = info
