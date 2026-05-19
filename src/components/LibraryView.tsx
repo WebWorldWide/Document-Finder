@@ -1,5 +1,5 @@
-import { createSignal, createEffect, onCleanup, Show, For } from "solid-js";
-import { Archive, FolderOpen, Loader2, X, RefreshCw } from "lucide-solid";
+import { createSignal, createEffect, onCleanup, Show, For, createMemo } from "solid-js";
+import { Archive, FolderOpen, Loader2, X, RefreshCw, BookOpen } from "lucide-solid";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, type LibraryInfo } from "@/lib/tauri";
 import { uiStore } from "@/stores/ui";
@@ -7,12 +7,19 @@ import { settings } from "@/stores/settings";
 import { formatBytes } from "@/lib/utils";
 
 export default function LibraryView() {
-  const [libraries, setLibraries] = createSignal<LibraryInfo[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
   const [exportingPath, setExportingPath] = createSignal<string | null>(null);
   const [exportError, setExportError] = createSignal<string | null>(null);
   const [loadTick, setLoadTick] = createSignal(0);
+
+  const libraries = createMemo(() => uiStore.knownLibraries);
+  const totalDocs = createMemo(() =>
+    libraries().reduce((s, l) => s + l.n_docs, 0),
+  );
+  const totalBytes = createMemo(() =>
+    libraries().reduce((s, l) => s + l.size_bytes, 0),
+  );
 
   createEffect(() => {
     const _tick = loadTick();
@@ -21,7 +28,6 @@ export default function LibraryView() {
       setLoading(false);
       return;
     }
-
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -29,7 +35,7 @@ export default function LibraryView() {
     api.listLibraries(root)
       .then((libs) => {
         if (!cancelled) {
-          setLibraries(libs);
+          uiStore.setKnownLibraries(libs);
           setLoading(false);
         }
       })
@@ -39,11 +45,11 @@ export default function LibraryView() {
           setLoading(false);
         }
       });
-
     onCleanup(() => { cancelled = true; });
   });
 
-  async function handleExport(lib: LibraryInfo) {
+  async function handleExport(lib: LibraryInfo, e: MouseEvent) {
+    e.stopPropagation();
     setExportError(null);
     const dest = await save({
       defaultPath: `${lib.name}.zip`,
@@ -61,31 +67,37 @@ export default function LibraryView() {
     }
   }
 
-  function handleCardKeyDown(e: KeyboardEvent, lib: LibraryInfo) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      uiStore.setActiveLibrary(lib);
-    }
-  }
-
   return (
-    <div class="flex h-full flex-col overflow-hidden">
-      <div class="border-b border-[var(--color-border)] px-6 py-5 pt-10">
-        <h1 class="text-xl font-semibold">Library</h1>
-        <p class="mt-0.5 text-sm text-[var(--color-muted-foreground)]">
-          Your saved research collections.
-        </p>
+    <div class="df-canvas">
+      <div class="df-canvas-head">
+        <h1 class="df-canvas-title">Library</h1>
+        <div class="df-headstats">
+          <div class="df-headstat">
+            <span class="df-headstat-num">{libraries().length}</span>
+            <span class="df-headstat-label">libraries</span>
+          </div>
+          <div class="df-headstat">
+            <span class="df-headstat-num">{totalDocs()}</span>
+            <span class="df-headstat-label">docs saved</span>
+          </div>
+          <div class="df-headstat">
+            <span class="df-headstat-num">{formatBytes(totalBytes())}</span>
+            <span class="df-headstat-label">on disk</span>
+          </div>
+        </div>
       </div>
 
-      <div class="flex-1 overflow-y-auto p-6 space-y-4">
-        {/* Export error */}
+      <div class="df-canvas-body" style={{ "padding-top": "var(--pad-6)" }}>
         <Show when={exportError()}>
-          <div class="rounded-lg border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 p-3 text-sm text-[var(--color-destructive)] flex items-start justify-between gap-2">
-            <span>Export failed: {exportError()}</span>
+          <div class="df-banner bad" style={{ "margin-bottom": "var(--pad-4)" }}>
+            <X size={14} />
+            <div class="df-banner-body">
+              <strong>Export failed.</strong> {exportError()}
+            </div>
             <button
+              class="df-banner-x"
               onClick={() => setExportError(null)}
               aria-label="Dismiss"
-              class="shrink-0 rounded hover:bg-[var(--color-destructive)]/10 p-0.5 transition-colors"
             >
               <X size={12} />
             </button>
@@ -93,89 +105,91 @@ export default function LibraryView() {
         </Show>
 
         <Show when={loading()}>
-          <div class="flex items-center justify-center py-16">
-            <Loader2 size={24} class="animate-spin text-[var(--color-muted-foreground)]" />
+          <div style={{
+            display: "flex",
+            "justify-content": "center",
+            padding: "var(--pad-9) 0",
+          }}>
+            <Loader2 size={24} class="spin" style={{ color: "var(--ink-3)" }} />
           </div>
         </Show>
 
         <Show when={!loading() && error()}>
-          <div class="rounded-lg border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 p-4 text-sm text-[var(--color-destructive)] space-y-3">
-            <p>{error()}</p>
+          <div class="df-banner bad">
+            <X size={14} />
+            <div class="df-banner-body">
+              <strong>Could not list libraries.</strong> {error()}
+            </div>
             <button
+              class="df-btn sm"
               onClick={() => setLoadTick((n) => n + 1)}
-              class="flex items-center gap-1.5 rounded-lg border border-[var(--color-destructive)]/30 px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-destructive)]/10 transition-colors"
+              style={{ "flex-shrink": 0 }}
             >
-              <RefreshCw size={12} />
-              Retry
+              <RefreshCw size={12} /> Retry
             </button>
           </div>
         </Show>
 
         <Show when={!loading() && !error() && libraries().length === 0}>
-          <div class="flex flex-col items-center justify-center py-20 text-center">
-            <div class="mb-4 rounded-full bg-[var(--color-muted)] p-5">
-              <Archive size={28} class="text-[var(--color-muted-foreground)]" />
+          <div class="df-empty">
+            <div class="df-empty-mark">
+              <BookOpen size={28} />
             </div>
-            <p class="text-sm font-medium">No libraries yet</p>
-            <p class="mt-1 text-sm text-[var(--color-muted-foreground)]">
-              Run a search to build your first collection.
+            <h3 class="df-empty-title">No libraries yet</h3>
+            <p class="df-empty-sub">
+              Run a search from Discover and saved documents will land here as a
+              library collection.
             </p>
-            <button
-              onClick={() => uiStore.setView("find")}
-              class="mt-4 rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-            >
+            <button class="df-btn accent" onClick={() => uiStore.setView("find")}>
               Go to Discover
             </button>
           </div>
         </Show>
 
         <Show when={!loading() && libraries().length > 0}>
-          <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <For each={libraries()}>
-              {(lib) => {
-                const isActive = () => uiStore.activeLibrary?.path === lib.path;
-                const isExporting = () => exportingPath() === lib.path;
-                return (
-                  <div
-                    role="button"
-                    tabindex="0"
-                    class="group rounded-xl border p-4 transition-all cursor-pointer hover:shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-                    classList={{
-                      "border-[var(--color-primary)] bg-[var(--color-primary)]/5": isActive(),
-                      "border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-primary)]/50": !isActive(),
-                    }}
-                    onClick={() => uiStore.setActiveLibrary(lib)}
-                    onKeyDown={(e) => handleCardKeyDown(e, lib)}
-                  >
-                    <h3 class="mb-1 truncate text-sm font-medium" title={lib.query}>
+          <div class="df-libgrid">
+            <For each={libraries()}>{(lib) => {
+              const isActive = () => uiStore.activeLibrary?.path === lib.path;
+              const isExporting = () => exportingPath() === lib.path;
+              return (
+                <button
+                  class="df-libcard"
+                  classList={{ active: isActive() }}
+                  onClick={() => uiStore.setActiveLibrary(lib)}
+                >
+                  <div class="df-libcard-head">
+                    <span class="df-libcard-q" title={lib.query ?? lib.name}>
                       {lib.query ?? lib.name}
-                    </h3>
-                    <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
-                      {lib.n_docs} documents · {formatBytes(lib.size_bytes)}
-                    </p>
-                    <div class="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        onClick={() => handleExport(lib)}
-                        disabled={isExporting()}
-                        class="flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-accent)] transition-colors disabled:opacity-50"
-                      >
-                        <Show when={isExporting()} fallback={<Archive size={12} />}>
-                          <Loader2 size={12} class="animate-spin" />
-                        </Show>
-                        Export ZIP
-                      </button>
-                      <button
-                        onClick={() => api.revealInFinder(lib.path)}
-                        class="flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-accent)] transition-colors"
-                      >
-                        <FolderOpen size={12} />
-                        Show
-                      </button>
-                    </div>
+                    </span>
                   </div>
-                );
-              }}
-            </For>
+                  <div class="df-libcard-meta">
+                    <span><strong>{lib.n_docs}</strong> docs</span>
+                    <span><strong>{formatBytes(lib.size_bytes)}</strong></span>
+                  </div>
+                  <div class="df-libcard-actions" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      class="df-btn sm"
+                      onClick={(e) => handleExport(lib, e)}
+                      disabled={isExporting()}
+                    >
+                      <Show when={isExporting()} fallback={<Archive size={12} />}>
+                        <Loader2 size={12} class="spin" />
+                      </Show>
+                      Export ZIP
+                    </button>
+                    <button
+                      class="df-btn sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        api.revealInFinder(lib.path);
+                      }}
+                    >
+                      <FolderOpen size={12} /> Show
+                    </button>
+                  </div>
+                </button>
+              );
+            }}</For>
           </div>
         </Show>
       </div>

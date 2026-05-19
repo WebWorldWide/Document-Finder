@@ -39,10 +39,21 @@ export interface LogEntry {
   msg: string;
 }
 
+export type SourceStatus = {
+  phase: "querying" | "done" | "error";
+  doneCount?: number;
+};
+
+export interface SubQueryState {
+  text: string;
+  found: number;
+  done: number;
+}
+
 interface RunState {
   running: boolean;
   query: string;
-  subQueries: string[];
+  subQueries: SubQueryState[];
   found: number;
   done: number;
   failed: number;
@@ -52,10 +63,16 @@ interface RunState {
   inFlight: Record<string, InFlight>;
   completed: CompletedItem[];
   sourceIssues: SourceIssue[];
+  sourceStatus: Record<string, SourceStatus>;
   log: LogEntry[];
   folder: string | null;
   manifest: string | null;
   fatalError: string | null;
+  /// Last 32 MB/s samples — populated by a 600ms ticker while running.
+  speedHist: number[];
+  /// Cumulative bytes downloaded across all in-flight + completed items.
+  /// Used by the speed ticker to compute MB/s deltas.
+  bytesAccum: number;
 }
 
 const [state, setState] = createStore<RunState>({
@@ -71,10 +88,13 @@ const [state, setState] = createStore<RunState>({
   inFlight: {},
   completed: [],
   sourceIssues: [],
+  sourceStatus: {},
   log: [],
   folder: null,
   manifest: null,
   fatalError: null,
+  speedHist: [],
+  bytesAccum: 0,
 });
 
 function addLog(level: LogEntry["level"], msg: string) {
@@ -95,17 +115,20 @@ function reset(query: string) {
     inFlight: {},
     completed: [],
     sourceIssues: [],
+    sourceStatus: {},
     log: [],
     folder: null,
     manifest: null,
     fatalError: null,
+    speedHist: [],
+    bytesAccum: 0,
   });
 }
 
 function apply(ev: DfEvent) {
   switch (ev.type) {
     case "keywords":
-      setState("subQueries", ev.payload.sub_queries);
+      setState("subQueries", ev.payload.sub_queries.map((text) => ({ text, found: 0, done: 0 })));
       break;
 
     case "subquery_start":
@@ -113,14 +136,20 @@ function apply(ev: DfEvent) {
       break;
 
     case "source_start":
+      setState("sourceStatus", ev.payload.source, { phase: "querying" });
       addLog("info", `   querying ${ev.payload.source}`);
       break;
 
     case "source_done":
+      setState("sourceStatus", ev.payload.source, {
+        phase: "done",
+        doneCount: ev.payload.count,
+      });
       addLog("info", `   ${ev.payload.source}: +${ev.payload.count}`);
       break;
 
     case "source_error":
+      setState("sourceStatus", ev.payload.source, { phase: "error" });
       setState(
         produce((s) => {
           s.sourceIssues = [
@@ -158,12 +187,16 @@ function apply(ev: DfEvent) {
       );
       break;
 
-    case "download_progress":
-      if (state.inFlight[ev.payload.task_id]) {
+    case "download_progress": {
+      const current = state.inFlight[ev.payload.task_id];
+      if (current) {
+        const delta = Math.max(0, ev.payload.downloaded - current.downloaded);
         setState("inFlight", ev.payload.task_id, "downloaded", ev.payload.downloaded);
         setState("inFlight", ev.payload.task_id, "total", ev.payload.total);
+        if (delta > 0) setState("bytesAccum", (b) => b + delta);
       }
       break;
+    }
 
     case "download_done": {
       const item: CompletedItem = {
@@ -245,12 +278,48 @@ function apply(ev: DfEvent) {
   }
 }
 
+/// 600ms ticker that converts bytesAccum into MB/s samples, keeping the
+/// last 32 readings. Started lazily on the first state.running flip and
+/// stopped when running flips back to false. Single-instance via the
+/// `tickerId` guard so hot-reload doesn't spawn stacked timers.
+let tickerId: ReturnType<typeof setInterval> | null = null;
+let lastTick = 0;
+let lastBytes = 0;
+
+function startTicker() {
+  if (tickerId != null) return;
+  lastTick = performance.now();
+  lastBytes = state.bytesAccum;
+  tickerId = setInterval(() => {
+    const now = performance.now();
+    const dt = (now - lastTick) / 1000;
+    lastTick = now;
+    const bytes = state.bytesAccum;
+    const delta = Math.max(0, bytes - lastBytes);
+    lastBytes = bytes;
+    const mbps = dt > 0 ? (delta / 1_000_000) / dt : 0;
+    setState("speedHist", (prev) => {
+      const next = prev.slice(prev.length >= 32 ? 1 : 0);
+      next.push(mbps);
+      return next;
+    });
+  }, 600);
+}
+
+function stopTicker() {
+  if (tickerId != null) {
+    clearInterval(tickerId);
+    tickerId = null;
+  }
+}
+
 async function startSearch(query: string) {
   if (!query.trim() || state.running) return;
   if (settings.selectedSources.length === 0) return;
 
   reset(query.trim());
   setState("running", true);
+  startTicker();
 
   try {
     await api.startRun({
@@ -267,9 +336,19 @@ async function startSearch(query: string) {
     });
   } catch (e) {
     setState("running", false);
+    stopTicker();
     apply({ type: "error", payload: { message: String(e) } });
   }
 }
+
+// Stop the ticker whenever a run ends, by either complete/cancelled/error.
+// We do this here (rather than in the switch) so any path that flips
+// running=false gets cleaned up.
+let prevRunning = false;
+setInterval(() => {
+  if (prevRunning && !state.running) stopTicker();
+  prevRunning = state.running;
+}, 200);
 
 async function exportZip(): Promise<ExportResult | null> {
   if (!state.folder) return null;
@@ -295,6 +374,24 @@ export const runStore = {
     return state.total > 0
       ? Math.round(((state.done + state.failed) / state.total) * 100)
       : 0;
+  },
+  get currentMbps() {
+    const h = state.speedHist;
+    return h.length > 0 ? h[h.length - 1] : 0;
+  },
+  get avgMbps() {
+    const h = state.speedHist;
+    if (!h.length) return 0;
+    return h.reduce((s, v) => s + v, 0) / h.length;
+  },
+  get etaSec(): number | null {
+    const remaining = Math.max(0, state.total - state.done - state.failed);
+    const mbps = this.currentMbps;
+    if (mbps <= 0 || remaining === 0) return null;
+    // Assume ~2 MB per remaining doc as a rough average (matches the
+    // bundle's heuristic). It's only displayed when running so error
+    // margins are acceptable.
+    return Math.round((remaining * 2_000_000) / (mbps * 1_000_000));
   },
   apply,
   startSearch,

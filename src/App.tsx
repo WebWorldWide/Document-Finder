@@ -1,17 +1,35 @@
-import { Switch, Match } from "solid-js";
+import { Switch, Match, onMount, createEffect } from "solid-js";
 import Sidebar from "@/components/Sidebar";
 import FindTab from "@/components/FindTab";
 import LibraryView from "@/components/LibraryView";
 import SettingsView from "@/components/SettingsView";
 import { uiStore } from "@/stores/ui";
+import { runStore } from "@/stores/run";
+import { settings } from "@/stores/settings";
+import { api } from "@/lib/tauri";
 
 export default function App() {
+  // Populate uiStore.knownLibraries so the sidebar's Recent section + count
+  // badge have data on first paint, and refresh whenever a run completes.
+  async function refreshLibraries() {
+    if (!settings.libraryRoot) return;
+    try {
+      const libs = await api.listLibraries(settings.libraryRoot);
+      uiStore.setKnownLibraries(libs);
+    } catch {
+      // silent — empty libraries dir is normal on first launch
+    }
+  }
+  onMount(refreshLibraries);
+  // After every run finishes, refresh so the newly-created library appears.
+  createEffect(() => {
+    if (!runStore.state.running && runStore.state.folder) refreshLibraries();
+  });
+
   return (
-    <div class="flex h-screen w-screen overflow-hidden bg-[var(--color-background)] text-[var(--color-foreground)]">
-      {/* macOS traffic light drag region */}
-      <div class="fixed inset-x-0 top-0 h-8 z-50 pointer-events-none" data-tauri-drag-region aria-hidden="true" />
+    <div class="df-app">
       <Sidebar />
-      <main id="main-content" tabindex="-1" class="flex-1 overflow-hidden outline-none">
+      <main id="main-content" tabindex="-1" class="df-canvas">
         <Switch>
           <Match when={uiStore.view === "find"}><FindTab /></Match>
           <Match when={uiStore.view === "library"}><LibraryView /></Match>

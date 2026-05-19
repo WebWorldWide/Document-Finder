@@ -4,15 +4,23 @@
         <meta charset="UTF-8" />
         <link rel="icon" type="image/svg+xml" href="/vite.svg" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta name="theme-color" content="#fcfcfc" />
+        <meta name="theme-color" content="#eef0f4" />
         <title>Document Finder</title>
+
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Newsreader:wght@400;500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        />
+
         <style>
-            /* Match --color-background in src/styles/globals.css to avoid
-               first-paint flash. */
-            html, body { background: oklch(0.99 0 0); }
+            /* Match slate-theme --bg to avoid first-paint flash before
+               the bundle's CSS lands. */
+            html, body { background: #eef0f4; }
         </style>
     </head>
-    <body>
+    <body data-theme="slate" data-accent="sky">
         <div id="app"></div>
         <script type="module" src="/src/main.tsx"></script>
     </body>

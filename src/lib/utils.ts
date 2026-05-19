@@ -17,6 +17,12 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
 }
 
+export function formatEta(seconds: number | null): string {
+  if (seconds == null) return "—";
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 export const SOURCE_LABELS: Record<string, string> = {
   arxiv: "arXiv",
   openalex: "OpenAlex",
@@ -26,6 +32,19 @@ export const SOURCE_LABELS: Record<string, string> = {
   gutenberg: "Gutenberg",
   web: "Web",
   searxng: "SearXNG",
+};
+
+/// One-line description shown in the SourcePanel under each source name.
+/// Kept brief — the row is dense and these clip to one line on narrow widths.
+export const SOURCE_DESCRIPTIONS: Record<string, string> = {
+  arxiv: "Physics, CS, math preprints",
+  openalex: "Open scholarly graph — 240M works",
+  semantic_scholar: "AI-augmented paper index",
+  internet_archive: "Books, papers, scans",
+  doaj: "Directory of Open Access Journals",
+  gutenberg: "Public-domain books",
+  web: "Web — DuckDuckGo HTML",
+  searxng: "Local SearXNG (embedded)",
 };
 
 export const ALL_SOURCES = [
@@ -42,5 +61,10 @@ export const ALL_SOURCES = [
 export type SourceId = (typeof ALL_SOURCES)[number];
 
 export function sourceColor(source: string): string {
-  return `var(--color-source-${source.replace(/-/g, "_")}, oklch(0.7 0.1 270))`;
+  // Strip `meta_search/<engine>` prefix so the originating engine still
+  // colors the badge.
+  const key = source.startsWith("meta_search/")
+    ? source.slice("meta_search/".length)
+    : source;
+  return `var(--src-${key.replace(/-/g, "_")}, var(--accent))`;
 }

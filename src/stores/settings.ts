@@ -32,13 +32,31 @@ function safeUrl(v: unknown, fallback: string): string {
   return fallback;
 }
 
-/// v2 defaulted searxngUrl to the Docker port http://localhost:8080. In v3
-/// the embedded server is the source of truth and that URL is wrong, so
-/// rewrite it to blank on load. Blank means "use the embedded server" on
-/// both sides of the Tauri boundary.
 function migrateSearxng(v: unknown): string {
   if (v === "http://localhost:8080") return "";
   return safeUrl(v, "");
+}
+
+export type Theme = "paper" | "slate" | "midnight";
+export type Accent =
+  | "sky" | "blue" | "ink" | "electric" | "teal"
+  | "emerald" | "amber" | "crimson" | "plum";
+export type Density = "compact" | "regular";
+
+export const THEMES: readonly Theme[] = ["paper", "slate", "midnight"] as const;
+export const ACCENTS: readonly Accent[] = [
+  "sky", "blue", "ink", "electric", "teal", "emerald", "amber", "crimson", "plum",
+] as const;
+export const DENSITIES: readonly Density[] = ["compact", "regular"] as const;
+
+function safeTheme(v: unknown): Theme {
+  return THEMES.includes(v as Theme) ? (v as Theme) : "slate";
+}
+function safeAccent(v: unknown): Accent {
+  return ACCENTS.includes(v as Accent) ? (v as Accent) : "sky";
+}
+function safeDensity(v: unknown): Density {
+  return DENSITIES.includes(v as Density) ? (v as Density) : "regular";
 }
 
 export const [settings, setSettings] = createStore({
@@ -48,6 +66,9 @@ export const [settings, setSettings] = createStore({
   concurrency:     posInt(saved.concurrency, 8),
   selectedSources: safeSources(saved.selectedSources),
   searxngUrl:      migrateSearxng(saved.searxngUrl),
+  theme:           safeTheme(saved.theme),
+  accent:          safeAccent(saved.accent),
+  density:         safeDensity(saved.density),
 });
 
 if (!settings.libraryRoot) {
@@ -58,6 +79,31 @@ if (!settings.libraryRoot) {
 
 export function saveSettings() {
   localStorage.setItem(LS_KEY, JSON.stringify(settings));
+}
+
+/// Write theme/accent/density data-attrs to <body>. Called at app boot
+/// (main.tsx) and again from ThemeAccentPicker so the UI updates instantly
+/// on every change without a re-render of the whole tree.
+export function applyAttrs() {
+  document.body.setAttribute("data-theme", settings.theme);
+  document.body.setAttribute("data-accent", settings.accent);
+  document.body.setAttribute("data-density", settings.density);
+}
+
+export function setTheme(t: Theme) {
+  setSettings("theme", t);
+  applyAttrs();
+  saveSettings();
+}
+export function setAccent(a: Accent) {
+  setSettings("accent", a);
+  applyAttrs();
+  saveSettings();
+}
+export function setDensity(d: Density) {
+  setSettings("density", d);
+  applyAttrs();
+  saveSettings();
 }
 
 export function toggleSource(id: SourceId) {

@@ -1,8 +1,11 @@
 import { createSignal, onMount, Show } from "solid-js";
-import { Server, FolderOpen, FileText, Loader2, CheckCircle2 } from "lucide-solid";
+import {
+  Server, FolderOpen, FileText, Loader2, CheckCircle2, X,
+} from "lucide-solid";
 import { api, type LogInfo } from "@/lib/tauri";
 import { settings, setSettings, saveSettings } from "@/stores/settings";
 import { formatBytes } from "@/lib/utils";
+import ThemeAccentPicker from "./ThemeAccentPicker";
 
 export default function SettingsView() {
   const [logInfo, setLogInfo] = createSignal<LogInfo | null>(null);
@@ -21,9 +24,6 @@ export default function SettingsView() {
     try {
       const output = await api.setupSearXNG();
       setSearxResult(output);
-      // Don't write the verified URL into settings — leaving searxngUrl
-      // blank keeps the "auto = embedded" semantic. The verified URL only
-      // matters as confirmation that the local server is up.
     } catch (e) {
       setSearxError(String(e));
     } finally {
@@ -42,177 +42,199 @@ export default function SettingsView() {
   }
 
   return (
-    <div class="h-full overflow-y-auto">
-      <div class="mx-auto max-w-2xl space-y-6 p-6 pt-10">
-        <h1 class="text-xl font-semibold">Settings</h1>
+    <div class="df-canvas">
+      <div class="df-canvas-head">
+        <h1 class="df-canvas-title">Settings</h1>
+      </div>
 
-        {/* Discovery settings */}
-        <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
-          <h2 class="mb-4 text-sm font-semibold">Discovery</h2>
-          <div class="grid grid-cols-3 gap-4">
-            <label class="block">
-              <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">Per source</span>
-              <input
-                type="number"
-                min="1"
-                value={settings.perSource}
-                onInput={numInput("perSource")}
-                class="w-full rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors"
-              />
-              <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">Max docs per source per sub-query</p>
-            </label>
-            <label class="block">
-              <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">Max total</span>
-              <input
-                type="number"
-                min="1"
-                value={settings.maxTotal}
-                onInput={numInput("maxTotal")}
-                class="w-full rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors"
-              />
-              <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">Hard cap across all sources</p>
-            </label>
-            <label class="block">
-              <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">Parallel downloads</span>
-              <input
-                type="number"
-                min="1"
-                max="32"
-                value={settings.concurrency}
-                onInput={numInput("concurrency")}
-                class="w-full rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors"
-              />
-              <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">Higher = faster but more rate limits</p>
-            </label>
-          </div>
-        </section>
+      <div class="df-canvas-body">
+        <div class="df-settings-wrap">
+          {/* Theme + Accent first — the most user-visible knob */}
+          <ThemeAccentPicker />
 
-        {/* Library folder */}
-        <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
-          <h2 class="mb-3 text-sm font-semibold">Library Folder</h2>
-          <label>
-            <span class="sr-only">Library folder path</span>
-            <input
-              type="text"
-              value={settings.libraryRoot}
-              onInput={(e) => {
-                setSettings("libraryRoot", e.currentTarget.value);
-                saveSettings();
-              }}
-              class="w-full rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 font-mono text-xs outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors"
-            />
-          </label>
-        </section>
+          {/* Discovery */}
+          <section class="df-section">
+            <h2>Discovery</h2>
+            <p class="hint">How aggressive the search fan-out should be.</p>
+            <div class="df-field-row">
+              <div class="df-field">
+                <label>Per source</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={settings.perSource}
+                  onInput={numInput("perSource")}
+                />
+                <span class="help">Max docs per source per sub-query</span>
+              </div>
+              <div class="df-field">
+                <label>Max total</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={settings.maxTotal}
+                  onInput={numInput("maxTotal")}
+                />
+                <span class="help">Hard cap across all sources</span>
+              </div>
+              <div class="df-field">
+                <label>Parallel</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="32"
+                  value={settings.concurrency}
+                  onInput={numInput("concurrency")}
+                />
+                <span class="help">More = faster, hits rate limits sooner</span>
+              </div>
+            </div>
+          </section>
 
-        {/* SearXNG — embedded local server (no Docker, no Python) */}
-        <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
-          <h2 class="mb-1 text-sm font-semibold">Local Search Engine</h2>
-          <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
-            Document Finder ships its own SearXNG-compatible search server built into the app.
-            No Docker, no Python, no setup. Verify it's running below — or override with a
-            remote SearXNG instance if you'd rather use one.
-          </p>
-          <div class="space-y-4">
-            <button
-              onClick={handleSetupSearx}
-              disabled={settingUpSearx()}
-              class="flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-medium hover:bg-[var(--color-accent)] transition-colors disabled:opacity-50"
-            >
-              <Show when={settingUpSearx()} fallback={<Server size={14} />}>
-                <Loader2 size={14} class="animate-spin" />
-              </Show>
-              {settingUpSearx() ? "Verifying…" : "Verify Local Search Engine"}
-            </button>
+          {/* Library Folder */}
+          <section class="df-section">
+            <h2>Library Folder</h2>
+            <p class="hint">Where downloaded documents and library DBs live.</p>
+            <div class="df-folder-row">
+              <div class="df-field" style={{ flex: 1 }}>
+                <input
+                  class="mono"
+                  type="text"
+                  value={settings.libraryRoot}
+                  onInput={(e) => {
+                    setSettings("libraryRoot", e.currentTarget.value);
+                    saveSettings();
+                  }}
+                />
+              </div>
+            </div>
+          </section>
 
-            <label class="block">
-              <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">
-                SearXNG endpoint
-              </span>
-              <input
-                type="text"
-                value={settings.searxngUrl}
-                onInput={(e) => {
-                  setSettings("searxngUrl", e.currentTarget.value);
-                  saveSettings();
-                }}
-                placeholder="(auto — embedded server)"
-                class="w-full rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 font-mono text-xs outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors"
-              />
-              <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
-                Leave blank to use the embedded server. Override only if you have a reason to.
-              </p>
-            </label>
-
-            <Show when={searxResult() !== null}>
-              <div class="flex items-start gap-2 rounded-lg border p-3"
-                style={{ "border-color": "color-mix(in oklch, var(--color-success) 30%, transparent)", "background-color": "var(--color-success-bg)" }}
+          {/* Local SearXNG */}
+          <section class="df-section">
+            <h2>Local Search Engine</h2>
+            <p class="hint">
+              Document Finder ships its own SearXNG-compatible search server
+              built into the app. No Docker, no Python, no setup. Verify it's
+              running or override with a remote SearXNG instance.
+            </p>
+            <div style={{ display: "flex", "flex-direction": "column", gap: "var(--pad-4)" }}>
+              <button
+                class="df-btn"
+                onClick={handleSetupSearx}
+                disabled={settingUpSearx()}
               >
-                <CheckCircle2 size={14} class="mt-0.5 shrink-0" style={{ color: "var(--color-success)" }} />
-                <div>
-                  <p class="text-xs font-medium" style={{ color: "var(--color-success-fg)" }}>
-                    Local SearXNG is running at {settings.searxngUrl || "the embedded endpoint"}
+                <Show when={settingUpSearx()} fallback={<Server size={14} />}>
+                  <Loader2 size={14} class="spin" />
+                </Show>
+                {settingUpSearx() ? "Verifying…" : "Verify Local Search Engine"}
+              </button>
+
+              <div class="df-field">
+                <label>SearXNG endpoint</label>
+                <input
+                  class="mono"
+                  type="text"
+                  value={settings.searxngUrl}
+                  placeholder="(auto — embedded server)"
+                  onInput={(e) => {
+                    setSettings("searxngUrl", e.currentTarget.value);
+                    saveSettings();
+                  }}
+                />
+                <span class="help">
+                  Leave blank for the embedded server. Override only with a
+                  remote SearXNG you control.
+                </span>
+              </div>
+
+              <Show when={searxResult() !== null}>
+                <div class="df-banner ok">
+                  <CheckCircle2 size={14} />
+                  <div class="df-banner-body">
+                    <strong>Local SearXNG is running.</strong>
+                    <Show when={searxResult()}>
+                      <pre style={{
+                        margin: "6px 0 0",
+                        "max-height": "96px",
+                        overflow: "auto",
+                        "white-space": "pre-wrap",
+                        "font-family": "var(--font-mono)",
+                        "font-size": "10px",
+                        opacity: 0.85,
+                      }}>{searxResult()}</pre>
+                    </Show>
+                  </div>
+                </div>
+              </Show>
+
+              <Show when={searxError()}>
+                <div class="df-banner bad">
+                  <X size={14} />
+                  <div class="df-banner-body">
+                    <strong>Verification failed.</strong> {searxError()}
+                  </div>
+                </div>
+              </Show>
+            </div>
+          </section>
+
+          {/* Run Log */}
+          <section class="df-section">
+            <h2>Run Log</h2>
+            <p class="hint">
+              Every query, source error, and download outcome is logged here.
+              Share this file when reporting issues.
+            </p>
+            <Show
+              when={logInfo()}
+              fallback={<p class="hint" style={{ margin: 0 }}>Unavailable.</p>}
+            >
+              {(info) => (
+                <div style={{ display: "flex", "flex-direction": "column", gap: "var(--pad-3)" }}>
+                  <code
+                    title={info().path}
+                    style={{
+                      display: "block",
+                      "white-space": "nowrap",
+                      overflow: "hidden",
+                      "text-overflow": "ellipsis",
+                      background: "var(--card-2)",
+                      border: "0.5px solid var(--line)",
+                      "border-radius": "var(--r-2)",
+                      padding: "8px 12px",
+                      "font-family": "var(--font-mono)",
+                      "font-size": "11px",
+                      color: "var(--ink-2)",
+                    }}
+                  >
+                    {info().path}
+                  </code>
+                  <p class="hint" style={{ margin: 0 }}>
+                    {info().exists ? formatBytes(info().size_bytes) : "Not yet written"}
                   </p>
-                  <Show when={searxResult()}>
-                    <pre class="mt-1 max-h-24 overflow-auto whitespace-pre-wrap font-mono text-[10px] opacity-80" style={{ color: "var(--color-success-fg)" }}>
-                      {searxResult()}
-                    </pre>
-                  </Show>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button
+                      class="df-btn sm"
+                      onClick={() => api.revealInFinder(info().path)}
+                      disabled={!info().exists}
+                    >
+                      <FolderOpen size={12} /> Show in Finder
+                    </button>
+                    <button
+                      class="df-btn sm"
+                      onClick={async () =>
+                        setLogInfo(await api.runLogInfo().catch(() => null))
+                      }
+                    >
+                      <FileText size={12} /> Refresh
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
             </Show>
-
-            <Show when={searxError()}>
-              <div class="rounded-lg border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 p-3 text-xs text-[var(--color-destructive)]">
-                <p class="font-medium">Verification failed</p>
-                <p class="mt-0.5 opacity-80">{searxError()}</p>
-              </div>
-            </Show>
-          </div>
-        </section>
-
-        {/* Run log */}
-        <section class="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
-          <h2 class="mb-1 text-sm font-semibold">Run Log</h2>
-          <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
-            Every query, source error, and download outcome is logged here.
-            Share this file when reporting issues.
-          </p>
-          <Show
-            when={logInfo()}
-            fallback={<p class="text-xs text-[var(--color-muted-foreground)]">Unavailable</p>}
-          >
-            {(info) => (
-              <div class="space-y-3">
-                <code
-                  title={info().path}
-                  class="block truncate rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)] px-3 py-2 font-mono text-[11px]"
-                >
-                  {info().path}
-                </code>
-                <p class="text-xs text-[var(--color-muted-foreground)]">
-                  {info().exists ? formatBytes(info().size_bytes) : "Not yet written"}
-                </p>
-                <div class="flex gap-2">
-                  <button
-                    onClick={() => api.revealInFinder(info().path)}
-                    disabled={!info().exists}
-                    class="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-accent)] transition-colors disabled:opacity-40"
-                  >
-                    <FolderOpen size={12} />
-                    Show in Finder
-                  </button>
-                  <button
-                    onClick={async () => setLogInfo(await api.runLogInfo().catch(() => null))}
-                    class="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-accent)] transition-colors"
-                  >
-                    <FileText size={12} />
-                    Refresh
-                  </button>
-                </div>
-              </div>
-            )}
-          </Show>
-        </section>
+          </section>
+        </div>
       </div>
     </div>
   );
