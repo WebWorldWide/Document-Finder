@@ -55,13 +55,26 @@ if [ ! -d "$APP_PATH" ]; then
   exit 1
 fi
 
-# Stop any running instance so the new build replaces it cleanly.
-# `pkill` returns 1 when nothing matched — that's fine, just means the app
-# wasn't running. Mute the exit code without disabling errexit globally.
+# Stop any running instance so the new build replaces it cleanly. The
+# binary inside the bundle is named `document-finder` (lowercase,
+# hyphenated — see CFBundleExecutable in Info.plist), so we have to match
+# *that*, not the "Document Finder" display name. The old `pkill -x
+# "Document Finder"` silently never matched anything, which is how stale
+# instances kept running after a rebuild.
 echo -e "${BLUE}→ Stopping any running Document Finder instance...${NC}"
-pkill -x "Document Finder" 2>/dev/null || true
-# Give the process a beat to release the bundle before we overwrite it.
+pkill -x "document-finder" 2>/dev/null || true
 sleep 1
+
+# Eject any stray Document Finder DMG that might still be mounted from a
+# prior install. If a DMG copy of the app is mounted, macOS Launch
+# Services will happily prefer it over /Applications/, and `open -a`
+# brings the DMG-mounted (stale) app to the foreground instead of the
+# freshly built one. Silent failure is fine — usually nothing is mounted.
+for vol in /Volumes/dmg.* /Volumes/Document*Finder*; do
+  [ -d "$vol/Document Finder.app" ] || continue
+  echo -e "${BLUE}→ Ejecting stale DMG at $vol...${NC}"
+  hdiutil detach "$vol" >/dev/null 2>&1 || true
+done
 
 # Install to /Applications so the new build *replaces* the old one. Without
 # this, double-clicking the previously installed copy would still launch
@@ -72,6 +85,9 @@ cp -R "$APP_PATH" /Applications/
 echo -e "${GREEN}✓ Installed /Applications/Document Finder.app${NC}"
 
 # Launch -------------------------------------------------------------------
-echo -e "${BLUE}→ Launching...${NC}"
-open -a "Document Finder"
+# Use the explicit -a path (not the bundle ID) so Launch Services can't
+# re-resolve to a different "Document Finder.app" cached from a DMG or
+# Downloads folder.
+echo -e "${BLUE}→ Launching /Applications/Document Finder.app ...${NC}"
+open "/Applications/Document Finder.app"
 echo -e "${GREEN}✓ Done${NC}"
