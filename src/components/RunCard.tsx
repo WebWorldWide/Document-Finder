@@ -146,10 +146,39 @@ export default function RunCard() {
             <span class="df-stat-num ok">{done()}</span>
             <span class="df-stat-label">saved</span>
           </div>
-          <Show when={failed() > 0}>
+          <Show when={failed() - rs().notFoundCount - rs().paywallCount - rs().goneCount > 0}>
             <div class="df-stat">
-              <span class="df-stat-num bad">{failed()}</span>
+              <span class="df-stat-num bad">
+                {failed() - rs().notFoundCount - rs().paywallCount - rs().goneCount}
+              </span>
               <span class="df-stat-label">failed</span>
+            </div>
+          </Show>
+          {/* Bucket dead-URL outcomes separately from real failures —
+              these don't go in the red Recent list anymore, but the user
+              still wants to see the magnitude. */}
+          <Show when={rs().notFoundCount > 0}>
+            <div class="df-stat">
+              <span class="df-stat-num" style={{ color: "var(--ink-3)" }}>
+                {rs().notFoundCount}
+              </span>
+              <span class="df-stat-label">not found</span>
+            </div>
+          </Show>
+          <Show when={rs().paywallCount > 0}>
+            <div class="df-stat">
+              <span class="df-stat-num" style={{ color: "var(--ink-3)" }}>
+                {rs().paywallCount}
+              </span>
+              <span class="df-stat-label">paywalled</span>
+            </div>
+          </Show>
+          <Show when={rs().goneCount > 0}>
+            <div class="df-stat">
+              <span class="df-stat-num" style={{ color: "var(--ink-3)" }}>
+                {rs().goneCount}
+              </span>
+              <span class="df-stat-label">gone</span>
             </div>
           </Show>
           <Show when={rs().filteredCount > 0}>

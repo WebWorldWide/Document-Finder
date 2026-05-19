@@ -73,6 +73,16 @@ interface RunState {
   /// Cumulative bytes downloaded across all in-flight + completed items.
   /// Used by the speed ticker to compute MB/s deltas.
   bytesAccum: number;
+  /// Documents whose URLs returned a 4xx and were quietly dropped — these
+  /// are EXPECTED outcomes when the source's metadata points at a URL the
+  /// server has since removed (404), paywalled (403/401), or marked gone
+  /// (410). Bucketed separately from `failed` so the user can distinguish
+  /// "the search worked but some leads were dead" from real download
+  /// errors (network/parse/disk). Each bucket only stores a count — the
+  /// individual entries don't go in `completed[]` because they're noise.
+  notFoundCount: number; // 404
+  paywallCount: number; // 401, 403
+  goneCount: number; // 410
 }
 
 const [state, setState] = createStore<RunState>({
@@ -95,7 +105,27 @@ const [state, setState] = createStore<RunState>({
   fatalError: null,
   speedHist: [],
   bytesAccum: 0,
+  notFoundCount: 0,
+  paywallCount: 0,
+  goneCount: 0,
 });
+
+/// Detect the HTTP status code in a download-failed error string. The
+/// engine downloader emits errors like "HTTP 404: HTTP status client
+/// error (404 Not Found) for url …" — we look for the leading "HTTP NNN".
+/// Returns null for non-HTTP errors (network, parse, disk, etc).
+function httpStatusFromError(err: string): number | null {
+  const m = err.match(/^HTTP\s+(\d{3})\b/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/// True if the error is a "dead URL" outcome we should bucket and hide
+/// from the visible stream rather than show as a red failure. 404 / 410
+/// are gone; 401 / 403 mean we can't reach it without auth. These all
+/// say "this lead didn't pan out", not "something is broken".
+function isSkipStatus(status: number | null): boolean {
+  return status === 401 || status === 403 || status === 404 || status === 410;
+}
 
 function addLog(level: LogEntry["level"], msg: string) {
   setState("log", (prev) => [...prev, { ts: Date.now(), level, msg }].slice(-200));
@@ -122,6 +152,9 @@ function reset(query: string) {
     fatalError: null,
     speedHist: [],
     bytesAccum: 0,
+    notFoundCount: 0,
+    paywallCount: 0,
+    goneCount: 0,
   });
 }
 
@@ -227,6 +260,8 @@ function apply(ev: DfEvent) {
     }
 
     case "download_failed": {
+      const status = httpStatusFromError(ev.payload.error);
+      const skip = isSkipStatus(status);
       const item: CompletedItem = {
         task_id: ev.payload.task_id,
         url: ev.payload.url,
@@ -243,7 +278,17 @@ function apply(ev: DfEvent) {
           s.done = ev.payload.done;
           s.failed = ev.payload.failed;
           s.total = ev.payload.total;
-          s.completed = [...s.completed, item].slice(-500);
+          // Dead-URL outcomes get bucketed by status code and kept OUT of
+          // the visible stream. Real failures (network errors, bad PDFs,
+          // disk issues, etc.) still go into completed[] so the issues
+          // panel and the Recent list surface them as red rows.
+          if (skip) {
+            if (status === 404) s.notFoundCount += 1;
+            else if (status === 410) s.goneCount += 1;
+            else s.paywallCount += 1; // 401, 403
+          } else {
+            s.completed = [...s.completed, item].slice(-500);
+          }
         }),
       );
       break;

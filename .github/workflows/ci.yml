@@ -1,8 +1,14 @@
 name: CI
 
+# Fast sanity check on every push / PR — verifies the frontend
+# typechecks, prettier passes, and `cargo check` builds on macOS,
+# Ubuntu, and Windows. Skips the heavy AI features (fastembed + llama)
+# so each runner finishes in ~5 min instead of 25 min; the release
+# workflow does the full build with --release.
+
 on:
   push:
-    branches: [main, v2-stabilize-ship]
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -23,16 +29,34 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Prettier
+        run: pnpm exec prettier --check "src/**/*.{ts,tsx,css}" "*.{ts,json}"
+
       - name: Type-check
         run: pnpm exec tsc --noEmit
 
-      - name: Build frontend
+      - name: Build frontend bundle
         run: pnpm build
 
   rust:
-    runs-on: macos-14
+    name: cargo check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux system deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -42,5 +66,6 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: cargo check
-        run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: cargo check (no AI features — fast)
+        working-directory: src-tauri
+        run: cargo check --no-default-features --features=custom-protocol

@@ -1,6 +1,6 @@
 [package]
 name = "document-finder"
-version = "2.0.0"
+version = "3.0.0"
 description = "Find, download, and bundle open-access documents for AI conversational awareness"
 authors = ["Adam Nolle"]
 edition = "2021"
