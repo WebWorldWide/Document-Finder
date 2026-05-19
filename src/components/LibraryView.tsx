@@ -152,10 +152,18 @@ export default function LibraryView() {
               const isActive = () => uiStore.activeLibrary?.path === lib.path;
               const isExporting = () => exportingPath() === lib.path;
               return (
-                <button
+                <div
                   class="df-libcard"
                   classList={{ active: isActive() }}
+                  role="button"
+                  tabindex="0"
                   onClick={() => uiStore.setActiveLibrary(lib)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      uiStore.setActiveLibrary(lib);
+                    }
+                  }}
                 >
                   <div class="df-libcard-head">
                     <span class="df-libcard-q" title={lib.query ?? lib.name}>
@@ -187,7 +195,7 @@ export default function LibraryView() {
                       <FolderOpen size={12} /> Show
                     </button>
                   </div>
-                </button>
+                </div>
               );
             }}</For>
           </div>
