@@ -1,0 +1,6 @@
+# pnpm-only config — pnpm 11 stopped reading the `"pnpm"` field in
+# package.json. Without an explicit allowlist, `pnpm install` aborts
+# with ERR_PNPM_IGNORED_BUILDS whenever a dependency has a postinstall
+# script. esbuild (transitive via vite) is the only one we need.
+onlyBuiltDependencies:
+  - esbuild
