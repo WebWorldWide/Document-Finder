@@ -43,11 +43,18 @@ if [ ! -d "node_modules" ]; then
 fi
 
 # Build --------------------------------------------------------------------
-# `-- --profile release-fast` passes through to cargo. The custom profile
-# parallelizes codegen so this finishes in ~30–40s on a warm cache instead
-# of the ~2 min the strict `release` profile takes.
+# `--bundles app` skips the DMG step. Every DMG `tauri build` creates is
+# mounted as /Volumes/dmg.<random>, and Launch Services registers that
+# mount path. Over time, tens of stale registrations accumulate and
+# `open -a "Document Finder"` resolves to a random mounted-or-missing
+# DMG copy instead of /Applications. We only need the .app to install
+# and launch, so don't bother with the DMG here.
+#
+# `--profile release-fast` passes through to cargo — parallel codegen +
+# thin LTO so the build finishes in ~30–40s on a warm cache instead of
+# the ~2 min the strict `release` profile takes.
 echo -e "${BLUE}→ Building app (parallel codegen — should pin all CPU cores)...${NC}"
-pnpm tauri build -- --profile release-fast
+pnpm tauri build --bundles app -- --profile release-fast
 
 APP_PATH="src-tauri/target/release-fast/bundle/macos/Document Finder.app"
 if [ ! -d "$APP_PATH" ]; then
@@ -66,15 +73,32 @@ pkill -x "document-finder" 2>/dev/null || true
 sleep 1
 
 # Eject any stray Document Finder DMG that might still be mounted from a
-# prior install. If a DMG copy of the app is mounted, macOS Launch
-# Services will happily prefer it over /Applications/, and `open -a`
-# brings the DMG-mounted (stale) app to the foreground instead of the
-# freshly built one. Silent failure is fine — usually nothing is mounted.
+# prior install, AND unregister any LS records that still point at one.
+# If a DMG copy of the app is mounted (or just registered, even if the
+# mount is gone), macOS Launch Services will happily prefer it over
+# /Applications/ and `open -a` brings the DMG-mounted (stale) app to the
+# foreground instead of the freshly built one. Silent failure is fine —
+# usually there's nothing to clean up.
+shopt -s nullglob 2>/dev/null || setopt null_glob 2>/dev/null || true
 for vol in /Volumes/dmg.* /Volumes/Document*Finder*; do
   [ -d "$vol/Document Finder.app" ] || continue
   echo -e "${BLUE}→ Ejecting stale DMG at $vol...${NC}"
   hdiutil detach "$vol" >/dev/null 2>&1 || true
 done
+
+LSREG=/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister
+if [ -x "$LSREG" ]; then
+  "$LSREG" -dump 2>/dev/null \
+    | grep "path:" \
+    | grep -i "document.finder" \
+    | sed 's/^[[:space:]]*path:[[:space:]]*//;s/ (0x[0-9a-f]*)$//' \
+    | while IFS= read -r p; do
+        case "$p" in
+          "/Applications/Document Finder.app") ;;
+          *) "$LSREG" -u "$p" >/dev/null 2>&1 ;;
+        esac
+      done
+fi
 
 # Install to /Applications so the new build *replaces* the old one. Without
 # this, double-clicking the previously installed copy would still launch
