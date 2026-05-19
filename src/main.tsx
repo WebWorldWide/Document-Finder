@@ -6,6 +6,7 @@ import { runStore } from "./stores/run";
 import { applyAttrs, settings } from "./stores/settings";
 import { installGlobalHandlers, log } from "./lib/log";
 import { recordEvent } from "./stores/source_stats";
+import { applyModelEvent } from "./stores/models";
 
 // Catch unhandled errors and promise rejections before they vanish into
 // devtools. Must come first so any error during early boot also surfaces.
@@ -35,6 +36,9 @@ listenAll((ev) => {
   // platforms are productive across runs. Cheap — no-ops on event types
   // that aren't source_done / download_done / download_failed.
   recordEvent(ev);
+  // Patch AI model rows in real time (model_progress / model_status).
+  // No-ops on other event types.
+  applyModelEvent(ev);
   runStore.apply(ev);
 })
   .then((fn) => {

@@ -16,8 +16,9 @@ Document Finder v2 is a complete rewrite of the original Python-based tool, now 
 - **AI-Ready Exports**: Export libraries as `.zip` files containing PDFs, EPUBs, and extracted plain text — ready to drop into any AI context window.
 - **Blazing Fast**: Rust handles parallel downloads, PDF/EPUB text extraction, and SQLite persistence natively.
 - **Privacy-First Meta-Search**: Aggregates DuckDuckGo, Bing, Brave, and public SearXNG instances with a circuit breaker — no Docker required, no setup.
-- **Local AI Ranking**: Two small bundled models — `bge-small-en-v1.5` (~33 MB) for semantic reranking and `Qwen 2.5 3B Instruct` (~2 GB) for query expansion + borderline filtering. Downloaded on first use. Everything runs offline; no API keys, ever.
-- **4-Theme Design System**: Warm (light + dark) and Apple HIG (light + dark) themes switchable from Settings, with full reduced-motion support.
+- **Local AI Ranking**: Two small bundled models — `bge-small-en-v1.5` (~33 MB) for semantic reranking and `Qwen 2.5 3B Instruct` (~2 GB) for query expansion + borderline filtering. Manage downloads from **Settings → AI Models**. Everything runs offline; no API keys, ever.
+- **Editorial Design System**: Three themes (Paper / Slate / Dark) + nine accent colors + density toggle, switchable from Settings.
+- **Embedded SearXNG-Compatible Server**: An `axum`-backed local search service runs in-process on a random localhost port — Docker-free, Python-free, ready immediately at app start.
 
 ## Supported Sources
 
@@ -58,10 +59,20 @@ Document Finder v2 is a complete rewrite of the original Python-based tool, now 
 ### One-Click Launch
 
 ```bash
+# macOS and Linux
 ./run.sh
+
+# Windows (PowerShell)
+.\run.ps1
 ```
 
-This checks prerequisites, installs dependencies, and starts the Tauri dev server. The Rust backend compiles on first run (~30s).
+`run.sh` detects whether it's running on macOS or Linux and branches:
+- **macOS**: builds the `.app`, installs to `/Applications/`, launches it.
+- **Linux**: builds the binary, launches `src-tauri/target/release-fast/document-finder` directly. Logs to `/tmp/document-finder.log`.
+
+`run.ps1` (Windows) builds an MSI, copies the binary + DLLs to `%LOCALAPPDATA%\Programs\Document Finder\`, and launches it. For a real Start-menu install, double-click the `.msi` at `src-tauri\target\release-fast\bundle\msi\`.
+
+Each script checks prerequisites and installs missing dependencies. First Rust build is slow (10-20 min) because llama.cpp + ONNX Runtime compile from source; subsequent builds are cached.
 
 ### Manual Setup
 
@@ -108,7 +119,8 @@ The `library.db` file contains full metadata for all downloaded documents and ca
 | Backend | Rust (tokio async runtime) |
 | Frontend | [Solid.js](https://www.solidjs.com/) + TypeScript |
 | Bundler | [Vite 6](https://vitejs.dev/) |
-| Styling | [Tailwind CSS v4](https://tailwindcss.com/) |
+| Styling | Plain CSS — design tokens flip via `data-theme` / `data-accent` / `data-density` on `<body>` |
+| Embedded search | [axum](https://docs.rs/axum/) — SearXNG-compatible local HTTP server |
 | Database | SQLite via rusqlite (bundled) |
 
 ---

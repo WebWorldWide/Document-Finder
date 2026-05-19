@@ -101,6 +101,24 @@ export interface ErrorPayload {
   message: string;
 }
 
+// AI model lifecycle — emitted by the Rust model downloader and the
+// embeddings/llm runtime so the Settings → AI Models panel can show
+// progress + status without polling.
+export interface ModelProgressPayload {
+  model_id: string;
+  downloaded: number;
+  total: number;
+  bytes_per_sec: number;
+}
+
+export interface ModelStatusPayload {
+  model_id: string;
+  /// "downloading" | "verifying" | "ready" | "failed" | "cancelled" |
+  /// "embedding" | "llm_warming" | "llm_expanding" | "llm_filtering"
+  status: string;
+  detail: string | null;
+}
+
 export type DfEvent =
   | { type: "found"; payload: FoundPayload }
   | { type: "found_total"; payload: FoundTotalPayload }
@@ -116,7 +134,9 @@ export type DfEvent =
   | { type: "download_failed"; payload: DownloadFailedPayload }
   | { type: "complete"; payload: CompletePayload }
   | { type: "cancelled"; payload: CompletePayload }
-  | { type: "error"; payload: ErrorPayload };
+  | { type: "error"; payload: ErrorPayload }
+  | { type: "model_progress"; payload: ModelProgressPayload }
+  | { type: "model_status"; payload: ModelStatusPayload };
 
 const EVENTS = [
   "keywords",
@@ -134,6 +154,8 @@ const EVENTS = [
   "complete",
   "filtered",
   "error",
+  "model_progress",
+  "model_status",
 ] as const;
 
 export async function listenAll(handler: (e: DfEvent) => void): Promise<UnlistenFn> {
