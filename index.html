@@ -4,12 +4,12 @@
         <meta charset="UTF-8" />
         <link rel="icon" type="image/svg+xml" href="/vite.svg" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta name="theme-color" content="#eef6ed" />
+        <meta name="theme-color" content="#fcfcfc" />
         <title>Document Finder</title>
         <style>
-            /* Avoid white-flash before the app's stylesheet loads. Matches
-               --color-canvas in src/styles/globals.css (logo-mint). */
-            html, body { background: oklch(0.97 0.018 145); }
+            /* Match --color-background in src/styles/globals.css to avoid
+               first-paint flash. */
+            html, body { background: oklch(0.99 0 0); }
         </style>
     </head>
     <body>

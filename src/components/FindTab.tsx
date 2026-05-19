@@ -1,33 +1,14 @@
-import { createSignal, Show, For, createMemo } from "solid-js";
+import { createSignal, Show, For } from "solid-js";
 import {
-  Search, X, FolderOpen, BookOpen, Loader2, AlertTriangle, Archive,
-  ChevronUp, ChevronDown, Sliders,
+  Search, X, Download, FolderOpen, BookOpen, Loader2, AlertTriangle, Archive,
+  ChevronUp, ChevronDown
 } from "lucide-solid";
-import LiveResultsView from "./LiveResultsView";
-import ModelStatusBadge from "./ModelStatusBadge";
+import LiveDownloadStream from "./LiveDownloadStream";
 import { runStore } from "@/stores/run";
-import { settings, toggleSource } from "@/stores/settings";
+import { settings, toggleSource, saveSettings } from "@/stores/settings";
 import { uiStore } from "@/stores/ui";
 import { api } from "@/lib/tauri";
-import { ALL_SOURCES, META_SEARCH_COVERED, SOURCE_LABELS, type SourceId } from "@/lib/utils";
-
-// Top-level toggle row hides the six engines covered by `meta_search` to
-// avoid clutter — they're still selectable from the "Individual engines"
-// expander when meta_search is off or the user wants surgical control.
-const PRIMARY_SOURCES: readonly SourceId[] = ALL_SOURCES.filter(
-  (s) => !META_SEARCH_COVERED.includes(s)
-);
-
-function humanIssueKind(kind: string): string {
-  switch (kind) {
-    case "rate_limit": return "rate limited";
-    case "forbidden": return "blocked";
-    case "server_error": return "server error";
-    case "timeout": return "timed out";
-    case "parse_error": return "parse";
-    default: return "issue";
-  }
-}
+import { ALL_SOURCES, SOURCE_LABELS, formatBytes } from "@/lib/utils";
 
 const EXAMPLES = [
   "machine learning survey 2024",
@@ -43,19 +24,9 @@ export default function FindTab() {
   const [exportError, setExportError] = createSignal<string | null>(null);
   const [exportedTo, setExportedTo] = createSignal<string | null>(null);
   const [showIssues, setShowIssues] = createSignal(false);
-  const [showOptions, setShowOptions] = createSignal(false);
 
   const rs = () => runStore.state;
-  const hasRunResults = createMemo(
-    () =>
-      rs().running ||
-      rs().candidates.length > 0 ||
-      Object.keys(rs().inFlight).length > 0 ||
-      rs().completed.length > 0
-  );
-  const issueCount = () =>
-    rs().sourceIssues.length +
-    rs().completed.filter((c) => c.status === "failed").length;
+  const issueCount = () => rs().sourceIssues.length + rs().completed.filter((c) => c.status === "failed").length;
   const hasIssues = () => issueCount() > 0;
   const failedItems = () => rs().completed.filter((c) => c.status === "failed");
 
@@ -92,489 +63,35 @@ export default function FindTab() {
 
   return (
     <div class="flex h-full flex-col overflow-hidden">
-      {/* Header — collapses to a compact strip once a run is in progress */}
-      <Show
-        when={hasRunResults()}
-        fallback={
-          <FullHeader
-            query={query()}
-            setQuery={setQuery}
-            onSearch={handleSearch}
-            running={rs().running}
-            showOptions={showOptions()}
-            setShowOptions={setShowOptions}
-          />
-        }
-      >
-        <CompactHeader
-          query={query()}
-          setQuery={setQuery}
-          onSearch={handleSearch}
-          running={rs().running}
-          showOptions={showOptions()}
-          setShowOptions={setShowOptions}
-        />
-      </Show>
-
-      {/* Optional collapsed-options panel */}
-      <Show when={showOptions()}>
-        <div class="surface-pressed-sm mx-4 mb-2 px-4 py-3 space-y-2">
-          <div class="flex flex-wrap items-center gap-1.5">
-            <span class="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-foreground-muted)] mr-2">
-              Sources
-            </span>
-            <For each={PRIMARY_SOURCES}>
-              {(src) => {
-                const active = () => settings.selectedSources.includes(src);
-                return (
-                  <button
-                    onClick={() => toggleSource(src)}
-                    class="tag-pill px-2.5 py-0.5 text-[10px] font-medium"
-                    classList={{ "is-active": active() }}
-                    style={
-                      active()
-                        ? {
-                            "background-color": `var(--color-source-${src})`,
-                            color: "white",
-                          }
-                        : {}
-                    }
-                  >
-                    {SOURCE_LABELS[src]}
-                  </button>
-                );
-              }}
-            </For>
-          </div>
-          <details>
-            <summary class="cursor-pointer text-[10px] font-medium text-[var(--color-foreground-muted)] hover:text-[var(--color-foreground)]">
-              Individual web engines (advanced)
-            </summary>
-            <div class="mt-2 flex flex-wrap items-center gap-1.5">
-              <For each={META_SEARCH_COVERED}>
-                {(src) => {
-                  const active = () => settings.selectedSources.includes(src);
-                  return (
-                    <button
-                      onClick={() => toggleSource(src)}
-                      class="tag-pill px-2.5 py-0.5 text-[10px] font-medium"
-                      classList={{ "is-active": active() }}
-                      style={
-                        active()
-                          ? {
-                              "background-color": `var(--color-source-${src})`,
-                              color: "white",
-                            }
-                          : {}
-                      }
-                    >
-                      {SOURCE_LABELS[src]}
-                    </button>
-                  );
-                }}
-              </For>
-            </div>
-          </details>
-          <Show when={settings.selectedSources.length === 0}>
-            <p class="text-[10px] text-[var(--color-destructive)]">
-              Select at least one source to search.
-            </p>
-          </Show>
-        </div>
-      </Show>
-
-      {/* Body — the live results view OR a friendly welcome */}
-      <div class="flex-1 overflow-hidden">
-        <Show
-          when={hasRunResults()}
-          fallback={
-            <WelcomeBody
-              onPickExample={(ex) => setQuery(ex)}
-            />
-          }
-        >
-          <div class="flex h-full flex-col">
-            {/* Status row + post-run actions — raised pills on canvas */}
-            <div class="flex flex-wrap items-center gap-2 px-4 py-3 text-[11px]">
-              <span class="surface-raised-xs px-3 py-1.5 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
-                <strong class="text-[var(--color-foreground)]">{rs().found}</strong>{" "}
-                found
-              </span>
-              <span class="surface-raised-xs px-3 py-1.5 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
-                <strong style={{ color: "var(--color-success)" }}>{rs().done}</strong>{" "}
-                saved
-              </span>
-              <Show when={rs().failed > 0}>
-                <span class="surface-raised-xs px-3 py-1.5 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
-                  <strong class="text-[var(--color-destructive)]">
-                    {rs().failed}
-                  </strong>{" "}
-                  failed
-                </span>
-              </Show>
-              <ModelStatusBadge />
-
-              <Show when={rs().total > 0}>
-                <div class="ml-auto flex items-center gap-2">
-                  <span class="text-[10px] font-mono text-[var(--color-foreground-muted)]">
-                    {runStore.overallPct}%
-                  </span>
-                  <div class="surface-pressed-sm h-1.5 w-32 overflow-hidden">
-                    <div
-                      class="h-full rounded-full bg-[var(--color-primary)] transition-all duration-500"
-                      style={{ width: `${runStore.overallPct}%` }}
-                    />
-                  </div>
-                </div>
-              </Show>
-
-              <Show when={rs().folder && !rs().running}>
-                <div class="flex items-center gap-1.5">
-                  <button
-                    onClick={handleExport}
-                    disabled={exporting()}
-                    class="btn-tactile flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium"
-                  >
-                    <Show when={exporting()} fallback={<Archive size={11} />}>
-                      <Loader2 size={11} class="animate-spin" />
-                    </Show>
-                    Export ZIP
-                  </button>
-                  <button
-                    onClick={handleOpenLibrary}
-                    class="btn-tactile flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium"
-                  >
-                    <BookOpen size={11} />
-                    Library
-                  </button>
-                  <button
-                    onClick={() => rs().folder && api.revealInFinder(rs().folder!)}
-                    class="btn-tactile flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium"
-                  >
-                    <FolderOpen size={11} />
-                    Folder
-                  </button>
-                </div>
-              </Show>
-            </div>
-
-            {/* Fatal error banner */}
-            <Show when={rs().fatalError}>
-              <div class="surface-raised-sm mx-4 mb-2 flex items-start justify-between gap-2 px-3 py-2 text-[12px] text-[var(--color-destructive)]">
-                <span>
-                  <strong>Error:</strong> {rs().fatalError}
-                </span>
-                <button
-                  onClick={() => runStore.clearFatalError()}
-                  aria-label="Dismiss"
-                  class="btn-tactile shrink-0 p-1"
-                >
-                  <X size={11} />
-                </button>
-              </div>
-            </Show>
-
-            {/* Export status banners */}
-            <Show when={exportedTo()}>
-              <div
-                class="surface-raised-sm mx-4 mb-2 flex items-start justify-between gap-2 px-3 py-2 text-[12px]"
-                style={{
-                  color: "var(--color-success-fg)",
-                  "background-color": "var(--color-success-bg)",
-                }}
-              >
-                <span>
-                  Exported to <code class="text-[11px]">{exportedTo()}</code>
-                </span>
-                <button
-                  onClick={() => setExportedTo(null)}
-                  aria-label="Dismiss"
-                  class="btn-tactile shrink-0 p-1"
-                >
-                  <X size={11} />
-                </button>
-              </div>
-            </Show>
-
-            {/* The actual results lanes */}
-            <div class="flex-1 overflow-hidden">
-              <LiveResultsView />
-            </div>
-
-            {/* Source-issue panel — pressed pill at the bottom of the canvas */}
-            <Show when={hasIssues()}>
-              <div class="surface-pressed-sm mx-4 mb-3 px-3">
-                <button
-                  onClick={() => setShowIssues((v) => !v)}
-                  aria-expanded={showIssues()}
-                  class="flex w-full items-center justify-between py-2 text-[12px] font-medium"
-                >
-                  <span class="flex items-center gap-2">
-                    <AlertTriangle size={12} class="text-amber-500" />
-                    {issueCount() === 1 ? "1 issue" : `${issueCount()} issues`}
-                  </span>
-                  <span class="text-[var(--color-foreground-muted)]">
-                    <Show when={showIssues()} fallback={<ChevronDown size={12} />}>
-                      <ChevronUp size={12} />
-                    </Show>
-                  </span>
-                </button>
-                <Show when={showIssues()}>
-                  <div class="space-y-1 pb-3 pt-1">
-                    <For each={rs().sourceIssues}>
-                      {(issue) => (
-                        <div class="flex items-baseline gap-2 text-[11px]">
-                          <span class="shrink-0 font-medium text-amber-600">
-                            {issue.source}
-                          </span>
-                          <span class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-mono"
-                            style={{
-                              "background-color": "color-mix(in oklch, var(--color-foreground-muted) 18%, transparent)",
-                              color: "var(--color-foreground-muted)",
-                            }}
-                          >
-                            {humanIssueKind(issue.kind)}{issue.count > 1 ? ` ×${issue.count}` : ""}
-                          </span>
-                          <span class="text-[var(--color-foreground-muted)] truncate">
-                            {issue.error}
-                          </span>
-                        </div>
-                      )}
-                    </For>
-                    <For each={failedItems()}>
-                      {(item) => (
-                        <div class="flex gap-2 text-[11px]">
-                          <span class="shrink-0 font-medium text-[var(--color-destructive)]">
-                            {item.title.slice(0, 40)}
-                          </span>
-                          <span class="text-[var(--color-foreground-muted)]">
-                            {item.error}
-                          </span>
-                        </div>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-              </div>
-            </Show>
-          </div>
-        </Show>
-      </div>
-    </div>
-  );
-}
-
-// ----- Sub-components -------------------------------------------------------
-
-function FullHeader(props: {
-  query: string;
-  setQuery: (v: string) => void;
-  onSearch: () => void;
-  running: boolean;
-  showOptions: boolean;
-  setShowOptions: (v: boolean) => void;
-}) {
-  return (
-    <div class="p-6 pt-10 space-y-4">
-      {/* Inset query input */}
-      <div class="relative">
-        <textarea
-          aria-label="Search query"
-          class="surface-input w-full resize-none px-4 py-3 pr-12 text-sm leading-relaxed outline-none placeholder:text-[var(--color-foreground-muted)]"
-          placeholder="What are you looking for? (Ctrl+Enter to search)"
-          rows={2}
-          value={props.query}
-          onInput={(e) => props.setQuery(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-              e.preventDefault();
-              props.onSearch();
-            }
-          }}
-        />
-        <div class="absolute right-3 top-3 text-[var(--color-foreground-muted)]">
-          <Search size={16} />
-        </div>
-      </div>
-
-      {/* Source toggles — flat outlined tags; active fills with source color */}
-      <div class="space-y-2">
-        <div class="flex flex-wrap gap-2">
-          <For each={PRIMARY_SOURCES}>
-            {(src) => {
-              const active = () => settings.selectedSources.includes(src);
-              return (
-                <button
-                  onClick={() => toggleSource(src)}
-                  class="tag-pill px-3 py-1 text-[11px] font-medium"
-                  classList={{ "is-active": active() }}
-                  style={
-                    active()
-                      ? {
-                          "background-color": `var(--color-source-${src})`,
-                          color: "white",
-                        }
-                      : { color: "var(--color-foreground-muted)" }
-                  }
-                >
-                  {SOURCE_LABELS[src]}
-                </button>
-              );
+      {/* Header area */}
+      <div class="border-b border-[var(--color-border)] p-5 pt-10 space-y-4">
+        {/* Query input */}
+        <div class="relative">
+          <textarea
+            class="w-full resize-none rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 pr-12 text-sm leading-relaxed outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors placeholder:text-[var(--color-muted-foreground)]"
+            placeholder="What are you looking for? (Ctrl+Enter to search)"
+            rows={2}
+            value={query()}
+            onInput={(e) => setQuery(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                e.preventDefault();
+                handleSearch();
+              }
             }}
-          </For>
-        </div>
-        <details>
-          <summary class="cursor-pointer text-[11px] font-medium text-[var(--color-foreground-muted)] hover:text-[var(--color-foreground)]">
-            Individual web engines (advanced)
-          </summary>
-          <div class="mt-2 flex flex-wrap gap-2">
-            <For each={META_SEARCH_COVERED}>
-              {(src) => {
-                const active = () => settings.selectedSources.includes(src);
-                return (
-                  <button
-                    onClick={() => toggleSource(src)}
-                    class="tag-pill px-3 py-1 text-[11px] font-medium"
-                    classList={{ "is-active": active() }}
-                    style={
-                      active()
-                        ? {
-                            "background-color": `var(--color-source-${src})`,
-                            color: "white",
-                          }
-                        : {}
-                    }
-                  >
-                    {SOURCE_LABELS[src]}
-                  </button>
-                );
-              }}
-            </For>
+          />
+          <div class="absolute right-3 top-3 text-[var(--color-muted-foreground)]">
+            <Search size={16} />
           </div>
-        </details>
-      </div>
-
-      <Show when={settings.selectedSources.length === 0}>
-        <p class="text-xs text-[var(--color-destructive)]">
-          Select at least one source to search.
-        </p>
-      </Show>
-
-      {/* Primary action — raised, depresses on click */}
-      <div class="flex items-center gap-3">
-        <button
-          onClick={props.onSearch}
-          disabled={
-            !props.query.trim() ||
-            settings.selectedSources.length === 0 ||
-            props.running
-          }
-          class="btn-tactile flex items-center gap-2 px-6 py-2.5 text-sm font-semibold"
-          style={{
-            background: "var(--color-primary)",
-            color: "white",
-          }}
-        >
-          <Search size={14} />
-          Find Documents
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function CompactHeader(props: {
-  query: string;
-  setQuery: (v: string) => void;
-  onSearch: () => void;
-  running: boolean;
-  showOptions: boolean;
-  setShowOptions: (v: boolean) => void;
-}) {
-  return (
-    <div class="flex items-center gap-2 px-4 py-3">
-      <div class="relative flex-1">
-        <input
-          type="text"
-          class="surface-input w-full px-3 py-1.5 pr-8 text-[13px] outline-none"
-          placeholder="Refine query…"
-          value={props.query}
-          onInput={(e) => props.setQuery(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              props.onSearch();
-            }
-          }}
-        />
-        <div class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-foreground-muted)]">
-          <Search size={12} />
-        </div>
-      </div>
-
-      <button
-        onClick={() => props.setShowOptions(!props.showOptions)}
-        aria-expanded={props.showOptions}
-        title="Sources & options"
-        class="btn-tactile p-1.5 text-[var(--color-foreground-muted)]"
-        classList={{ "is-active": props.showOptions }}
-      >
-        <Sliders size={12} />
-      </button>
-
-      <Show
-        when={!props.running}
-        fallback={
-          <button
-            onClick={() => api.cancelRun()}
-            class="btn-tactile flex items-center gap-1 px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-destructive)]"
-          >
-            <X size={11} />
-            Cancel
-          </button>
-        }
-      >
-        <button
-          onClick={props.onSearch}
-          disabled={
-            !props.query.trim() || settings.selectedSources.length === 0
-          }
-          class="btn-tactile flex items-center gap-1 px-3 py-1.5 text-[12px] font-semibold"
-          style={{ background: "var(--color-primary)", color: "white" }}
-        >
-          <Search size={11} />
-          New Search
-        </button>
-      </Show>
-    </div>
-  );
-}
-
-const PIPELINE_STAGES: { label: string; detail: string }[] = [
-  { label: "Discover", detail: "Search 13 academic + web sources in parallel" },
-  { label: "Rank", detail: "Cross-source dedup · TF-IDF · RRF · authority" },
-  { label: "Filter", detail: "Optional semantic + LLM borderline judging" },
-  { label: "Download", detail: "Concurrent fetch · resume · text extraction" },
-];
-
-function WelcomeBody(props: { onPickExample: (ex: string) => void }) {
-  return (
-    <div class="flex h-full items-center justify-center overflow-y-auto p-6 scroll-inset">
-      <div class="material-linen border-stitched max-w-2xl w-full p-8 space-y-6">
-        <div class="text-center space-y-2">
-          <h2 class="text-lg font-semibold text-embossed">Find documents anywhere</h2>
-          <p class="text-sm text-[var(--color-foreground-muted)] leading-relaxed">
-            Pick a source set, type a query, and watch results stream in.
-            <br />Built-in meta-search hits 6 web engines in parallel — no setup.
-          </p>
         </div>
 
-        <div class="flex flex-wrap justify-center gap-1.5">
+        {/* Example queries */}
+        <div class="flex flex-wrap gap-1.5">
           <For each={EXAMPLES}>
             {(ex) => (
               <button
-                onClick={() => props.onPickExample(ex)}
-                class="pill-toggle px-3 py-1 text-[11px] text-[var(--color-foreground-muted)] hover:text-[var(--color-primary)]"
+                onClick={() => setQuery(ex)}
+                class="rounded-full border border-[var(--color-border)] px-3 py-1 text-[11px] text-[var(--color-muted-foreground)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors"
               >
                 {ex}
               </button>
@@ -582,25 +99,216 @@ function WelcomeBody(props: { onPickExample: (ex: string) => void }) {
           </For>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
-          <For each={PIPELINE_STAGES}>
-            {(stage, i) => (
-              <div class="surface-raised-subtle surface-bevel-sm p-3 text-center">
-                <div class="mb-1 flex items-center justify-center gap-1">
-                  <span class="font-mono text-[10px] text-[var(--color-foreground-muted)]">
-                    {String(i() + 1).padStart(2, "0")}
-                  </span>
-                  <span class="text-[11px] font-semibold text-embossed">
-                    {stage.label}
-                  </span>
-                </div>
-                <p class="text-[9.5px] leading-snug text-[var(--color-foreground-muted)]">
-                  {stage.detail}
-                </p>
-              </div>
-            )}
+        {/* Source toggles */}
+        <div class="flex flex-wrap gap-1.5">
+          <For each={ALL_SOURCES}>
+            {(src) => {
+              const active = () => settings.selectedSources.includes(src);
+              return (
+                <button
+                  onClick={() => toggleSource(src)}
+                  class="rounded-full border px-3 py-1 text-[11px] font-medium transition-colors"
+                  classList={{
+                    "border-transparent text-white": active(),
+                    "border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]": !active(),
+                  }}
+                  style={active() ? { "background-color": `var(--color-source-${src})` } : {}}
+                >
+                  {SOURCE_LABELS[src]}
+                </button>
+              );
+            }}
           </For>
         </div>
+
+        {/* No-source warning */}
+        <Show when={settings.selectedSources.length === 0}>
+          <p class="text-xs text-[var(--color-destructive)]">Select at least one source to search.</p>
+        </Show>
+
+        {/* Action row */}
+        <div class="flex items-center gap-3">
+          <Show
+            when={!rs().running}
+            fallback={
+              <button
+                onClick={() => api.cancelRun()}
+                class="flex items-center gap-2 rounded-lg border border-[var(--color-destructive)] px-4 py-2 text-sm font-medium text-[var(--color-destructive)] hover:bg-[var(--color-destructive)] hover:text-white transition-colors"
+              >
+                <X size={14} />
+                Cancel
+              </button>
+            }
+          >
+            <button
+              onClick={handleSearch}
+              disabled={!query().trim() || settings.selectedSources.length === 0}
+              class="flex items-center gap-2 rounded-lg bg-[var(--color-primary)] px-5 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Search size={14} />
+              Find Documents
+            </button>
+          </Show>
+
+          {/* Post-run actions */}
+          <Show when={rs().folder && !rs().running}>
+            <button
+              onClick={handleExport}
+              disabled={exporting()}
+              class="flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-medium hover:bg-[var(--color-accent)] transition-colors disabled:opacity-50"
+            >
+              <Show when={exporting()} fallback={<Archive size={14} />}>
+                <Loader2 size={14} class="animate-spin" />
+              </Show>
+              Export ZIP
+            </button>
+            <button
+              onClick={handleOpenLibrary}
+              class="flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-medium hover:bg-[var(--color-accent)] transition-colors"
+            >
+              <BookOpen size={14} />
+              Open Library
+            </button>
+            <button
+              onClick={() => rs().folder && api.revealInFinder(rs().folder!)}
+              class="flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-medium hover:bg-[var(--color-accent)] transition-colors"
+            >
+              <FolderOpen size={14} />
+              Show Folder
+            </button>
+          </Show>
+        </div>
+      </div>
+
+      {/* Body — scrollable */}
+      <div class="flex-1 overflow-y-auto p-5 space-y-5">
+        {/* Stats + progress */}
+        <Show when={rs().found > 0 || rs().done > 0 || rs().running}>
+          <div class="space-y-3">
+            {/* Stat pills */}
+            <div class="flex flex-wrap gap-3 text-sm">
+              <span class="text-[var(--color-muted-foreground)]">
+                <strong class="text-[var(--color-foreground)]">{rs().found}</strong> found
+              </span>
+              <span class="text-[var(--color-muted-foreground)]">
+                <strong class="text-[var(--color-success)]">{rs().done}</strong> saved
+              </span>
+              <Show when={rs().failed > 0}>
+                <span class="text-[var(--color-muted-foreground)]">
+                  <strong class="text-[var(--color-destructive)]">{rs().failed}</strong> failed
+                </span>
+              </Show>
+              <Show when={rs().filteredCount > 0}>
+                <span class="text-[var(--color-muted-foreground)]">
+                  <strong class="text-[var(--color-muted-foreground)]">{rs().filteredCount}</strong> off-topic
+                </span>
+              </Show>
+            </div>
+
+            {/* Progress bar */}
+            <Show when={rs().total > 0}>
+              <div class="space-y-1">
+                <div class="h-1.5 w-full rounded-full bg-[var(--color-border)] overflow-hidden">
+                  <div
+                    class="h-full rounded-full bg-[var(--color-primary)] transition-all duration-500"
+                    style={{ width: `${runStore.overallPct}%` }}
+                  />
+                </div>
+                <p class="text-right text-[10px] text-[var(--color-muted-foreground)]">
+                  {runStore.overallPct}%
+                </p>
+              </div>
+            </Show>
+          </div>
+        </Show>
+
+        {/* Fatal error */}
+        <Show when={rs().fatalError}>
+          <div class="rounded-lg border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 p-4 text-sm text-[var(--color-destructive)] flex items-start justify-between gap-2">
+            <span><strong>Error:</strong> {rs().fatalError}</span>
+            <button
+              onClick={() => runStore.clearFatalError()}
+              aria-label="Dismiss"
+              class="shrink-0 rounded hover:bg-[var(--color-destructive)]/10 p-0.5 transition-colors"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </Show>
+
+        {/* Export success */}
+        <Show when={exportedTo()}>
+          <div class="rounded-lg border p-3 text-sm flex items-start justify-between gap-2"
+            style={{ "border-color": "color-mix(in oklch, var(--color-success) 30%, transparent)", "background-color": "var(--color-success-bg)", "color": "var(--color-success-fg)" }}
+          >
+            <span>Exported to <code class="text-xs">{exportedTo()}</code></span>
+            <button
+              onClick={() => setExportedTo(null)}
+              aria-label="Dismiss"
+              class="shrink-0 rounded p-0.5 transition-colors hover:opacity-70"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </Show>
+        <Show when={exportError()}>
+          <div class="rounded-lg border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 p-3 text-sm text-[var(--color-destructive)] flex items-start justify-between gap-2">
+            <span>Export failed: {exportError()}</span>
+            <button
+              onClick={() => setExportError(null)}
+              aria-label="Dismiss"
+              class="shrink-0 rounded hover:bg-[var(--color-destructive)]/10 p-0.5 transition-colors"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </Show>
+
+        {/* Live download stream */}
+        <Show when={Object.keys(rs().inFlight).length > 0 || rs().completed.length > 0}>
+          <LiveDownloadStream />
+        </Show>
+
+        {/* Issues */}
+        <Show when={hasIssues()}>
+          <div class="rounded-xl border border-[var(--color-border)]">
+            <button
+              onClick={() => setShowIssues((v) => !v)}
+              aria-expanded={showIssues()}
+              class="flex w-full items-center justify-between px-4 py-3 text-sm font-medium"
+            >
+              <span class="flex items-center gap-2">
+                <AlertTriangle size={14} class="text-amber-500" />
+                {issueCount() === 1 ? "1 issue" : `${issueCount()} issues`}
+              </span>
+              <span class="text-[var(--color-muted-foreground)]">
+                <Show when={showIssues()} fallback={<ChevronDown size={14} />}>
+                  <ChevronUp size={14} />
+                </Show>
+              </span>
+            </button>
+            <Show when={showIssues()}>
+              <div class="border-t border-[var(--color-border)] px-4 pb-4 pt-3 space-y-2">
+                <For each={rs().sourceIssues}>
+                  {(issue) => (
+                    <div class="flex gap-2 text-xs">
+                      <span class="font-medium text-amber-600 shrink-0">{issue.source}</span>
+                      <span class="text-[var(--color-muted-foreground)]">{issue.error}</span>
+                    </div>
+                  )}
+                </For>
+                <For each={failedItems()}>
+                  {(item) => (
+                    <div class="flex gap-2 text-xs">
+                      <span class="font-medium text-[var(--color-destructive)] shrink-0">{item.title.slice(0, 40)}</span>
+                      <span class="text-[var(--color-muted-foreground)]">{item.error}</span>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
+        </Show>
       </div>
     </div>
   );
