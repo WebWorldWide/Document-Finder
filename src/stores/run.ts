@@ -5,6 +5,7 @@ import type { DfEvent } from "@/lib/events";
 import { settings } from "@/stores/settings";
 
 export interface InFlight {
+  task_id: string;
   url: string;
   title: string;
   source: string;
@@ -14,11 +15,13 @@ export interface InFlight {
 }
 
 export interface CompletedItem {
+  task_id: string;
   url: string;
   title: string;
   source: string;
   status: "done" | "failed";
   error?: string;
+  identifier?: string;
   local_path?: string;
   absolute_path?: string;
   text_path?: string;
@@ -141,7 +144,8 @@ function apply(ev: DfEvent) {
     case "download_started":
       setState(
         produce((s) => {
-          s.inFlight[ev.payload.url] = {
+          s.inFlight[ev.payload.task_id] = {
+            task_id: ev.payload.task_id,
             url: ev.payload.url,
             title: ev.payload.title,
             source: ev.payload.source,
@@ -155,25 +159,27 @@ function apply(ev: DfEvent) {
       break;
 
     case "download_progress":
-      if (state.inFlight[ev.payload.url]) {
-        setState("inFlight", ev.payload.url, "downloaded", ev.payload.downloaded);
-        setState("inFlight", ev.payload.url, "total", ev.payload.total);
+      if (state.inFlight[ev.payload.task_id]) {
+        setState("inFlight", ev.payload.task_id, "downloaded", ev.payload.downloaded);
+        setState("inFlight", ev.payload.task_id, "total", ev.payload.total);
       }
       break;
 
     case "download_done": {
       const item: CompletedItem = {
+        task_id: ev.payload.task_id,
         url: ev.payload.url,
         title: ev.payload.title,
         source: ev.payload.source,
         status: "done",
+        identifier: ev.payload.identifier,
         local_path: ev.payload.local_path,
         absolute_path: ev.payload.absolute_path,
         text_path: ev.payload.text_path,
       };
       setState(
         produce((s) => {
-          delete s.inFlight[ev.payload.url];
+          delete s.inFlight[ev.payload.task_id];
           s.active = Object.keys(s.inFlight).length;
           s.done = ev.payload.done;
           s.failed = ev.payload.failed;
@@ -186,15 +192,17 @@ function apply(ev: DfEvent) {
 
     case "download_failed": {
       const item: CompletedItem = {
+        task_id: ev.payload.task_id,
         url: ev.payload.url,
         title: ev.payload.title,
         source: ev.payload.source,
         status: "failed",
+        identifier: ev.payload.identifier,
         error: ev.payload.error,
       };
       setState(
         produce((s) => {
-          delete s.inFlight[ev.payload.url];
+          delete s.inFlight[ev.payload.task_id];
           s.active = Object.keys(s.inFlight).length;
           s.done = ev.payload.done;
           s.failed = ev.payload.failed;

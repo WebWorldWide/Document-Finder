@@ -633,6 +633,13 @@ pub async fn run_pipeline(
     let download_sem = Arc::new(Semaphore::new(req.concurrency.clamp(1, 32)));
     let extract_sem = Arc::new(Semaphore::new(num_cpus::get().clamp(1, 8)));
 
+    // Monotonic per-run counter for task_id allocation. URL alone is not a
+    // safe key because two candidates can legitimately share a URL (cross-
+    // source dupe survived dedup, or the same paper landing in two
+    // sub-queries).
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let task_counter = Arc::new(AtomicU64::new(0));
+
     let mut handles = Vec::with_capacity(candidates.len());
     for doc in candidates {
         let app = app.clone();
@@ -645,6 +652,7 @@ pub async fn run_pipeline(
         let db_path = db_path.clone();
         let text_dir = text_dir.clone();
         let extract_flag = req.extract;
+        let task_counter = task_counter.clone();
 
         let handle = tokio::spawn(async move {
             let download_permit = match download_sem.acquire_owned().await {
@@ -655,9 +663,14 @@ pub async fn run_pipeline(
                 return;
             }
 
+            // Allocate the task_id at start so all four download events
+            // (started/progress/done/failed) carry the same key.
+            let task_id = format!("dl-{}", task_counter.fetch_add(1, Ordering::Relaxed));
+
             let _ = app.emit(
                 EV_DOWNLOAD_STARTED,
                 DownloadStartedPayload {
+                    task_id: task_id.clone(),
                     url: doc.url.clone(),
                     title: doc.title.clone(),
                     source: doc.source.clone(),
@@ -667,6 +680,7 @@ pub async fn run_pipeline(
             let app_for_progress = app.clone();
             let url_for_progress = doc.url.clone();
             let title_for_progress = doc.title.clone();
+            let task_id_for_progress = task_id.clone();
             let last_emit = std::sync::Mutex::new(std::time::Instant::now());
 
             let outcome = download(&doc, &folder, &client, &cancel, |ev| {
@@ -681,6 +695,7 @@ pub async fn run_pipeline(
                 let _ = app_for_progress.emit(
                     EV_DOWNLOAD_PROGRESS,
                     DownloadProgressPayload {
+                        task_id: task_id_for_progress.clone(),
                         url: url_for_progress.clone(),
                         title: title_for_progress.clone(),
                         downloaded: ev.downloaded,
@@ -798,6 +813,7 @@ pub async fn run_pipeline(
                     let _ = app.emit(
                         EV_DOWNLOAD_DONE,
                         DownloadDonePayload {
+                            task_id: task_id.clone(),
                             doc,
                             local_path,
                             absolute_path: path.to_string_lossy().to_string(),
@@ -823,6 +839,7 @@ pub async fn run_pipeline(
                     let _ = app.emit(
                         EV_DOWNLOAD_FAILED,
                         DownloadFailedPayload {
+                            task_id: task_id.clone(),
                             doc,
                             error: err,
                             done,

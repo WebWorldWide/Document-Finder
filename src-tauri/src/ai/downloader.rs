@@ -167,12 +167,34 @@ pub async fn download(
     let mut last_emit_bytes = downloaded;
     let mut stream = resp.bytes_stream();
 
-    while let Some(chunk_res) = stream.next().await {
-        if cancel.is_cancelled() {
-            file.flush().await?;
-            emit_status(&app, entry.id, "cancelled", None);
-            return Err(anyhow::anyhow!("cancelled"));
-        }
+    // Model downloads can be slow (multi-GB on home connections), but a 30s
+    // gap between chunks means the stream is wedged, not just throttled —
+    // free the task so cancellation/retry can run.
+    const MODEL_CHUNK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+    loop {
+        let polled = tokio::select! {
+            c = tokio::time::timeout(MODEL_CHUNK_TIMEOUT, stream.next()) => c,
+            _ = cancel.cancelled() => {
+                file.flush().await?;
+                emit_status(&app, entry.id, "cancelled", None);
+                return Err(anyhow::anyhow!("cancelled"));
+            }
+        };
+        let chunk_res = match polled {
+            Ok(c) => c,
+            Err(_) => {
+                let detail = format!(
+                    "stream stalled ({}s without data) at {} of {} bytes",
+                    MODEL_CHUNK_TIMEOUT.as_secs(),
+                    downloaded,
+                    total
+                );
+                emit_status(&app, entry.id, "failed", Some(detail.clone()));
+                return Err(anyhow::anyhow!(detail));
+            }
+        };
+        let Some(chunk_res) = chunk_res else { break };
         let chunk = match chunk_res {
             Ok(c) => c,
             Err(e) => {

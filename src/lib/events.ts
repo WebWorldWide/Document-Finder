@@ -42,12 +42,14 @@ export interface FilteredPayload {
 }
 
 export interface DownloadStartedPayload {
+  task_id: string;
   url: string;
   title: string;
   source: string;
 }
 
 export interface DownloadProgressPayload {
+  task_id: string;
   url: string;
   title: string;
   downloaded: number;
@@ -56,6 +58,7 @@ export interface DownloadProgressPayload {
 
 // Rust uses #[serde(flatten)] on doc: Document — fields appear at top level
 export interface DownloadDonePayload {
+  task_id: string;
   url: string;
   title: string;
   source: string;
@@ -72,6 +75,7 @@ export interface DownloadDonePayload {
 }
 
 export interface DownloadFailedPayload {
+  task_id: string;
   url: string;
   title: string;
   source: string;

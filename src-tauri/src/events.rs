@@ -111,6 +111,10 @@ pub struct FoundTotalPayload {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadStartedPayload {
+    /// Per-download unique key; lets the UI track each in-flight download
+    /// separately even when two have the same URL (which used to clobber the
+    /// older `inFlight[url]` map and lose one's progress).
+    pub task_id: String,
     pub url: String,
     pub title: String,
     pub source: String,
@@ -118,6 +122,7 @@ pub struct DownloadStartedPayload {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadProgressPayload {
+    pub task_id: String,
     pub url: String,
     pub title: String,
     pub downloaded: u64,
@@ -126,6 +131,7 @@ pub struct DownloadProgressPayload {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadDonePayload {
+    pub task_id: String,
     #[serde(flatten)]
     pub doc: Document,
     pub local_path: String,
@@ -139,6 +145,7 @@ pub struct DownloadDonePayload {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadFailedPayload {
+    pub task_id: String,
     #[serde(flatten)]
     pub doc: Document,
     pub error: String,

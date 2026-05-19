@@ -693,7 +693,9 @@ async fn force_remove_dir(path: &Path) -> Result<&'static str, String> {
 /// crash.
 #[tauri::command]
 pub async fn reset_ai_state() -> Result<(), String> {
+    #[cfg(feature = "ai-embeddings")]
     crate::ai::embeddings::reset_embedding_model();
+    #[cfg(feature = "ai-llm")]
     crate::ai::llm::reset_llm_model();
     tracing::info!("AI state reset by user");
     Ok(())

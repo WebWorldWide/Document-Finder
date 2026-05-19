@@ -1,7 +1,30 @@
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use rusqlite::{params, Connection, Result};
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+/// Per-database-path init mutex. Without this, two concurrent downloads in
+/// the same run could both call `init_db` for the same SQLite file, race on
+/// `PRAGMA journal_mode = WAL`, and one would surface SQLITE_BUSY before the
+/// 5s busy_timeout kicked in. The mutex makes the first-touch race
+/// deterministic; subsequent opens after init are fully concurrent under WAL.
+static INIT_LOCKS: Lazy<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> =
+    Lazy::new(Default::default);
+
+fn init_lock_for(path: &Path) -> Arc<Mutex<()>> {
+    let mut g = INIT_LOCKS.lock();
+    g.entry(path.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
 
 pub fn init_db(path: &Path) -> Result<Connection> {
+    // Serialize the create-tables-and-set-pragmas dance per file.
+    let lock = init_lock_for(path);
+    let _guard = lock.lock();
+
     let conn = Connection::open(path)?;
 
     conn.pragma_update(None, "journal_mode", "WAL")?;

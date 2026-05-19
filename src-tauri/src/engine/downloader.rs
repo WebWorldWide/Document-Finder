@@ -28,6 +28,12 @@ const MIN_DOC_BYTES: u64 = 4 * 1024;
 /// Hard cap per file — prevents a malicious or runaway server from exhausting disk.
 const MAX_FILE_BYTES: u64 = 500 * 1024 * 1024;
 
+/// Maximum gap between chunks before we declare the stream stalled. A stuck
+/// remote that holds a TCP socket open without sending bytes used to lock up
+/// the download task for as long as the OS waited (often 60s+); we abort
+/// quickly so cancellation and retry can take over.
+const CHUNK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 pub fn ext_from(url: &str, content_type: &str) -> &'static str {
     let ct = content_type.to_lowercase();
     let u = url.to_lowercase();
@@ -225,12 +231,23 @@ where
     let mut downloaded: u64 = 0;
     let mut stream = resp.bytes_stream();
     loop {
-        let chunk_res = tokio::select! {
-            c = stream.next() => c,
+        let polled = tokio::select! {
+            c = tokio::time::timeout(CHUNK_TIMEOUT, stream.next()) => c,
             _ = cancel.cancelled() => {
                 drop(file);
                 let _ = tokio::fs::remove_file(&out).await;
                 return DownloadOutcome::Cancelled;
+            }
+        };
+        let chunk_res = match polled {
+            Ok(c) => c,
+            Err(_) => {
+                drop(file);
+                let _ = tokio::fs::remove_file(&out).await;
+                return DownloadOutcome::Failed(format!(
+                    "stream stalled ({}s without data)",
+                    CHUNK_TIMEOUT.as_secs()
+                ));
             }
         };
         let Some(chunk_res) = chunk_res else { break };
