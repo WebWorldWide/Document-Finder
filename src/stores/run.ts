@@ -1,9 +1,8 @@
 import { createStore, produce } from "solid-js/store";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api, type ExportResult } from "@/lib/tauri";
-import type { CandidatePayload, DfEvent } from "@/lib/events";
-import { settings, qualityToFlags } from "@/stores/settings";
-import { pipelineStore } from "@/stores/pipeline";
+import type { DfEvent } from "@/lib/events";
+import { settings } from "@/stores/settings";
 
 export interface InFlight {
   url: string;
@@ -28,11 +27,6 @@ export interface CompletedItem {
 export interface SourceIssue {
   source: string;
   error: string;
-  /// One of: rate_limit, forbidden, server_error, timeout, parse_error, other.
-  /// Used for dedup — repeated errors of the same (source, kind) combine
-  /// into a single row with a count badge instead of stacking.
-  kind: string;
-  count: number;
   ts: number;
 }
 
@@ -41,8 +35,6 @@ export interface LogEntry {
   level: "info" | "warn" | "error";
   msg: string;
 }
-
-export type Candidate = CandidatePayload;
 
 interface RunState {
   running: boolean;
@@ -53,6 +45,7 @@ interface RunState {
   failed: number;
   total: number;
   active: number;
+  filteredCount: number;
   inFlight: Record<string, InFlight>;
   completed: CompletedItem[];
   sourceIssues: SourceIssue[];
@@ -60,11 +53,6 @@ interface RunState {
   folder: string | null;
   manifest: string | null;
   fatalError: string | null;
-  // New for B3: ranked candidates with full scoring + reject reason.
-  candidates: Candidate[];
-  rankingDone: boolean;
-  rankingKept: number;
-  rankingRejected: number;
 }
 
 const [state, setState] = createStore<RunState>({
@@ -76,6 +64,7 @@ const [state, setState] = createStore<RunState>({
   failed: 0,
   total: 0,
   active: 0,
+  filteredCount: 0,
   inFlight: {},
   completed: [],
   sourceIssues: [],
@@ -83,10 +72,6 @@ const [state, setState] = createStore<RunState>({
   folder: null,
   manifest: null,
   fatalError: null,
-  candidates: [],
-  rankingDone: false,
-  rankingKept: 0,
-  rankingRejected: 0,
 });
 
 function addLog(level: LogEntry["level"], msg: string) {
@@ -103,6 +88,7 @@ function reset(query: string) {
     failed: 0,
     total: 0,
     active: 0,
+    filteredCount: 0,
     inFlight: {},
     completed: [],
     sourceIssues: [],
@@ -110,10 +96,6 @@ function reset(query: string) {
     folder: null,
     manifest: null,
     fatalError: null,
-    candidates: [],
-    rankingDone: false,
-    rankingKept: 0,
-    rankingRejected: 0,
   });
 }
 
@@ -136,29 +118,12 @@ function apply(ev: DfEvent) {
       break;
 
     case "source_error":
-      // Dedup by (source, kind) — repeats of the same category bump the
-      // count on the existing row instead of stacking new ones. The
-      // backend already drops parse_error before emitting and dedups
-      // within a single task, so the frontend just needs to handle the
-      // cross-task / cross-subquery overlap.
       setState(
         produce((s) => {
-          const { source, error, kind } = ev.payload;
-          const existing = s.sourceIssues.find(
-            (i) => i.source === source && i.kind === kind
-          );
-          if (existing) {
-            existing.count += 1;
-            existing.ts = Date.now();
-            // Keep the freshest message verbatim — useful when the backend
-            // includes a slightly different detail each time.
-            existing.error = error;
-          } else {
-            s.sourceIssues = [
-              ...s.sourceIssues,
-              { source, error, kind, count: 1, ts: Date.now() },
-            ].slice(-50);
-          }
+          s.sourceIssues = [
+            ...s.sourceIssues,
+            { source: ev.payload.source, error: ev.payload.error, ts: Date.now() },
+          ].slice(-50);
         })
       );
       addLog("warn", `   ${ev.payload.source}: ${ev.payload.error}`);
@@ -260,38 +225,14 @@ function apply(ev: DfEvent) {
       );
       break;
 
+    case "filtered":
+      setState("filteredCount", (prev) => prev + ev.payload.count);
+      addLog("info", `   ${ev.payload.source}: filtered ${ev.payload.count} off-topic`);
+      break;
+
     case "error":
       setState({ running: false, fatalError: ev.payload.message });
       addLog("error", `Error: ${ev.payload.message}`);
-      // Reset AI singletons so the next search can re-initialize them cleanly
-      // without requiring an app restart after an inference crash.
-      api.resetAiState().catch((e) => console.error("reset_ai_state failed:", e));
-      break;
-
-    case "candidate":
-      setState(
-        produce((s) => {
-          // Replace prior entry for the same URL (re-emit case) or append.
-          const idx = s.candidates.findIndex((c) => c.url === ev.payload.url);
-          if (idx >= 0) {
-            s.candidates[idx] = ev.payload;
-          } else {
-            s.candidates.push(ev.payload);
-          }
-        })
-      );
-      break;
-
-    case "ranking_done":
-      setState({
-        rankingDone: true,
-        rankingKept: ev.payload.kept,
-        rankingRejected: ev.payload.rejected,
-      });
-      addLog(
-        "info",
-        `Ranked ${ev.payload.total_candidates} candidate(s): ${ev.payload.kept} kept, ${ev.payload.rejected} rejected`
-      );
       break;
   }
 }
@@ -301,24 +242,20 @@ async function startSearch(query: string) {
   if (settings.selectedSources.length === 0) return;
 
   reset(query.trim());
-  // Pipeline strip should clear from the previous run before stage events
-  // for the new run start arriving.
-  pipelineStore.reset();
-  void pipelineStore.ensureSubscribed();
   setState("running", true);
 
   try {
-    const flags = qualityToFlags(settings.quality);
     await api.startRun({
       query: query.trim(),
       sources: settings.selectedSources,
       out_dir: settings.libraryRoot,
       per_source: settings.perSource,
       max_total: settings.maxTotal,
+      concurrency: settings.concurrency,
       extract: true,
-      use_citation_graph: settings.useCitationGraph,
-      ...flags,
-      llm_model_id: settings.llmModelId || null,
+      source_options: {
+        searxng: { instance_url: settings.searxngUrl },
+      },
     });
   } catch (e) {
     setState("running", false);

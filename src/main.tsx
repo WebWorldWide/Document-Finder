@@ -1,5 +1,4 @@
 import "./styles/globals.css";
-import "./stores/theme"; // apply data-theme before first paint
 import { render } from "solid-js/web";
 import App from "./App";
 import { listenAll } from "./lib/events";

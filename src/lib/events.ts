@@ -31,18 +31,14 @@ export interface SourceDonePayload {
   count: number;
 }
 
-export type SourceErrorKind =
-  | "rate_limit"
-  | "forbidden"
-  | "server_error"
-  | "timeout"
-  | "parse_error"
-  | "other";
-
 export interface SourceErrorPayload {
   source: string;
   error: string;
-  kind: SourceErrorKind;
+}
+
+export interface FilteredPayload {
+  source: string;
+  count: number;
 }
 
 export interface DownloadStartedPayload {
@@ -101,72 +97,6 @@ export interface ErrorPayload {
   message: string;
 }
 
-export interface CandidatePayload {
-  title: string;
-  url: string;
-  source: string; // first-seen source
-  authors: string[];
-  year?: string;
-  abstract?: string;
-  identifier?: string;
-  sources: string[]; // all sources that returned this candidate
-  tfidf: number;
-  rrf: number;
-  authority: number;
-  score: number;
-  status: "kept" | "rejected" | "borderline";
-  reject_reason: string | null;
-  final_rank: number | null;
-}
-
-export interface RankingDonePayload {
-  total_candidates: number;
-  kept: number;
-  rejected: number;
-}
-
-export interface ModelProgressPayload {
-  model_id: string;
-  downloaded: number;
-  total: number;
-  bytes_per_sec: number;
-}
-
-export interface ModelStatusPayload {
-  model_id: string;
-  status:
-    | "downloading"
-    | "verifying"
-    | "ready"
-    | "failed"
-    | "cancelled"
-    | "embedding"
-    | "llm_warming"
-    | "llm_expanding"
-    | "llm_filtering";
-  detail: string | null;
-}
-
-export type PipelineStage =
-  | "discovery"
-  | "rank"
-  | "semantic_rerank"
-  | "llm_expand"
-  | "llm_filter"
-  | "citation_enrich"
-  | "download"
-  | "extract";
-
-export type PipelineState = "started" | "progress" | "done" | "skipped";
-
-export interface PipelineStagePayload {
-  stage: PipelineStage;
-  state: PipelineState;
-  count?: number;
-  total?: number;
-  message?: string;
-}
-
 export type DfEvent =
   | { type: "found"; payload: FoundPayload }
   | { type: "found_total"; payload: FoundTotalPayload }
@@ -175,17 +105,14 @@ export type DfEvent =
   | { type: "source_start"; payload: SourceStartPayload }
   | { type: "source_done"; payload: SourceDonePayload }
   | { type: "source_error"; payload: SourceErrorPayload }
+  | { type: "filtered"; payload: FilteredPayload }
   | { type: "download_started"; payload: DownloadStartedPayload }
   | { type: "download_progress"; payload: DownloadProgressPayload }
   | { type: "download_done"; payload: DownloadDonePayload }
   | { type: "download_failed"; payload: DownloadFailedPayload }
   | { type: "complete"; payload: CompletePayload }
   | { type: "cancelled"; payload: CompletePayload }
-  | { type: "error"; payload: ErrorPayload }
-  | { type: "candidate"; payload: CandidatePayload }
-  | { type: "ranking_done"; payload: RankingDonePayload }
-  | { type: "model_progress"; payload: ModelProgressPayload }
-  | { type: "model_status"; payload: ModelStatusPayload };
+  | { type: "error"; payload: ErrorPayload };
 
 const EVENTS = [
   "keywords",
@@ -201,11 +128,8 @@ const EVENTS = [
   "download_failed",
   "cancelled",
   "complete",
+  "filtered",
   "error",
-  "candidate",
-  "ranking_done",
-  "model_progress",
-  "model_status",
 ] as const;
 
 export async function listenAll(

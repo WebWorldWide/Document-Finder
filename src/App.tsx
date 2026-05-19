@@ -1,27 +1,15 @@
-import { Switch, Match, onMount } from "solid-js";
+import { Switch, Match } from "solid-js";
 import Sidebar from "@/components/Sidebar";
 import FindTab from "@/components/FindTab";
 import LibraryView from "@/components/LibraryView";
 import SettingsView from "@/components/SettingsView";
-import WelcomeDialog from "@/components/WelcomeDialog";
 import { uiStore } from "@/stores/ui";
-import { modelsStore } from "@/stores/models";
 
 export default function App() {
-  // Kick off the models registry load at app start so the AI Models card in
-  // Settings doesn't get stuck on "Loading…" if neither SettingsView nor
-  // FirstRunModelDialog has mounted yet.
-  onMount(() => {
-    void modelsStore.refresh();
-    void modelsStore.ensureSubscribed();
-  });
-
   return (
-    <div class="flex h-screen w-screen overflow-hidden bg-pinstripe-light text-[var(--color-foreground)]">
-      {/* No custom drag region — Tauri's native macOS title bar (decorations:
-        * true in tauri.conf.json) handles dragging on its own. The previous
-        * fixed transparent drag region overlaid the pinstripe canvas at the
-        * top of the window and showed up as a striped artifact strip. */}
+    <div class="flex h-screen w-screen overflow-hidden bg-[var(--color-background)] text-[var(--color-foreground)]">
+      {/* macOS traffic light drag region */}
+      <div class="fixed inset-x-0 top-0 h-8 z-50 pointer-events-none" data-tauri-drag-region aria-hidden="true" />
       <Sidebar />
       <main id="main-content" tabindex="-1" class="flex-1 overflow-hidden outline-none">
         <Switch>
@@ -30,7 +18,6 @@ export default function App() {
           <Match when={uiStore.view === "settings"}><SettingsView /></Match>
         </Switch>
       </main>
-      <WelcomeDialog />
     </div>
   );
 }

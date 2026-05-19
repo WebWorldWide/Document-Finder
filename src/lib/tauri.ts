@@ -17,32 +17,9 @@ export interface RunRequest {
   out_dir: string;
   per_source?: number;
   max_total?: number;
+  concurrency?: number;
   extract?: boolean;
-  use_citation_graph?: boolean;
-  use_semantic_rerank?: boolean;
-  use_llm_expansion?: boolean;
-  use_llm_filter?: boolean;
-  llm_model_id?: string | null;
   source_options?: Record<string, { instance_url?: string }>;
-}
-
-export type ModelKind = "embedding" | "llm";
-
-export interface ModelInfo {
-  id: string;
-  kind: ModelKind;
-  display_name: string;
-  description: string;
-  is_default: boolean;
-  approx_bytes: number;
-  on_disk_bytes: number;
-  status:
-    | { kind: "not_downloaded" }
-    | { kind: "downloading"; downloaded: number; total: number }
-    | { kind: "verifying" }
-    | { kind: "ready" }
-    | { kind: "failed"; msg: string }
-    | { kind: "cancelled" };
 }
 
 export interface LibraryInfo {
@@ -90,13 +67,5 @@ export const api = {
   runLogInfo: () => invoke<LogInfo>("run_log_info"),
   runLogTail: (max?: number) =>
     invoke<unknown[]>("run_log_tail", max != null ? { max } : {}),
-  listModels: () => invoke<ModelInfo[]>("list_models"),
-  isEmbeddingLoaded: () => invoke<boolean>("is_embedding_loaded"),
-  downloadModel: (modelId: string) =>
-    invoke<void>("download_model", { modelId }),
-  cancelModelDownload: (modelId: string) =>
-    invoke<void>("cancel_model_download", { modelId }),
-  deleteModel: (modelId: string) => invoke<void>("delete_model", { modelId }),
-  deleteLibrary: (path: string) => invoke<void>("delete_library", { path }),
-  resetAiState: () => invoke<void>("reset_ai_state"),
+  setupSearXNG: () => invoke<string>("setup_searxng"),
 };
