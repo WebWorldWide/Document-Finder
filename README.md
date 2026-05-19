@@ -1,130 +1,75 @@
 <div align="center">
-  <img src="src-tauri/icons/icon.png" alt="Document Finder Logo" width="160" height="160" />
-  <h1>Document Finder v2</h1>
-  <p><strong>A blazingly fast, cross-platform desktop application for discovering, downloading, and bundling open-access research for AI contexts.</strong></p>
+  <img src="src-tauri/icons/icon.png" alt="Document Finder" width="120" height="120" />
+  <h1>Document Finder</h1>
+  <p>A desktop app for discovering, downloading, and bundling open-access research into AI-ready libraries.</p>
 </div>
 
 ---
 
-Document Finder v2 is a complete rewrite of the original Python-based tool, now powered by **Tauri 2**, a high-performance **Rust** backend, and a **Solid.js/Vite** frontend. It enables you to concurrently search multiple open-access platforms, download documents, extract text, and instantly package them into clean, AI-ready datasets.
+Search arXiv, OpenAlex, Semantic Scholar, the Internet Archive, DOAJ, Project Gutenberg, and an embedded web metasearch in parallel. Document Finder downloads PDFs/EPUBs/HTML, extracts plain text, and persists every run to a queryable SQLite library — all locally, with no API keys.
 
-## Key Features
+## Install
 
-- **Unified Discovery**: Search across multiple open-access sources simultaneously. Natural-language query expansion splits your query into sub-queries automatically.
-- **Live Download Stream**: Watch documents stream in as they are fetched and processed by the asynchronous Rust backend with exponential backoff and silent retries.
-- **Library Management**: Manage your collections in the Library tab. View metadata, doc counts, and total sizes.
-- **AI-Ready Exports**: Export libraries as `.zip` files containing PDFs, EPUBs, and extracted plain text — ready to drop into any AI context window.
-- **Blazing Fast**: Rust handles parallel downloads, PDF/EPUB text extraction, and SQLite persistence natively.
-- **Privacy-First Meta-Search**: Aggregates DuckDuckGo, Bing, Brave, and public SearXNG instances with a circuit breaker — no Docker required, no setup.
-- **Local AI Ranking**: Two small bundled models — `bge-small-en-v1.5` (~33 MB) for semantic reranking and `Qwen 2.5 3B Instruct` (~2 GB) for query expansion + borderline filtering. Manage downloads from **Settings → AI Models**. Everything runs offline; no API keys, ever.
-- **Editorial Design System**: Three themes (Paper / Slate / Dark) + nine accent colors + density toggle, switchable from Settings.
-- **Embedded SearXNG-Compatible Server**: An `axum`-backed local search service runs in-process on a random localhost port — Docker-free, Python-free, ready immediately at app start.
+Download an installer from the [latest release](https://github.com/AdamNolle/Document-Finder/releases):
 
-## Supported Sources
+| Platform | File | First-launch |
+|---|---|---|
+| macOS (Apple Silicon) | `.dmg` | Drag to Applications. Gatekeeper blocks unsigned apps on first run — System Settings → Privacy & Security → **Open Anyway**. |
+| Linux | `.deb` or `.AppImage` | `.deb`: `sudo dpkg -i …`. `.AppImage`: `chmod +x` then run. |
+| Windows | `.msi` or NSIS `.exe` | SmartScreen will warn — **More info** → **Run anyway**. |
 
-*No API keys required. All sources are open-access.*
+Binaries are unsigned (no Developer cert). The app makes no outbound calls except to the open-access sources you enable; verify with `codesign -dvvv` (macOS) or `Get-AuthenticodeSignature` (Windows).
 
-| Source | Description |
-|--------|-------------|
-| [arXiv](https://arxiv.org/) | Preprints in CS, physics, math, and more |
-| [OpenAlex](https://openalex.org/) | ~250M scholarly works with open-access filter |
-| [Semantic Scholar](https://www.semanticscholar.org/) | ~200M papers with PDF links |
-| [Internet Archive](https://archive.org/) | Millions of books, papers, and media |
-| [DOAJ](https://doaj.org/) | Directory of Open Access Journals |
-| [Project Gutenberg](https://www.gutenberg.org/) | 70,000+ free ebooks |
-| **Web** | Meta-search aggregator: DuckDuckGo, Bing, Brave + public SearXNG pool |
+## Features
 
----
+- **Parallel discovery** across all enabled sources with automatic query expansion into sub-queries.
+- **Live download stream** with throughput sparkline, ETA, sub-query progress, and per-source lane chart.
+- **Local AI ranking** (optional, downloaded on demand from Settings → AI Models):
+  - `bge-small-en-v1.5` (~33 MB) for semantic re-rank.
+  - `Qwen 2.5 3B Instruct` (~2 GB) for query expansion + borderline filtering.
+- **Embedded SearXNG-compatible server** runs in-process on a localhost port — no Docker, no Python, no setup.
+- **Library management** — view collections, export as ZIP, delete from disk, see lifetime per-source stats.
+- **Editorial theme system** — Paper / Slate / Dark + nine accents, persisted across launches.
+- **Structured logs** in Settings → Logs for bug-report exports.
 
-## Getting Started
+## Sources
 
-### Prerequisites
+| Source | Coverage |
+|---|---|
+| [arXiv](https://arxiv.org/) | Preprints in CS, physics, math |
+| [OpenAlex](https://openalex.org/) | ~250M scholarly works |
+| [Semantic Scholar](https://www.semanticscholar.org/) | AI-augmented paper index |
+| [Internet Archive](https://archive.org/) | Books, papers, scans |
+| [DOAJ](https://doaj.org/) | Open-access journals |
+| [Project Gutenberg](https://www.gutenberg.org/) | Public-domain books |
+| Web | Embedded metasearch — DuckDuckGo, Bing, Brave |
 
-- [Rust](https://rustup.rs/) (installed via `rustup`)
-- [Node.js](https://nodejs.org/) v20+
-- **C++ build toolchain** (for the local LLM via llama.cpp):
-  - **macOS**: `brew install cmake` + Xcode Command Line Tools (`xcode-select --install`). Metal GPU support is built in.
-  - **Linux**: cmake + clang/g++ (e.g. `sudo apt install build-essential cmake clang`).
-  - **Windows**: cmake + Visual Studio Build Tools 2022 with the C++ workload.
+## Build from source
 
-> **pnpm** is installed automatically by `run.sh` if not present.
-
-> The first `cargo build` is slow (10–20 min) because llama.cpp + ONNX
-> Runtime get compiled from source. Subsequent builds are cached.
->
-> To skip the AI features entirely (faster builds, no semantic
-> reranking or LLM expansion), build with:
-> `cargo build --no-default-features --features=custom-protocol`
-
-### One-Click Launch
+Prerequisites: [Rust](https://rustup.rs/), [Node.js 22+](https://nodejs.org/), cmake + a C++ toolchain (Xcode CLI tools on macOS, `build-essential` on Linux, Visual Studio Build Tools on Windows).
 
 ```bash
-# macOS and Linux
+# macOS / Linux
 ./run.sh
 
 # Windows (PowerShell)
 .\run.ps1
 ```
 
-`run.sh` detects whether it's running on macOS or Linux and branches:
-- **macOS**: builds the `.app`, installs to `/Applications/`, launches it.
-- **Linux**: builds the binary, launches `src-tauri/target/release-fast/document-finder` directly. Logs to `/tmp/document-finder.log`.
+First Rust build takes 10–20 minutes (llama.cpp and ONNX Runtime compile from source). For a development loop, use `pnpm tauri dev` instead — debug profile with hot reload.
 
-`run.ps1` (Windows) builds an MSI, copies the binary + DLLs to `%LOCALAPPDATA%\Programs\Document Finder\`, and launches it. For a real Start-menu install, double-click the `.msi` at `src-tauri\target\release-fast\bundle\msi\`.
-
-Each script checks prerequisites and installs missing dependencies. First Rust build is slow (10-20 min) because llama.cpp + ONNX Runtime compile from source; subsequent builds are cached.
-
-### Manual Setup
-
-```bash
-# Install Node dependencies
-pnpm install
-
-# Start development server
-pnpm tauri dev
-```
-
-### Build Native Installer
-
-```bash
-pnpm tauri build
-```
-
-This produces platform-native installers in `src-tauri/target/release/bundle/`.
-
----
-
-## Data Storage
-
-Each search creates a folder under your configured library root:
+## Data layout
 
 ```
 ~/Documents/DocumentFinder/
-└── your-query-slug/
-    ├── library.db        ← SQLite database (metadata, run history)
-    ├── _text/            ← Extracted plain text files
-    ├── paper-title-abc123.pdf
-    └── ...
+└── <query-slug>/
+    ├── library.db        SQLite — metadata, run history, full-text index
+    ├── _text/            extracted plain text
+    └── <paper>.pdf
 ```
 
-The `library.db` file contains full metadata for all downloaded documents and can be queried directly with any SQLite client.
+`library.db` is a standard SQLite file. Inspect with any SQLite client.
 
----
+## Tech stack
 
-## Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Desktop shell | [Tauri 2](https://tauri.app/) |
-| Backend | Rust (tokio async runtime) |
-| Frontend | [Solid.js](https://www.solidjs.com/) + TypeScript |
-| Bundler | [Vite 6](https://vitejs.dev/) |
-| Styling | Plain CSS — design tokens flip via `data-theme` / `data-accent` / `data-density` on `<body>` |
-| Embedded search | [axum](https://docs.rs/axum/) — SearXNG-compatible local HTTP server |
-| Database | SQLite via rusqlite (bundled) |
-
----
-
-## Contributing
-
-Contributions welcome. The Rust sources live in `src-tauri/src/sources/` — each source is a self-contained module implementing the `Source` trait with a `search()` method that returns a stream of `Document`s.
+Tauri 2 · Rust (tokio) · Solid.js · Vite · SQLite · axum (embedded search server)
