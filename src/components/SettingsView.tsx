@@ -1,21 +1,15 @@
-import { createSignal, onMount, Show } from "solid-js";
-import {
-  Server, FolderOpen, FileText, Loader2, CheckCircle2, X,
-} from "lucide-solid";
-import { api, type LogInfo } from "@/lib/tauri";
+import { createSignal, Show } from "solid-js";
+import { Server, Loader2, CheckCircle2, X } from "lucide-solid";
+import { api } from "@/lib/tauri";
 import { settings, setSettings, saveSettings } from "@/stores/settings";
-import { formatBytes } from "@/lib/utils";
+import { log } from "@/lib/log";
 import ThemeAccentPicker from "./ThemeAccentPicker";
+import LogsPanel from "./LogsPanel";
 
 export default function SettingsView() {
-  const [logInfo, setLogInfo] = createSignal<LogInfo | null>(null);
   const [settingUpSearx, setSettingUpSearx] = createSignal(false);
   const [searxResult, setSearxResult] = createSignal<string | null>(null);
   const [searxError, setSearxError] = createSignal<string | null>(null);
-
-  onMount(async () => {
-    setLogInfo(await api.runLogInfo().catch(() => null));
-  });
 
   async function handleSetupSearx() {
     setSettingUpSearx(true);
@@ -24,8 +18,10 @@ export default function SettingsView() {
     try {
       const output = await api.setupSearXNG();
       setSearxResult(output);
+      log.info("settings", "verified local SearXNG server", output);
     } catch (e) {
       setSearxError(String(e));
+      log.error("settings", "SearXNG verification failed", e);
     } finally {
       setSettingUpSearx(false);
     }
@@ -179,61 +175,8 @@ export default function SettingsView() {
             </div>
           </section>
 
-          {/* Run Log */}
-          <section class="df-section">
-            <h2>Run Log</h2>
-            <p class="hint">
-              Every query, source error, and download outcome is logged here.
-              Share this file when reporting issues.
-            </p>
-            <Show
-              when={logInfo()}
-              fallback={<p class="hint" style={{ margin: 0 }}>Unavailable.</p>}
-            >
-              {(info) => (
-                <div style={{ display: "flex", "flex-direction": "column", gap: "var(--pad-3)" }}>
-                  <code
-                    title={info().path}
-                    style={{
-                      display: "block",
-                      "white-space": "nowrap",
-                      overflow: "hidden",
-                      "text-overflow": "ellipsis",
-                      background: "var(--card-2)",
-                      border: "0.5px solid var(--line)",
-                      "border-radius": "var(--r-2)",
-                      padding: "8px 12px",
-                      "font-family": "var(--font-mono)",
-                      "font-size": "11px",
-                      color: "var(--ink-2)",
-                    }}
-                  >
-                    {info().path}
-                  </code>
-                  <p class="hint" style={{ margin: 0 }}>
-                    {info().exists ? formatBytes(info().size_bytes) : "Not yet written"}
-                  </p>
-                  <div style={{ display: "flex", gap: "8px" }}>
-                    <button
-                      class="df-btn sm"
-                      onClick={() => api.revealInFinder(info().path)}
-                      disabled={!info().exists}
-                    >
-                      <FolderOpen size={12} /> Show in Finder
-                    </button>
-                    <button
-                      class="df-btn sm"
-                      onClick={async () =>
-                        setLogInfo(await api.runLogInfo().catch(() => null))
-                      }
-                    >
-                      <FileText size={12} /> Refresh
-                    </button>
-                  </div>
-                </div>
-              )}
-            </Show>
-          </section>
+          {/* Logs (frontend buffer + backend runlog) */}
+          <LogsPanel />
         </div>
       </div>
     </div>

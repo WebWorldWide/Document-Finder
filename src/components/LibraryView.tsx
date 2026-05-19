@@ -4,6 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { api, type LibraryInfo } from "@/lib/tauri";
 import { uiStore } from "@/stores/ui";
 import { settings } from "@/stores/settings";
+import { log } from "@/lib/log";
 import { formatBytes } from "@/lib/utils";
 
 export default function LibraryView() {
@@ -37,12 +38,14 @@ export default function LibraryView() {
         if (!cancelled) {
           uiStore.setKnownLibraries(libs);
           setLoading(false);
+          log.info("library", `listed ${libs.length} libraries`);
         }
       })
       .catch((e) => {
         if (!cancelled) {
           setError(String(e));
           setLoading(false);
+          log.error("library", "listLibraries failed", e);
         }
       });
     onCleanup(() => { cancelled = true; });
@@ -60,8 +63,13 @@ export default function LibraryView() {
     try {
       const result = await api.exportLibraryZip(lib.path, dest);
       await api.revealInFinder(result.dest);
+      log.info("library", `exported ${lib.name} to ${result.dest}`, {
+        files: result.files,
+        bytes: result.size_bytes,
+      });
     } catch (e) {
       setExportError(String(e));
+      log.error("library", `export ${lib.name} failed`, e);
     } finally {
       setExportingPath(null);
     }

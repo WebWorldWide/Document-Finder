@@ -4,6 +4,7 @@ import { runStore } from "@/stores/run";
 import { uiStore } from "@/stores/ui";
 import { settings } from "@/stores/settings";
 import { api } from "@/lib/tauri";
+import { log } from "@/lib/log";
 import { formatBytes, formatEta, SOURCE_LABELS } from "@/lib/utils";
 import Sparkline from "./Sparkline";
 
@@ -80,7 +81,12 @@ export default function RunCard() {
   const exporting = () => false; // simple, no async-state knob needed here
 
   async function handleExport() {
-    await runStore.exportZip();
+    try {
+      const result = await runStore.exportZip();
+      if (result) log.info("run", `exported ${result.files} files to ${result.dest}`);
+    } catch (e) {
+      log.error("run", "export ZIP failed", e);
+    }
   }
   async function handleOpenLibrary() {
     if (!rs().folder) return;
@@ -88,8 +94,9 @@ export default function RunCard() {
       const info = await api.openLibrary(rs().folder!);
       uiStore.setActiveLibrary(info);
       uiStore.setView("library");
-    } catch {
-      /* silent — surfaced via run log */
+      log.info("library", `opened ${info.name}`);
+    } catch (e) {
+      log.error("library", "openLibrary failed", e);
     }
   }
 

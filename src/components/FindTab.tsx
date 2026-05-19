@@ -6,6 +6,7 @@ import { runStore } from "@/stores/run";
 import { settings } from "@/stores/settings";
 import { uiStore } from "@/stores/ui";
 import { api } from "@/lib/tauri";
+import { log } from "@/lib/log";
 import { formatBytes } from "@/lib/utils";
 
 /// Discover view — the hero of the app.
@@ -44,8 +45,19 @@ export default function FindTab() {
     rs().completed.filter((c) => c.status === "failed");
 
   async function handleSearch() {
-    if (!query().trim() || running()) return;
-    if (settings.selectedSources.length === 0) return;
+    if (!query().trim() || running()) {
+      log.debug("find", "search ignored — empty query or already running");
+      return;
+    }
+    if (settings.selectedSources.length === 0) {
+      log.warn("find", "search ignored — no sources selected");
+      return;
+    }
+    log.info("find", `starting search: ${query()}`, {
+      sources: settings.selectedSources,
+      perSource: settings.perSource,
+      maxTotal: settings.maxTotal,
+    });
     await runStore.startSearch(query());
   }
 
