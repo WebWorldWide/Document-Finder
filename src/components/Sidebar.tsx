@@ -84,10 +84,6 @@ export default function Sidebar() {
           </For>
         </div>
       </Show>
-
-      <div class="df-side-footer">
-        <span class="df-status-dot" /> Backend ready
-      </div>
     </nav>
   );
 }
