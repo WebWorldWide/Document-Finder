@@ -66,12 +66,10 @@ export interface LogInfo {
 }
 
 export const api = {
-  defaultLibraryDir: () =>
-    invoke<{ library_root: string }>("default_library_dir"),
+  defaultLibraryDir: () => invoke<{ library_root: string }>("default_library_dir"),
   startRun: (req: RunRequest) => invoke<void>("start_run", { req }),
   cancelRun: () => invoke<void>("cancel_run"),
-  listLibraries: (root: string) =>
-    invoke<LibraryInfo[]>("list_libraries", { root }),
+  listLibraries: (root: string) => invoke<LibraryInfo[]>("list_libraries", { root }),
   openLibrary: (path: string) => invoke<LibraryInfo>("open_library", { path }),
   exportLibraryZip: (
     folder: string,
@@ -88,14 +86,11 @@ export const api = {
     }),
   revealInFinder: (path: string) => invoke<void>("reveal_in_finder", { path }),
   runLogInfo: () => invoke<LogInfo>("run_log_info"),
-  runLogTail: (max?: number) =>
-    invoke<unknown[]>("run_log_tail", max != null ? { max } : {}),
+  runLogTail: (max?: number) => invoke<unknown[]>("run_log_tail", max != null ? { max } : {}),
   listModels: () => invoke<ModelInfo[]>("list_models"),
   isEmbeddingLoaded: () => invoke<boolean>("is_embedding_loaded"),
-  downloadModel: (modelId: string) =>
-    invoke<void>("download_model", { modelId }),
-  cancelModelDownload: (modelId: string) =>
-    invoke<void>("cancel_model_download", { modelId }),
+  downloadModel: (modelId: string) => invoke<void>("download_model", { modelId }),
+  cancelModelDownload: (modelId: string) => invoke<void>("cancel_model_download", { modelId }),
   deleteModel: (modelId: string) => invoke<void>("delete_model", { modelId }),
   deleteLibrary: (path: string) => invoke<void>("delete_library", { path }),
   resetAiState: () => invoke<void>("reset_ai_state"),

@@ -36,10 +36,7 @@ pub struct MergedDoc {
 
 impl MergedDoc {
     pub fn sources(&self) -> Vec<String> {
-        self.source_ranks
-            .iter()
-            .map(|(s, _)| s.clone())
-            .collect()
+        self.source_ranks.iter().map(|(s, _)| s.clone()).collect()
     }
 }
 
@@ -131,8 +128,7 @@ impl Deduplicator {
         }
 
         // 2. DOI match — authoritative when present.
-        let doi = extract_doi(&doc.url)
-            .or_else(|| doc.identifier.as_deref().and_then(extract_doi));
+        let doi = extract_doi(&doc.url).or_else(|| doc.identifier.as_deref().and_then(extract_doi));
         if let Some(ref d) = doi {
             if let Some(&idx) = self.by_doi.get(d) {
                 self.docs[idx]
@@ -239,12 +235,22 @@ mod tests {
     fn doi_dedup_merges_sources() {
         let mut d = Deduplicator::new();
         let r1 = d.add(
-            doc("X", "https://arxiv.org/abs/10.1038/foo", &["A"], Some("2024")),
+            doc(
+                "X",
+                "https://arxiv.org/abs/10.1038/foo",
+                &["A"],
+                Some("2024"),
+            ),
             "arxiv",
             1,
         );
         let r2 = d.add(
-            doc("X", "https://semscholar.org/paper/10.1038/foo.pdf", &["A"], Some("2024")),
+            doc(
+                "X",
+                "https://semscholar.org/paper/10.1038/foo.pdf",
+                &["A"],
+                Some("2024"),
+            ),
             "semantic_scholar",
             3,
         );

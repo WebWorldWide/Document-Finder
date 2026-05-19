@@ -23,10 +23,14 @@ const BACKEND_LABELS: Record<string, string> = {
 
 function statusColor(status: BackendStatus["status"]): string {
   switch (status) {
-    case "ok": return "var(--color-success)";
-    case "timeout": return "var(--color-warning, oklch(0.75 0.15 80))";
-    case "circuit_open": return "var(--color-destructive)";
-    case "error": return "var(--color-destructive)";
+    case "ok":
+      return "var(--color-success)";
+    case "timeout":
+      return "var(--color-warning, oklch(0.75 0.15 80))";
+    case "circuit_open":
+      return "var(--color-destructive)";
+    case "error":
+      return "var(--color-destructive)";
   }
 }
 
@@ -34,29 +38,26 @@ export default function MetaSearchHealthBar() {
   const [backends, setBackends] = createSignal<BackendStatus[]>([]);
 
   onMount(async () => {
-    const unlisten = await listen<MetaSearchHealthPayload>(
-      "df:meta_search_health",
-      (ev) => {
-        const payload = ev.payload;
-        setBackends((prev) => {
-          const idx = prev.findIndex((b) => b.backend === payload.backend);
-          const entry: BackendStatus = { ...payload, ts: Date.now() };
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = entry;
-            return next;
-          }
-          return [...prev, entry];
-        });
-      }
-    );
+    const unlisten = await listen<MetaSearchHealthPayload>("df:meta_search_health", (ev) => {
+      const payload = ev.payload;
+      setBackends((prev) => {
+        const idx = prev.findIndex((b) => b.backend === payload.backend);
+        const entry: BackendStatus = { ...payload, ts: Date.now() };
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = entry;
+          return next;
+        }
+        return [...prev, entry];
+      });
+    });
     onCleanup(() => unlisten());
   });
 
   return (
     <Show when={backends().length > 0}>
       <div class="space-y-1">
-        <p class="text-[10px] font-medium text-[var(--color-muted-foreground)] mb-1.5">
+        <p class="mb-1.5 text-[10px] font-medium text-[var(--color-muted-foreground)]">
           Backend health (last search)
         </p>
         <div class="flex flex-wrap gap-1.5">
@@ -74,13 +75,9 @@ export default function MetaSearchHealthBar() {
                   class="h-1.5 w-1.5 rounded-full"
                   style={{ background: statusColor(b.status) }}
                 />
-                <span class="font-medium">
-                  {BACKEND_LABELS[b.backend] ?? b.backend}
-                </span>
+                <span class="font-medium">{BACKEND_LABELS[b.backend] ?? b.backend}</span>
                 <Show when={b.status === "ok"}>
-                  <span class="text-[var(--color-foreground-muted)]">
-                    {b.result_count}
-                  </span>
+                  <span class="text-[var(--color-foreground-muted)]">{b.result_count}</span>
                 </Show>
                 <Show when={b.status !== "ok"}>
                   <span style={{ color: statusColor(b.status) }}>

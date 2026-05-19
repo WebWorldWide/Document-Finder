@@ -21,8 +21,8 @@ fn project_root() -> PathBuf {
 /// trailing commas. Comments inside the macro are ignored.
 fn registered_commands() -> BTreeSet<String> {
     let lib_rs = project_root().join("src").join("lib.rs");
-    let src = fs::read_to_string(&lib_rs)
-        .unwrap_or_else(|e| panic!("read {}: {}", lib_rs.display(), e));
+    let src =
+        fs::read_to_string(&lib_rs).unwrap_or_else(|e| panic!("read {}: {}", lib_rs.display(), e));
 
     // Locate the macro invocation start. The codebase has exactly one
     // `tauri::generate_handler!` call.
@@ -32,9 +32,12 @@ fn registered_commands() -> BTreeSet<String> {
         .unwrap_or_else(|| panic!("could not find `{}` in {}", start_marker, lib_rs.display()))
         + start_marker.len();
     let rest = &src[start..];
-    let end = rest
-        .find(']')
-        .unwrap_or_else(|| panic!("unterminated generate_handler! macro in {}", lib_rs.display()));
+    let end = rest.find(']').unwrap_or_else(|| {
+        panic!(
+            "unterminated generate_handler! macro in {}",
+            lib_rs.display()
+        )
+    });
     let inside = &rest[..end];
 
     // Strip any line comments that might appear inside the macro args.

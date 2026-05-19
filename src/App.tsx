@@ -17,17 +17,23 @@ export default function App() {
   });
 
   return (
-    <div class="flex h-screen w-screen overflow-hidden bg-pinstripe-light text-[var(--color-foreground)]">
+    <div class="bg-pinstripe-light flex h-screen w-screen overflow-hidden text-[var(--color-foreground)]">
       {/* No custom drag region — Tauri's native macOS title bar (decorations:
-        * true in tauri.conf.json) handles dragging on its own. The previous
-        * fixed transparent drag region overlaid the pinstripe canvas at the
-        * top of the window and showed up as a striped artifact strip. */}
+       * true in tauri.conf.json) handles dragging on its own. The previous
+       * fixed transparent drag region overlaid the pinstripe canvas at the
+       * top of the window and showed up as a striped artifact strip. */}
       <Sidebar />
       <main id="main-content" tabindex="-1" class="flex-1 overflow-hidden outline-none">
         <Switch>
-          <Match when={uiStore.view === "find"}><FindTab /></Match>
-          <Match when={uiStore.view === "library"}><LibraryView /></Match>
-          <Match when={uiStore.view === "settings"}><SettingsView /></Match>
+          <Match when={uiStore.view === "find"}>
+            <FindTab />
+          </Match>
+          <Match when={uiStore.view === "library"}>
+            <LibraryView />
+          </Match>
+          <Match when={uiStore.view === "settings"}>
+            <SettingsView />
+          </Match>
         </Switch>
       </main>
       <WelcomeDialog />

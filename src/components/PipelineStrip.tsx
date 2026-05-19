@@ -37,20 +37,17 @@ export default function PipelineStrip() {
   // Show a small subtitle with which stages are still active.
   const activeCount = createMemo(() => {
     const stages = pipelineStore.stages;
-    return Object.values(stages).filter(
-      (s) => s.state === "started" || s.state === "progress"
-    ).length;
+    return Object.values(stages).filter((s) => s.state === "started" || s.state === "progress")
+      .length;
   });
 
   return (
     <div class="surface-raised-sm mx-4 mb-2 flex items-center gap-2 px-3 py-2">
-      <span class="text-[9px] font-semibold uppercase tracking-wider text-[var(--color-foreground-muted)] text-embossed shrink-0">
+      <span class="text-embossed shrink-0 text-[9px] font-semibold tracking-wider text-[var(--color-foreground-muted)] uppercase">
         Pipeline
       </span>
       <div class="flex flex-1 items-center gap-1 overflow-x-auto">
-        <For each={pipelineStore.ordered}>
-          {(stage) => <StageTile stage={stage} />}
-        </For>
+        <For each={pipelineStore.ordered}>{(stage) => <StageTile stage={stage} />}</For>
       </div>
       <Show when={activeCount() > 0}>
         <span class="ml-auto shrink-0 font-mono text-[9px] text-[var(--color-primary)]">
@@ -135,7 +132,7 @@ function StageTile(props: { stage: PipelineStage }) {
         <Loader2 size={10} class="animate-spin" style={{ color: "var(--color-primary)" }} />
       </Show>
       <span
-        class="text-[10px] font-medium leading-none"
+        class="text-[10px] leading-none font-medium"
         style={{
           color:
             tone() === "active"
@@ -148,9 +145,7 @@ function StageTile(props: { stage: PipelineStage }) {
         {meta.label}
       </span>
       <Show when={fraction() != null}>
-        <span class="font-mono text-[9px] text-[var(--color-foreground-muted)]">
-          {fraction()}%
-        </span>
+        <span class="font-mono text-[9px] text-[var(--color-foreground-muted)]">{fraction()}%</span>
       </Show>
     </div>
   );

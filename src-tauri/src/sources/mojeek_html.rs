@@ -140,6 +140,9 @@ mod tests {
         "#;
         let cap = RESULT_RE.captures(html).expect("matches");
         assert_eq!(&cap[1], "https://example.edu/papers/x.pdf");
-        assert_eq!(clean_title(cap.get(2).unwrap().as_str()), "Example Paper Title");
+        assert_eq!(
+            clean_title(cap.get(2).unwrap().as_str()),
+            "Example Paper Title"
+        );
     }
 }

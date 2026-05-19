@@ -27,6 +27,9 @@ async-trait = "0.1"
 # HTTP
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip"] }
 url = "2"
+# Local SearXNG-compatible HTTP server (in-process, no Docker).
+axum = "0.7"
+tower = "0.5"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -109,3 +112,14 @@ strip = true
 inherits = "release"
 codegen-units = 16
 lto = "thin"
+
+[lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+# These are noisy false-positives or stylistic preferences for this codebase.
+too_many_arguments = "allow"
+module_inception = "allow"
+needless_doctest_main = "allow"

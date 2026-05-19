@@ -35,10 +35,8 @@ impl MarginaliaHtmlSource {
 // Marginalia wraps each result in a `search-result` div; the title link
 // is the first <a href="..."> inside an <h2>.
 static RESULT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r#"(?is)<h2[^>]*>\s*<a\s+[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>\s*</h2>"#,
-    )
-    .unwrap()
+    Regex::new(r#"(?is)<h2[^>]*>\s*<a\s+[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>\s*</h2>"#)
+        .unwrap()
 });
 
 #[async_trait]

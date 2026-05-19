@@ -5,7 +5,6 @@ pub mod events;
 pub mod sources;
 pub mod util;
 
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -38,8 +37,27 @@ pub fn run() {
             commands::delete_model,
             commands::delete_library,
             commands::reset_ai_state,
+            commands::local_searxng_port,
         ])
-        .setup(|_app| Ok(()))
+        .setup(|app| {
+            // Start the in-process SearXNG-compatible HTTP server on a
+            // random localhost port. Once running, `SearxngPoolSource` and
+            // any external code can hit `http://127.0.0.1:<port>/search`
+            // without needing Docker or a Python SearXNG install.
+            let handle = app.handle().clone();
+            let client = std::sync::Arc::new(sources::make_client());
+            let meta_search = std::sync::Arc::new(sources::meta_search::MetaSearchSource::new(
+                client,
+                Some(handle),
+            ));
+            tauri::async_runtime::spawn(async move {
+                match sources::local_searxng::spawn_server(meta_search).await {
+                    Ok(port) => tracing::info!("local SearXNG listening on 127.0.0.1:{port}"),
+                    Err(e) => tracing::error!("failed to start local SearXNG: {e}"),
+                }
+            });
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running document-finder");
 }

@@ -21,10 +21,7 @@ pub async fn validate_url(raw: &str) -> Result<Url, String> {
     let url = Url::parse(raw).map_err(|e| format!("Invalid URL: {e}"))?;
 
     if url.scheme() != "https" {
-        return Err(format!(
-            "Rejected: scheme '{}' is not https",
-            url.scheme()
-        ));
+        return Err(format!("Rejected: scheme '{}' is not https", url.scheme()));
     }
 
     if !url.username().is_empty() || url.password().is_some() {
@@ -41,9 +38,7 @@ pub async fn validate_url(raw: &str) -> Result<Url, String> {
         .collect();
 
     if addrs.is_empty() {
-        return Err(format!(
-            "Rejected: '{host}' did not resolve to any address"
-        ));
+        return Err(format!("Rejected: '{host}' did not resolve to any address"));
     }
 
     for addr in &addrs {
@@ -65,10 +60,7 @@ pub fn validate_url_sync(raw: &str) -> Result<Url, String> {
     let url = Url::parse(raw).map_err(|e| format!("Invalid URL: {e}"))?;
 
     if url.scheme() != "https" {
-        return Err(format!(
-            "Rejected: scheme '{}' is not https",
-            url.scheme()
-        ));
+        return Err(format!("Rejected: scheme '{}' is not https", url.scheme()));
     }
 
     if !url.username().is_empty() || url.password().is_some() {

@@ -62,7 +62,8 @@ static STOPWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     .collect()
 });
 
-static WORD_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?:[A-Za-z][A-Za-z'-]+|\b\d{4}\b)").unwrap());
+static WORD_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?:[A-Za-z][A-Za-z'-]+|\b\d{4}\b)").unwrap());
 static SPLIT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)[,;]|\s+and\s+|\s+&\s+").unwrap());
 
 /// Strip filler words from a natural-language query.
@@ -104,7 +105,11 @@ pub fn safe_folder(query: &str) -> String {
     let trimmed = cleaned.trim().to_lowercase();
     let with_hyphens = HYPHEN_RUNS.replace_all(&trimmed, "-");
     let slug: String = with_hyphens.chars().take(48).collect();
-    let base = if slug.is_empty() { "library".to_string() } else { slug };
+    let base = if slug.is_empty() {
+        "library".to_string()
+    } else {
+        slug
+    };
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -147,7 +152,10 @@ mod tests {
         );
         // Timestamp suffix is at least 10 digits (Unix seconds since 2001).
         let suffix = slug.rsplit_once('-').unwrap().1;
-        assert!(suffix.parse::<u64>().is_ok(), "non-numeric suffix: {}", suffix);
+        assert!(
+            suffix.parse::<u64>().is_ok(),
+            "non-numeric suffix: {}",
+            suffix
+        );
     }
-
 }

@@ -41,7 +41,8 @@ async function refresh() {
     setState("models", list);
     // Embedding readiness is decoupled from the registry list — fastembed
     // owns its own model cache. Best-effort poll; ignore errors.
-    api.isEmbeddingLoaded()
+    api
+      .isEmbeddingLoaded()
       .then((loaded) => setState("embeddingLoaded", loaded))
       .catch(() => {});
   } catch (e) {
@@ -61,22 +62,19 @@ function patchStatus(modelId: string, mut: (m: ModelInfo) => void) {
     produce((arr) => {
       const m = arr.find((x) => x.id === modelId);
       if (m) mut(m);
-    })
+    }),
   );
 }
 
 async function ensureSubscribed() {
   if (unsubProgress && unsubStatus) return;
-  unsubProgress = await listen<ModelProgressPayload>(
-    "df:model_progress",
-    (ev) => {
-      const { model_id, downloaded, total, bytes_per_sec } = ev.payload;
-      setState("bytesPerSec", model_id, bytes_per_sec);
-      patchStatus(model_id, (m) => {
-        m.status = { kind: "downloading", downloaded, total };
-      });
-    }
-  );
+  unsubProgress = await listen<ModelProgressPayload>("df:model_progress", (ev) => {
+    const { model_id, downloaded, total, bytes_per_sec } = ev.payload;
+    setState("bytesPerSec", model_id, bytes_per_sec);
+    patchStatus(model_id, (m) => {
+      m.status = { kind: "downloading", downloaded, total };
+    });
+  });
   unsubStatus = await listen<ModelStatusPayload>("df:model_status", (ev) => {
     const { model_id, status, detail } = ev.payload;
     // Track non-disk activity events (embedding/llm_warming/etc) separately.
@@ -95,7 +93,12 @@ async function ensureSubscribed() {
       setTimeout(() => {
         const cur = state.activity[model_id];
         if (cur?.status === status && cur?.detail === detail) {
-          setState("activity", produce((a) => { delete a[model_id]; }));
+          setState(
+            "activity",
+            produce((a) => {
+              delete a[model_id];
+            }),
+          );
         }
       }, 5000);
       return;
@@ -174,9 +177,7 @@ export const modelsStore = {
   },
   /// Convenience: any LLM model in Ready status?
   get llmReady() {
-    return state.models.some(
-      (m) => m.kind === "llm" && m.status.kind === "ready"
-    );
+    return state.models.some((m) => m.kind === "llm" && m.status.kind === "ready");
   },
   /// Total disk usage across all downloaded models.
   get totalDiskBytes() {

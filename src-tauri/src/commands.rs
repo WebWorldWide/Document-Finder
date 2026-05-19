@@ -82,7 +82,12 @@ pub async fn start_run(
                 *cur = None;
             }
             if let Err(e) = result {
-                let _ = app2.emit(EV_ERROR, ErrorPayload { message: e.to_string() });
+                let _ = app2.emit(
+                    EV_ERROR,
+                    ErrorPayload {
+                        message: e.to_string(),
+                    },
+                );
             }
         });
     }
@@ -117,7 +122,9 @@ fn folder_size_bytes(path: &Path) -> u64 {
     };
     for entry in entries.flatten() {
         // Use symlink_metadata so we never follow symlinks (avoids cycles / traversal).
-        let Ok(meta) = entry.path().symlink_metadata() else { continue };
+        let Ok(meta) = entry.path().symlink_metadata() else {
+            continue;
+        };
         if meta.file_type().is_symlink() {
             continue;
         }
@@ -401,7 +408,6 @@ pub fn run_log_tail(max: Option<usize>) -> Result<Vec<serde_json::Value>, String
     Ok(runlog::read_tail(max.unwrap_or(200)))
 }
 
-
 #[tauri::command]
 pub fn reveal_in_finder(path: String) -> Result<(), String> {
     let raw = PathBuf::from(&path);
@@ -470,9 +476,7 @@ pub fn list_models(app: AppHandle, state: State<'_, AiState>) -> Result<Vec<Mode
     // AppHandle and State refs aren't UnwindSafe (they hold Arcs into mutex
     // chains); AssertUnwindSafe is appropriate because if a panic does occur
     // we're going to surface and bail, not continue using the borrowed state.
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        snapshot(&app, &state)
-    }));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| snapshot(&app, &state)));
     match result {
         Ok(list) => {
             tracing::info!("list_models: returning {} entries", list.len());
@@ -496,8 +500,8 @@ pub async fn download_model(
     state: State<'_, AiState>,
     model_id: String,
 ) -> Result<(), String> {
-    let entry = registry::find(&model_id)
-        .ok_or_else(|| format!("unknown model id: {}", model_id))?;
+    let entry =
+        registry::find(&model_id).ok_or_else(|| format!("unknown model id: {}", model_id))?;
 
     if state.is_downloading(&model_id) {
         return Err(format!("model {} is already downloading", model_id));
@@ -553,8 +557,8 @@ pub async fn delete_model(
     state: State<'_, AiState>,
     model_id: String,
 ) -> Result<(), String> {
-    let entry = registry::find(&model_id)
-        .ok_or_else(|| format!("unknown model id: {}", model_id))?;
+    let entry =
+        registry::find(&model_id).ok_or_else(|| format!("unknown model id: {}", model_id))?;
 
     // Cancel any in-flight download first.
     state.cancel_download(&model_id);
@@ -691,9 +695,18 @@ async fn force_remove_dir(path: &Path) -> Result<&'static str, String> {
 /// scratch. Called automatically by the frontend when an EV_ERROR event
 /// fires, so users can retry without restarting the app after an inference
 /// crash.
+/// Returns the bound port of the in-process SearXNG-compatible server.
+/// `None` if the server failed to bind on startup.
+#[tauri::command]
+pub fn local_searxng_port() -> Option<u16> {
+    crate::sources::local_searxng::local_port()
+}
+
 #[tauri::command]
 pub async fn reset_ai_state() -> Result<(), String> {
+    #[cfg(feature = "ai-embeddings")]
     crate::ai::embeddings::reset_embedding_model();
+    #[cfg(feature = "ai-llm")]
     crate::ai::llm::reset_llm_model();
     tracing::info!("AI state reset by user");
     Ok(())
@@ -729,7 +742,8 @@ pub async fn delete_library(path: String) -> Result<(), String> {
         return Err(msg);
     }
     let docs = dirs::document_dir().ok_or_else(|| {
-        let msg = "cannot resolve your Documents directory — delete refused for safety.".to_string();
+        let msg =
+            "cannot resolve your Documents directory — delete refused for safety.".to_string();
         tracing::warn!("delete_library: {}", msg);
         msg
     })?;

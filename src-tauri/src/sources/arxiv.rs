@@ -54,7 +54,9 @@ fn attr_val(e: &quick_xml::events::BytesStart, name: &[u8]) -> Option<String> {
     })
 }
 
-fn collect_links(e: &quick_xml::events::BytesStart) -> (Option<String>, Option<String>, Option<String>) {
+fn collect_links(
+    e: &quick_xml::events::BytesStart,
+) -> (Option<String>, Option<String>, Option<String>) {
     (
         attr_val(e, b"href"),
         attr_val(e, b"title"),
@@ -204,8 +206,8 @@ fn builder_to_doc(entry: EntryBuilder) -> Option<Document> {
 
     let mut pdf_url: Option<String> = None;
     for (href, title_attr, type_attr) in &entry.links {
-        let is_pdf = title_attr.as_deref() == Some("pdf")
-            || type_attr.as_deref() == Some("application/pdf");
+        let is_pdf =
+            title_attr.as_deref() == Some("pdf") || type_attr.as_deref() == Some("application/pdf");
         if is_pdf {
             pdf_url = href.clone();
             break;
@@ -226,7 +228,11 @@ fn builder_to_doc(entry: EntryBuilder) -> Option<Document> {
         source: "arxiv".to_string(),
         authors: entry.authors,
         year: year.filter(|s| !s.is_empty()),
-        abstract_: if summary.is_empty() { None } else { Some(summary) },
+        abstract_: if summary.is_empty() {
+            None
+        } else {
+            Some(summary)
+        },
         identifier: entry.id,
     })
 }
@@ -264,7 +270,8 @@ impl Source for ArxivSource {
                         ("max_results", &per_page.to_string()),
                     ])
                     .send()
-                    .await {
+                    .await
+                {
                     Ok(r) => match r.error_for_status() {
                         Ok(r) => match r.text().await {
                             Ok(t) => t,
@@ -280,8 +287,7 @@ impl Source for ArxivSource {
                 if n == 0 {
                     return None;
                 }
-                let docs: Vec<Document> =
-                    builders.into_iter().filter_map(builder_to_doc).collect();
+                let docs: Vec<Document> = builders.into_iter().filter_map(builder_to_doc).collect();
                 let next_done = n < per_page;
                 if !next_done {
                     tokio::time::sleep(PAGINATION_DELAY).await;
@@ -295,5 +301,68 @@ impl Source for ArxivSource {
         })
         .take(limit)
         .boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE_FEED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/2401.00001v1</id>
+    <updated>2024-01-01T00:00:00Z</updated>
+    <published>2024-01-01T00:00:00Z</published>
+    <title>Test Paper One</title>
+    <summary>The first abstract.</summary>
+    <author><name>Alice Author</name></author>
+    <author><name>Bob Builder</name></author>
+    <link href="http://arxiv.org/abs/2401.00001v1" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/2401.00001v1" rel="related" type="application/pdf"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00002v2</id>
+    <published>2023-12-15T00:00:00Z</published>
+    <title>Second &amp; Quoted "Title"</title>
+    <summary>Second abstract.</summary>
+    <author><name>Carol Coder</name></author>
+    <link href="http://arxiv.org/abs/2401.00002v2" rel="alternate" type="text/html"/>
+  </entry>
+</feed>"#;
+
+    #[test]
+    fn parses_two_entries_from_atom_feed() {
+        let entries = parse_feed(SAMPLE_FEED);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].title, "Test Paper One");
+        assert_eq!(entries[0].authors, vec!["Alice Author", "Bob Builder"]);
+        assert_eq!(entries[1].title, "Second & Quoted \"Title\"");
+        assert_eq!(entries[1].authors, vec!["Carol Coder"]);
+    }
+
+    #[test]
+    fn builder_to_doc_prefers_pdf_link() {
+        let entries = parse_feed(SAMPLE_FEED);
+        let doc = builder_to_doc(entries.into_iter().next().unwrap()).unwrap();
+        assert_eq!(doc.url, "http://arxiv.org/pdf/2401.00001v1");
+        assert_eq!(doc.source, "arxiv");
+        assert_eq!(doc.year.as_deref(), Some("2024"));
+    }
+
+    #[test]
+    fn builder_to_doc_synthesizes_pdf_url_when_missing() {
+        let entries = parse_feed(SAMPLE_FEED);
+        // Second entry has no pdf link — should be synthesized from the id.
+        let doc = builder_to_doc(entries.into_iter().nth(1).unwrap()).unwrap();
+        assert_eq!(doc.url, "https://arxiv.org/pdf/2401.00002v2.pdf");
+        assert_eq!(doc.year.as_deref(), Some("2023"));
+    }
+
+    #[test]
+    fn parses_empty_feed_to_empty_vec() {
+        let entries =
+            parse_feed("<?xml version=\"1.0\"?><feed xmlns=\"http://www.w3.org/2005/Atom\"/>");
+        assert!(entries.is_empty());
     }
 }

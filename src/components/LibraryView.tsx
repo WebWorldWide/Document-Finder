@@ -27,7 +27,8 @@ export default function LibraryView() {
     setLoading(true);
     setError(null);
 
-    api.listLibraries(root)
+    api
+      .listLibraries(root)
       .then((libs) => {
         if (!cancelled) {
           setLibraries(libs);
@@ -42,7 +43,9 @@ export default function LibraryView() {
         }
       });
 
-    onCleanup(() => { cancelled = true; });
+    onCleanup(() => {
+      cancelled = true;
+    });
   });
 
   async function handleExport(lib: LibraryInfo) {
@@ -67,7 +70,7 @@ export default function LibraryView() {
     setActionError(null);
     const ok = await ask(
       `Delete library "${lib.query ?? lib.name}"? This permanently removes ${lib.n_docs} document${lib.n_docs === 1 ? "" : "s"} and ${formatBytes(lib.size_bytes)} from disk. This cannot be undone.`,
-      { title: "Delete Library", kind: "warning" }
+      { title: "Delete Library", kind: "warning" },
     );
     if (!ok) return;
     // If the active library is the one being deleted, clear it first so the
@@ -96,13 +99,13 @@ export default function LibraryView() {
   return (
     <div class="flex h-full flex-col overflow-hidden">
       <div class="px-6 py-5 pt-10">
-        <h1 class="text-xl font-semibold text-embossed">Library</h1>
+        <h1 class="text-embossed text-xl font-semibold">Library</h1>
         <p class="mt-0.5 text-sm text-[var(--color-foreground-muted)]">
           Your saved research collections.
         </p>
       </div>
 
-      <div class="flex-1 overflow-y-auto px-6 pb-6 space-y-4">
+      <div class="flex-1 space-y-4 overflow-y-auto px-6 pb-6">
         {/* Action error (export or delete) */}
         <Show when={actionError()}>
           <div class="surface-raised-sm flex items-start justify-between gap-2 p-3 text-sm text-[var(--color-destructive)]">
@@ -137,11 +140,14 @@ export default function LibraryView() {
         </Show>
 
         <Show when={!loading() && !error() && libraries().length === 0}>
-          <div class="material-leather border-stitched-dark flex flex-col items-center justify-center py-16 text-center mx-auto max-w-md">
-            <div class="surface-pressed-sm mb-4 p-5" style={{ "border-radius": "9999px", background: "oklch(0.32 0.05 50)" }}>
+          <div class="material-leather border-stitched-dark mx-auto flex max-w-md flex-col items-center justify-center py-16 text-center">
+            <div
+              class="surface-pressed-sm mb-4 p-5"
+              style={{ "border-radius": "9999px", background: "oklch(0.32 0.05 50)" }}
+            >
               <Archive size={28} style={{ color: "oklch(0.85 0.05 50)" }} />
             </div>
-            <p class="text-sm font-semibold text-embossed-on-dark">No libraries yet</p>
+            <p class="text-embossed-on-dark text-sm font-semibold">No libraries yet</p>
             <p class="mt-1 text-sm" style={{ color: "oklch(0.85 0.05 50)" }}>
               Run a search to build your first collection.
             </p>
@@ -167,7 +173,7 @@ export default function LibraryView() {
                   <div
                     role="button"
                     tabindex="0"
-                    class="group p-4 cursor-pointer outline-none transition-all duration-200 hover:translate-y-[-2px]"
+                    class="group cursor-pointer p-4 transition-all duration-200 outline-none hover:translate-y-[-2px]"
                     classList={{
                       "surface-pressed": isActive(),
                       "material-paper border-stitched": !isActive(),

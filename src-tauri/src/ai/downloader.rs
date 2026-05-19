@@ -34,13 +34,7 @@ fn emit_status(app: &AppHandle, model_id: &str, status: &str, detail: Option<Str
     );
 }
 
-fn emit_progress(
-    app: &AppHandle,
-    model_id: &str,
-    downloaded: u64,
-    total: u64,
-    bytes_per_sec: u64,
-) {
+fn emit_progress(app: &AppHandle, model_id: &str, downloaded: u64, total: u64, bytes_per_sec: u64) {
     let _ = app.emit(
         EV_MODEL_PROGRESS,
         ModelProgressPayload {

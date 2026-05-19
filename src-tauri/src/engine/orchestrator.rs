@@ -150,22 +150,44 @@ pub async fn run_pipeline(
                         tracing::info!("LLM expanded query into {} extras", n);
                         sub_queries.extend(extras);
                     }
-                    emit_stage(&app, "llm_expand", "done", Some(n), None,
-                        if n > 0 { Some(format!("+{} sub-queries", n)) } else { None });
+                    emit_stage(
+                        &app,
+                        "llm_expand",
+                        "done",
+                        Some(n),
+                        None,
+                        if n > 0 {
+                            Some(format!("+{} sub-queries", n))
+                        } else {
+                            None
+                        },
+                    );
                 } else {
                     emit_stage(&app, "llm_expand", "done", None, None, None);
                 }
             } else {
-                emit_stage(&app, "llm_expand", "skipped", None, None,
-                    Some("LLM model not downloaded".into()));
+                emit_stage(
+                    &app,
+                    "llm_expand",
+                    "skipped",
+                    None,
+                    None,
+                    Some("LLM model not downloaded".into()),
+                );
             }
         } else {
             emit_stage(&app, "llm_expand", "skipped", None, None, None);
         }
     }
     #[cfg(not(feature = "ai-llm"))]
-    emit_stage(&app, "llm_expand", "skipped", None, None,
-        Some("LLM feature disabled at build time".into()));
+    emit_stage(
+        &app,
+        "llm_expand",
+        "skipped",
+        None,
+        None,
+        Some("LLM feature disabled at build time".into()),
+    );
 
     runlog::log(runlog::Event::RunStart {
         query: &req.query,
@@ -189,8 +211,7 @@ pub async fn run_pipeline(
 
     let db_path = folder.join("library.db");
     let run_id = {
-        let mgr = DbManager::new(&db_path)
-            .map_err(|e| anyhow::anyhow!("DB init failed: {}", e))?;
+        let mgr = DbManager::new(&db_path).map_err(|e| anyhow::anyhow!("DB init failed: {}", e))?;
         mgr.insert_run(&req.query, &folder.to_string_lossy())
             .map_err(|e| anyhow::anyhow!("failed to insert run: {}", e))?
         // mgr (and its !Send Connection) is dropped here before any .await
@@ -208,8 +229,18 @@ pub async fn run_pipeline(
     // the new EV_CANDIDATE event fires once per merged candidate after
     // ranking, with rejection reasons attached.
 
-    emit_stage(&app, "discovery", "started", None, None,
-        Some(format!("{} sources × {} sub-queries", req.sources.len(), sub_queries.len())));
+    emit_stage(
+        &app,
+        "discovery",
+        "started",
+        None,
+        None,
+        Some(format!(
+            "{} sources × {} sub-queries",
+            req.sources.len(),
+            sub_queries.len()
+        )),
+    );
 
     let dedup: Arc<AsyncMutex<Deduplicator>> = Arc::new(AsyncMutex::new(Deduplicator::new()));
     // Aggregate per-(sub_query) keyword set for ranking later.
@@ -373,8 +404,14 @@ pub async fn run_pipeline(
         let dlock = std::mem::take(&mut *dedup.lock().await);
         dlock.into_docs()
     };
-    emit_stage(&app, "discovery", "done", Some(merged.len() as u64), None,
-        Some(format!("{} unique candidates", merged.len())));
+    emit_stage(
+        &app,
+        "discovery",
+        "done",
+        Some(merged.len() as u64),
+        None,
+        Some(format!("{} unique candidates", merged.len())),
+    );
     let _ = app.emit(
         EV_FOUND_TOTAL,
         FoundTotalPayload {
@@ -407,8 +444,18 @@ pub async fn run_pipeline(
     emit_stage(&app, "rank", "started", None, None, None);
     let mut ranked: Vec<RankedDoc> = flag_rejects(rank_candidates(&all_keywords, merged));
     let kept_after_rank = ranked.iter().filter(|r| r.reject_reason.is_none()).count();
-    emit_stage(&app, "rank", "done", Some(kept_after_rank as u64), Some(ranked.len() as u64),
-        Some(format!("{} kept · {} rejected", kept_after_rank, ranked.len() - kept_after_rank)));
+    emit_stage(
+        &app,
+        "rank",
+        "done",
+        Some(kept_after_rank as u64),
+        Some(ranked.len() as u64),
+        Some(format!(
+            "{} kept · {} rejected",
+            kept_after_rank,
+            ranked.len() - kept_after_rank
+        )),
+    );
 
     // Tier 2: optional semantic reranking via local embedding model.
     // Falls back silently to Tier 1 if the model isn't available — the
@@ -416,7 +463,14 @@ pub async fn run_pipeline(
     #[cfg(feature = "ai-embeddings")]
     if req.use_semantic_rerank && !cancel.is_cancelled() {
         let to_rerank = ranked.len().min(100) as u64;
-        emit_stage(&app, "semantic_rerank", "started", None, Some(to_rerank), None);
+        emit_stage(
+            &app,
+            "semantic_rerank",
+            "started",
+            None,
+            Some(to_rerank),
+            None,
+        );
         let _ = app.emit(
             crate::events::EV_MODEL_STATUS,
             crate::events::ModelStatusPayload {
@@ -429,33 +483,63 @@ pub async fn run_pipeline(
         let app_for_rerank = app.clone();
         let mut taken: Vec<RankedDoc> = std::mem::take(&mut ranked);
         let result = tokio::task::spawn_blocking(move || {
-            let res = crate::ai::embeddings::rerank_blocking(&app_for_rerank, &query_for_rerank, &mut taken, 100);
+            let res = crate::ai::embeddings::rerank_blocking(
+                &app_for_rerank,
+                &query_for_rerank,
+                &mut taken,
+                100,
+            );
             (taken, res)
         })
         .await;
         match result {
             Ok((reranked, Ok(()))) => {
                 ranked = reranked;
-                emit_stage(&app, "semantic_rerank", "done", Some(to_rerank), Some(to_rerank), None);
+                emit_stage(
+                    &app,
+                    "semantic_rerank",
+                    "done",
+                    Some(to_rerank),
+                    Some(to_rerank),
+                    None,
+                );
             }
             Ok((reranked, Err(e))) => {
                 tracing::warn!("semantic rerank failed, falling back to Tier 1: {}", e);
                 ranked = reranked;
-                emit_stage(&app, "semantic_rerank", "skipped", None, None,
-                    Some("model not loaded — using lexical only".into()));
+                emit_stage(
+                    &app,
+                    "semantic_rerank",
+                    "skipped",
+                    None,
+                    None,
+                    Some("model not loaded — using lexical only".into()),
+                );
             }
             Err(e) => {
                 tracing::warn!("rerank task panicked: {}", e);
-                emit_stage(&app, "semantic_rerank", "skipped", None, None,
-                    Some(format!("rerank task panicked: {}", e)));
+                emit_stage(
+                    &app,
+                    "semantic_rerank",
+                    "skipped",
+                    None,
+                    None,
+                    Some(format!("rerank task panicked: {}", e)),
+                );
                 // ranked is empty here because of std::mem::take — that's fine
                 // because the task only panics after taking ownership.
             }
         }
     }
     #[cfg(not(feature = "ai-embeddings"))]
-    emit_stage(&app, "semantic_rerank", "skipped", None, None,
-        Some("embeddings feature disabled at build time".into()));
+    emit_stage(
+        &app,
+        "semantic_rerank",
+        "skipped",
+        None,
+        None,
+        Some("embeddings feature disabled at build time".into()),
+    );
     #[cfg(feature = "ai-embeddings")]
     if !req.use_semantic_rerank {
         emit_stage(&app, "semantic_rerank", "skipped", None, None, None);
@@ -529,24 +613,51 @@ pub async fn run_pipeline(
                         rejected_by_llm += 1;
                     }
                 }
-                emit_stage(&app, "llm_filter", "done", Some(rejected_by_llm),
+                emit_stage(
+                    &app,
+                    "llm_filter",
+                    "done",
+                    Some(rejected_by_llm),
                     Some(borderline.len() as u64),
-                    Some(format!("dropped {} of {} borderline", rejected_by_llm, borderline.len())));
+                    Some(format!(
+                        "dropped {} of {} borderline",
+                        rejected_by_llm,
+                        borderline.len()
+                    )),
+                );
             } else {
-                emit_stage(&app, "llm_filter", "skipped", None, None,
-                    Some("not enough kept candidates to filter".into()));
+                emit_stage(
+                    &app,
+                    "llm_filter",
+                    "skipped",
+                    None,
+                    None,
+                    Some("not enough kept candidates to filter".into()),
+                );
             }
         } else {
-            emit_stage(&app, "llm_filter", "skipped", None, None,
-                Some("LLM model not downloaded".into()));
+            emit_stage(
+                &app,
+                "llm_filter",
+                "skipped",
+                None,
+                None,
+                Some("LLM model not downloaded".into()),
+            );
         }
     } else {
         #[cfg(feature = "ai-llm")]
         emit_stage(&app, "llm_filter", "skipped", None, None, None);
     }
     #[cfg(not(feature = "ai-llm"))]
-    emit_stage(&app, "llm_filter", "skipped", None, None,
-        Some("LLM feature disabled at build time".into()));
+    emit_stage(
+        &app,
+        "llm_filter",
+        "skipped",
+        None,
+        None,
+        Some("LLM feature disabled at build time".into()),
+    );
 
     // Tier 4: optional citation-graph enrichment. Boosts papers that are
     // referenced or cited by other top-scoring candidates. Off by default
@@ -611,13 +722,32 @@ pub async fn run_pipeline(
         .map(|r| r.doc.doc)
         .collect();
 
-    emit_stage(&app, "download", "started", None, Some(candidates.len() as u64),
-        Some(format!("{} kept candidates", candidates.len())));
+    emit_stage(
+        &app,
+        "download",
+        "started",
+        None,
+        Some(candidates.len() as u64),
+        Some(format!("{} kept candidates", candidates.len())),
+    );
     if req.extract {
-        emit_stage(&app, "extract", "started", None, Some(candidates.len() as u64), None);
+        emit_stage(
+            &app,
+            "extract",
+            "started",
+            None,
+            Some(candidates.len() as u64),
+            None,
+        );
     } else {
-        emit_stage(&app, "extract", "skipped", None, None,
-            Some("text extraction disabled".into()));
+        emit_stage(
+            &app,
+            "extract",
+            "skipped",
+            None,
+            None,
+            Some("text extraction disabled".into()),
+        );
     }
 
     // -------- Phase 2: parallel downloads + parallel extraction --------
@@ -853,10 +983,23 @@ pub async fn run_pipeline(
         let c = counters.lock().await;
         *c
     };
-    emit_stage(&app, "download", "done", Some(done as u64), Some(total as u64),
-        Some(format!("{} saved · {} failed", done, failed)));
+    emit_stage(
+        &app,
+        "download",
+        "done",
+        Some(done as u64),
+        Some(total as u64),
+        Some(format!("{} saved · {} failed", done, failed)),
+    );
     if req.extract {
-        emit_stage(&app, "extract", "done", Some(done as u64), Some(total as u64), None);
+        emit_stage(
+            &app,
+            "extract",
+            "done",
+            Some(done as u64),
+            Some(total as u64),
+            None,
+        );
     }
 
     let folder_str = folder.to_string_lossy().to_string();

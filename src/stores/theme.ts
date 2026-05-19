@@ -32,7 +32,7 @@ export function applyTheme(t: Theme) {
 
 export const THEME_META: Record<Theme, { label: string; palette: string }> = {
   "warm-light": { label: "Warm", palette: "Light" },
-  "warm-dark":  { label: "Warm", palette: "Dark"  },
-  "apple-light":{ label: "Apple HIG", palette: "Light" },
-  "apple-dark": { label: "Apple HIG", palette: "Dark"  },
+  "warm-dark": { label: "Warm", palette: "Dark" },
+  "apple-light": { label: "Apple HIG", palette: "Light" },
+  "apple-dark": { label: "Apple HIG", palette: "Dark" },
 };

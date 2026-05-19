@@ -4,10 +4,10 @@ import { theme, applyTheme, THEME_META, type Theme } from "@/stores/theme";
 const THEMES: Theme[] = ["warm-light", "warm-dark", "apple-light", "apple-dark"];
 
 const SWATCHES: Record<Theme, { bg: string; surface: string; text: string; accent: string }> = {
-  "warm-light":  { bg: "#ede9e4", surface: "#e8e3de", text: "#2a2520", accent: "#3b5fd6" },
-  "warm-dark":   { bg: "#2a2520", surface: "#332e28", text: "#ece7e1", accent: "#7a96f0" },
+  "warm-light": { bg: "#ede9e4", surface: "#e8e3de", text: "#2a2520", accent: "#3b5fd6" },
+  "warm-dark": { bg: "#2a2520", surface: "#332e28", text: "#ece7e1", accent: "#7a96f0" },
   "apple-light": { bg: "#f2f2f7", surface: "#ffffff", text: "#1c1c1e", accent: "#007aff" },
-  "apple-dark":  { bg: "#1c1c1e", surface: "#2c2c2e", text: "#f2f2f7", accent: "#0a84ff" },
+  "apple-dark": { bg: "#1c1c1e", surface: "#2c2c2e", text: "#f2f2f7", accent: "#0a84ff" },
 };
 
 export default function ThemePicker() {
@@ -53,16 +53,10 @@ export default function ThemePicker() {
                 />
               </div>
               <div>
-                <div
-                  class="text-[11px] font-semibold leading-tight"
-                  style={{ color: sw.text }}
-                >
+                <div class="text-[11px] leading-tight font-semibold" style={{ color: sw.text }}>
                   {meta.label}
                 </div>
-                <div
-                  class="text-[10px] leading-tight opacity-70"
-                  style={{ color: sw.text }}
-                >
+                <div class="text-[10px] leading-tight opacity-70" style={{ color: sw.text }}>
                   {meta.palette}
                 </div>
               </div>

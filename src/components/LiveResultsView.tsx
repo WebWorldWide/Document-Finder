@@ -1,11 +1,6 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import { CheckCircle2, XCircle, ExternalLink, Download, AlertCircle } from "lucide-solid";
-import {
-  runStore,
-  type Candidate,
-  type CompletedItem,
-  type InFlight,
-} from "@/stores/run";
+import { runStore, type Candidate, type CompletedItem, type InFlight } from "@/stores/run";
 import { api } from "@/lib/tauri";
 import { formatBytes, SOURCE_LABELS, sourceColor } from "@/lib/utils";
 import PipelineStrip from "./PipelineStrip";
@@ -46,10 +41,16 @@ export default function LiveResultsView() {
   const allCandidates = createMemo(() => runStore.state.candidates);
   const inFlight = createMemo(() => Object.values(runStore.state.inFlight));
   const completedItems = createMemo(() =>
-    runStore.state.completed.filter((c) => c.status === "done").slice().reverse()
+    runStore.state.completed
+      .filter((c) => c.status === "done")
+      .slice()
+      .reverse(),
   );
   const failedItems = createMemo(() =>
-    runStore.state.completed.filter((c) => c.status === "failed").slice().reverse()
+    runStore.state.completed
+      .filter((c) => c.status === "failed")
+      .slice()
+      .reverse(),
   );
 
   const counts = createMemo(() => ({
@@ -128,7 +129,7 @@ export default function LiveResultsView() {
       </div>
 
       {/* Lane content */}
-      <div class="flex-1 overflow-y-auto px-4 pb-4 pt-1">
+      <div class="flex-1 overflow-y-auto px-4 pt-1 pb-4">
         <Show when={lane() === "found"}>
           <FoundLane
             candidates={allCandidates()}
@@ -136,9 +137,8 @@ export default function LiveResultsView() {
           />
           <Show when={showOverrideHint()}>
             <p class="mt-3 rounded-md border border-[var(--color-border)] bg-[var(--color-muted)] p-2 text-[10px] text-[var(--color-muted-foreground)]">
-              Override-download for individual rejected candidates is on the
-              roadmap. For now, drop a query that targets the specific paper
-              into the Find tab.
+              Override-download for individual rejected candidates is on the roadmap. For now, drop
+              a query that targets the specific paper into the Find tab.
             </p>
           </Show>
         </Show>
@@ -177,14 +177,12 @@ function LaneTab(props: {
     >
       {props.label}
       <span
-        class="ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-mono"
+        class="ml-1.5 rounded-full px-1.5 py-0.5 font-mono text-[10px]"
         style={{
           background: props.active
             ? "color-mix(in oklch, var(--color-primary) 18%, transparent)"
             : "var(--color-surface-deep)",
-          color: props.active
-            ? "var(--color-primary)"
-            : "var(--color-foreground-muted)",
+          color: props.active ? "var(--color-primary)" : "var(--color-foreground-muted)",
         }}
       >
         {props.count}
@@ -201,10 +199,7 @@ function EmptyState(props: { msg: string }) {
   );
 }
 
-function FoundLane(props: {
-  candidates: Candidate[];
-  onOverrideHint: () => void;
-}) {
+function FoundLane(props: { candidates: Candidate[]; onOverrideHint: () => void }) {
   // Sort: kept (by final_rank), then rejected (by score).
   const sorted = createMemo(() => {
     const kept = props.candidates.filter((c) => c.status === "kept");
@@ -218,8 +213,8 @@ function FoundLane(props: {
   return (
     <Show when={sorted().length > 0} fallback={<EmptyState msg="Waiting for results…" />}>
       {/* Single raised container — rows inside are flat with accent strips,
-        * eliminating the per-row shadow halo that was making the list look
-        * blotchy at high density. */}
+       * eliminating the per-row shadow halo that was making the list look
+       * blotchy at high density. */}
       <div class="surface-raised divide-y divide-[var(--color-border)]/50 overflow-hidden">
         <For each={visible()}>
           {(c) => <CandidateRow c={c} onOverrideHint={props.onOverrideHint} />}
@@ -227,18 +222,15 @@ function FoundLane(props: {
       </div>
       <Show when={sorted().length > visible().length}>
         <p class="mt-3 text-center text-[10px] text-[var(--color-foreground-muted)]">
-          Showing {visible().length} of {sorted().length} candidates. Filter or
-          narrow the query to see more.
+          Showing {visible().length} of {sorted().length} candidates. Filter or narrow the query to
+          see more.
         </p>
       </Show>
     </Show>
   );
 }
 
-function CandidateRow(props: {
-  c: Candidate;
-  onOverrideHint: () => void;
-}) {
+function CandidateRow(props: { c: Candidate; onOverrideHint: () => void }) {
   const isRejected = () => props.c.status !== "kept";
   return (
     <li
@@ -253,8 +245,7 @@ function CandidateRow(props: {
           : "3px solid var(--color-primary)",
       }}
       title={
-        props.c.reject_reason ??
-        `Rank #${props.c.final_rank} — score ${props.c.score.toFixed(3)}`
+        props.c.reject_reason ?? `Rank #${props.c.final_rank} — score ${props.c.score.toFixed(3)}`
       }
     >
       <div class="flex shrink-0 flex-col items-center gap-1 pt-0.5">
@@ -266,10 +257,7 @@ function CandidateRow(props: {
             </span>
           }
         >
-          <AlertCircle
-            size={12}
-            class="text-[var(--color-muted-foreground)]"
-          />
+          <AlertCircle size={12} class="text-[var(--color-muted-foreground)]" />
         </Show>
       </div>
 
@@ -294,18 +282,14 @@ function CandidateRow(props: {
         </div>
 
         <div class="mt-1 flex flex-wrap items-center gap-1.5">
-          <For each={props.c.sources}>
-            {(s) => <SourceBadge source={s} size="xs" />}
-          </For>
+          <For each={props.c.sources}>{(s) => <SourceBadge source={s} size="xs" />}</For>
 
           <Show when={props.c.year}>
-            <span class="text-[10px] text-[var(--color-muted-foreground)]">
-              {props.c.year}
-            </span>
+            <span class="text-[10px] text-[var(--color-muted-foreground)]">{props.c.year}</span>
           </Show>
 
           <Show when={props.c.authors.length > 0}>
-            <span class="truncate text-[10px] text-[var(--color-muted-foreground)] max-w-[200px]">
+            <span class="max-w-[200px] truncate text-[10px] text-[var(--color-muted-foreground)]">
               {props.c.authors.slice(0, 3).join(", ")}
               {props.c.authors.length > 3 ? " et al." : ""}
             </span>
@@ -314,7 +298,7 @@ function CandidateRow(props: {
           <ScoreBreakdown c={props.c} />
 
           <Show when={props.c.reject_reason}>
-            <span class="text-[10px] italic text-[var(--color-muted-foreground)]">
+            <span class="text-[10px] text-[var(--color-muted-foreground)] italic">
               · {props.c.reject_reason}
             </span>
           </Show>
@@ -337,10 +321,7 @@ function CandidateRow(props: {
 
 function DownloadingLane(props: { items: InFlight[] }) {
   return (
-    <Show
-      when={props.items.length > 0}
-      fallback={<EmptyState msg="Nothing downloading." />}
-    >
+    <Show when={props.items.length > 0} fallback={<EmptyState msg="Nothing downloading." />}>
       <div class="surface-raised divide-y divide-[var(--color-border)]/50 overflow-hidden">
         <For each={props.items}>
           {(item) => {
@@ -382,19 +363,15 @@ function DownloadingLane(props: { items: InFlight[] }) {
 
 function CompletedLane(props: { items: CompletedItem[] }) {
   return (
-    <Show
-      when={props.items.length > 0}
-      fallback={<EmptyState msg="No completed downloads yet." />}
-    >
+    <Show when={props.items.length > 0} fallback={<EmptyState msg="No completed downloads yet." />}>
       <div class="surface-raised divide-y divide-[var(--color-border)]/50 overflow-hidden">
         <For each={props.items.slice(0, MAX_VISIBLE_ROWS)}>
           {(item) => (
-            <div class="flex items-center gap-2 px-3 py-2 hover:bg-[var(--color-foreground)]/3" style={{ "border-left": "3px solid var(--color-success)" }}>
-              <CheckCircle2
-                size={13}
-                class="shrink-0"
-                style={{ color: "var(--color-success)" }}
-              />
+            <div
+              class="flex items-center gap-2 px-3 py-2 hover:bg-[var(--color-foreground)]/3"
+              style={{ "border-left": "3px solid var(--color-success)" }}
+            >
+              <CheckCircle2 size={13} class="shrink-0" style={{ color: "var(--color-success)" }} />
               <SourceBadge source={item.source} size="xs" />
               <span class="line-clamp-1 flex-1 text-[11px]">{item.title}</span>
               <Show when={item.absolute_path}>
@@ -415,18 +392,15 @@ function CompletedLane(props: { items: CompletedItem[] }) {
 
 function FailedLane(props: { items: CompletedItem[] }) {
   return (
-    <Show
-      when={props.items.length > 0}
-      fallback={<EmptyState msg="No failures." />}
-    >
+    <Show when={props.items.length > 0} fallback={<EmptyState msg="No failures." />}>
       <div class="surface-raised divide-y divide-[var(--color-border)]/50 overflow-hidden">
         <For each={props.items.slice(0, MAX_VISIBLE_ROWS)}>
           {(item) => (
-            <div class="flex items-start gap-2 px-3 py-2" style={{ "border-left": "3px solid var(--color-destructive)" }}>
-              <XCircle
-                size={13}
-                class="mt-0.5 shrink-0 text-[var(--color-destructive)]"
-              />
+            <div
+              class="flex items-start gap-2 px-3 py-2"
+              style={{ "border-left": "3px solid var(--color-destructive)" }}
+            >
+              <XCircle size={13} class="mt-0.5 shrink-0 text-[var(--color-destructive)]" />
               <SourceBadge source={item.source} size="xs" />
               <div class="min-w-0 flex-1">
                 <p class="line-clamp-1 text-[11px]">{item.title}</p>

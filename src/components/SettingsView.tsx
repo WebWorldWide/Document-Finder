@@ -1,5 +1,13 @@
 import { createSignal, onMount, Show, For } from "solid-js";
-import { FolderOpen, FileText, Loader2, CheckCircle2, Sparkles, RefreshCw, AlertCircle } from "lucide-solid";
+import {
+  FolderOpen,
+  FileText,
+  Loader2,
+  CheckCircle2,
+  Sparkles,
+  RefreshCw,
+  AlertCircle,
+} from "lucide-solid";
 import { api, type LogInfo } from "@/lib/tauri";
 import { settings, setSettings, saveSettings, type Quality } from "@/stores/settings";
 import { modelsStore } from "@/stores/models";
@@ -30,24 +38,26 @@ export default function SettingsView() {
   return (
     <div class="h-full overflow-y-auto">
       <div class="mx-auto max-w-2xl space-y-6 p-6 pt-10">
-        <h1 class="text-xl font-semibold text-embossed">Settings</h1>
+        <h1 class="text-embossed text-xl font-semibold">Settings</h1>
 
         {/* Appearance */}
         <section class="material-linen p-5">
-          <h2 class="mb-3 text-sm font-semibold text-embossed">Appearance</h2>
+          <h2 class="text-embossed mb-3 text-sm font-semibold">Appearance</h2>
           <p class="mb-3 text-xs leading-relaxed text-[var(--color-foreground-muted)]">
-            Choose a theme. Warm uses the skeumorphic iOS-6 palette.
-            Apple HIG uses the clean system look.
+            Choose a theme. Warm uses the skeumorphic iOS-6 palette. Apple HIG uses the clean system
+            look.
           </p>
           <ThemePicker />
         </section>
 
         {/* Discovery settings */}
         <section class="material-linen p-5">
-          <h2 class="mb-4 text-sm font-semibold text-embossed">Discovery</h2>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <h2 class="text-embossed mb-4 text-sm font-semibold">Discovery</h2>
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <label class="block">
-              <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">Per source</span>
+              <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">
+                Per source
+              </span>
               <input
                 type="number"
                 min="1"
@@ -55,10 +65,14 @@ export default function SettingsView() {
                 onInput={numInput("perSource")}
                 class="surface-input w-full px-3 py-2 text-sm outline-none"
               />
-              <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">Max docs per source per sub-query</p>
+              <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
+                Max docs per source per sub-query
+              </p>
             </label>
             <label class="block">
-              <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">Max total</span>
+              <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">
+                Max total
+              </span>
               <input
                 type="number"
                 min="1"
@@ -66,10 +80,14 @@ export default function SettingsView() {
                 onInput={numInput("maxTotal")}
                 class="surface-input w-full px-3 py-2 text-sm outline-none"
               />
-              <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">Hard cap across all sources</p>
+              <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
+                Hard cap across all sources
+              </p>
             </label>
             <label class="block">
-              <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">Parallel downloads</span>
+              <span class="mb-1 block text-xs font-medium text-[var(--color-muted-foreground)]">
+                Parallel downloads
+              </span>
               <input
                 type="number"
                 min="1"
@@ -78,7 +96,9 @@ export default function SettingsView() {
                 onInput={numInput("concurrency")}
                 class="surface-input w-full px-3 py-2 text-sm outline-none"
               />
-              <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">Higher = faster but more rate limits</p>
+              <p class="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
+                Higher = faster but more rate limits
+              </p>
             </label>
           </div>
         </section>
@@ -87,7 +107,7 @@ export default function SettingsView() {
         <section class="material-aluminum p-5">
           <div class="mb-1 flex items-center gap-2">
             <Sparkles size={14} class="text-[var(--color-primary)]" />
-            <h2 class="text-sm font-semibold text-embossed">AI Models</h2>
+            <h2 class="text-embossed text-sm font-semibold">AI Models</h2>
           </div>
           <Show when={modelsStore.totalDiskBytes > 0}>
             <p class="mb-2 text-[10px] text-[var(--color-muted-foreground)]">
@@ -95,14 +115,14 @@ export default function SettingsView() {
             </p>
           </Show>
           <p class="mb-3 text-xs leading-relaxed text-[var(--color-muted-foreground)]">
-            Local AI models power semantic reranking and LLM query expansion +
-            borderline filtering. Everything runs offline — no API keys, no
-            telemetry. Models can be deleted any time to reclaim disk.
+            Local AI models power semantic reranking and LLM query expansion + borderline filtering.
+            Everything runs offline — no API keys, no telemetry. Models can be deleted any time to
+            reclaim disk.
           </p>
 
           {/* Embedding model is managed by fastembed itself — no explicit
-            * download button. Show a passive status row so the user knows
-            * what's happening on first semantic search. */}
+           * download button. Show a passive status row so the user knows
+           * what's happening on first semantic search. */}
           <div class="surface-raised-subtle mb-3 flex items-center gap-2 px-3 py-2 text-[11px]">
             <Show
               when={modelsStore.state.embeddingLoaded}
@@ -122,17 +142,15 @@ export default function SettingsView() {
             </Show>
           </div>
           {/* Three explicit states: error → red banner + retry, loading →
-            * spinner, loaded → cards. Previously a single Show with a
-            * "Loading…" fallback masked rejected listModels() calls
-            * forever. */}
+           * spinner, loaded → cards. Previously a single Show with a
+           * "Loading…" fallback masked rejected listModels() calls
+           * forever. */}
           <Show when={modelsStore.state.error}>
             <div class="surface-raised-sm flex items-start gap-2 p-3 text-xs text-[var(--color-destructive)]">
               <AlertCircle size={14} class="mt-0.5 shrink-0" />
               <div class="flex-1">
                 <p class="font-medium">Couldn't load models</p>
-                <p class="mt-0.5 break-words opacity-90">
-                  {modelsStore.state.error}
-                </p>
+                <p class="mt-0.5 break-words opacity-90">{modelsStore.state.error}</p>
                 <button
                   onClick={() => void modelsStore.refresh()}
                   class="btn-tactile mt-2 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium"
@@ -144,15 +162,27 @@ export default function SettingsView() {
             </div>
           </Show>
 
-          <Show when={!modelsStore.state.error && modelsStore.state.loading && modelsStore.state.models.length === 0}>
+          <Show
+            when={
+              !modelsStore.state.error &&
+              modelsStore.state.loading &&
+              modelsStore.state.models.length === 0
+            }
+          >
             <div class="flex items-center gap-2 text-[11px] text-[var(--color-muted-foreground)]">
               <Loader2 size={12} class="animate-spin" />
               Loading…
             </div>
           </Show>
 
-          <Show when={!modelsStore.state.error && !modelsStore.state.loading && modelsStore.state.models.length === 0}>
-            <p class="text-[11px] italic text-[var(--color-muted-foreground)]">
+          <Show
+            when={
+              !modelsStore.state.error &&
+              !modelsStore.state.loading &&
+              modelsStore.state.models.length === 0
+            }
+          >
+            <p class="text-[11px] text-[var(--color-muted-foreground)] italic">
               The model registry is empty. This shouldn't happen — please file an issue.
             </p>
           </Show>
@@ -168,13 +198,13 @@ export default function SettingsView() {
 
         {/* Search quality — collapsed from 4 confusing toggles to one pill */}
         <section class="material-linen p-5">
-          <h2 class="mb-1 text-sm font-semibold text-embossed">Search Quality</h2>
+          <h2 class="text-embossed mb-1 text-sm font-semibold">Search Quality</h2>
           <p class="mb-4 text-xs leading-relaxed text-[var(--color-foreground-muted)]">
-            How hard the app works to rank your results. The keyword baseline
-            (TF-IDF, RRF, authority) always runs.
+            How hard the app works to rank your results. The keyword baseline (TF-IDF, RRF,
+            authority) always runs.
           </p>
 
-          <div class="surface-raised-sm flex items-center gap-1 p-1 mb-3">
+          <div class="surface-raised-sm mb-3 flex items-center gap-1 p-1">
             <QualityTab
               q="fast"
               label="Fast"
@@ -184,7 +214,9 @@ export default function SettingsView() {
             <QualityTab
               q="balanced"
               label="Balanced"
-              caption={modelsStore.embeddingReady ? "+ semantic rerank · ~5s" : "needs embedding model"}
+              caption={
+                modelsStore.embeddingReady ? "+ semantic rerank · ~5s" : "needs embedding model"
+              }
               active={settings.quality === "balanced"}
               disabled={!modelsStore.embeddingReady}
             />
@@ -198,9 +230,12 @@ export default function SettingsView() {
           </div>
 
           <p class="mb-4 text-[11px] leading-relaxed text-[var(--color-foreground-muted)]">
-            {settings.quality === "fast" && "Keyword scoring across all sources. Returns immediately. No models needed."}
-            {settings.quality === "balanced" && "Adds semantic reranking via the embedding model — top 100 results re-scored by query meaning, not just keyword overlap."}
-            {settings.quality === "thorough" && "Full AI pipeline: LLM generates extra sub-queries before discovery, semantic reranking, then LLM borderline-filter pass on the middle band. Several seconds slower."}
+            {settings.quality === "fast" &&
+              "Keyword scoring across all sources. Returns immediately. No models needed."}
+            {settings.quality === "balanced" &&
+              "Adds semantic reranking via the embedding model — top 100 results re-scored by query meaning, not just keyword overlap."}
+            {settings.quality === "thorough" &&
+              "Full AI pipeline: LLM generates extra sub-queries before discovery, semantic reranking, then LLM borderline-filter pass on the middle band. Several seconds slower."}
           </p>
 
           <RankingToggle
@@ -216,7 +251,7 @@ export default function SettingsView() {
 
         {/* Library folder */}
         <section class="material-paper border-stitched p-5">
-          <h2 class="mb-3 text-sm font-semibold text-embossed">Library Folder</h2>
+          <h2 class="text-embossed mb-3 text-sm font-semibold">Library Folder</h2>
           <label>
             <span class="sr-only">Library folder path</span>
             <input
@@ -233,26 +268,27 @@ export default function SettingsView() {
 
         {/* Web search */}
         <section class="material-linen p-5">
-          <h2 class="mb-1 text-sm font-semibold text-embossed">Web Search (no setup required)</h2>
+          <h2 class="text-embossed mb-1 text-sm font-semibold">Web Search (no setup required)</h2>
           <p class="mb-3 text-xs leading-relaxed text-[var(--color-foreground-muted)]">
-            Searches multiple web indexes in parallel — no Docker, no API keys,
-            no accounts needed.
+            Searches multiple web indexes in parallel — no Docker, no API keys, no accounts needed.
           </p>
-          <div class="surface-pressed-sm flex items-start gap-2 p-3 text-xs leading-relaxed mb-3">
-            <CheckCircle2 size={14} class="mt-0.5 shrink-0" style={{ color: "var(--color-success)" }} />
-            <span>
-              DuckDuckGo · Brave · Bing · Mojeek · Marginalia · Startpage
-            </span>
+          <div class="surface-pressed-sm mb-3 flex items-start gap-2 p-3 text-xs leading-relaxed">
+            <CheckCircle2
+              size={14}
+              class="mt-0.5 shrink-0"
+              style={{ color: "var(--color-success)" }}
+            />
+            <span>DuckDuckGo · Brave · Bing · Mojeek · Marginalia · Startpage</span>
           </div>
           <MetaSearchHealthBar />
         </section>
 
         {/* Run log */}
         <section class="material-paper border-stitched p-5">
-          <h2 class="mb-1 text-sm font-semibold text-embossed">Run Log</h2>
+          <h2 class="text-embossed mb-1 text-sm font-semibold">Run Log</h2>
           <p class="mb-4 text-xs text-[var(--color-muted-foreground)]">
-            Every query, source error, and download outcome is logged here.
-            Share this file when reporting issues.
+            Every query, source error, and download outcome is logged here. Share this file when
+            reporting issues.
           </p>
           <Show
             when={logInfo()}
@@ -280,7 +316,7 @@ export default function SettingsView() {
                   </button>
                   <button
                     onClick={async () => setLogInfo(await api.runLogInfo().catch(() => null))}
-                    class="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-accent)] transition-colors"
+                    class="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[var(--color-accent)]"
                   >
                     <FileText size={12} />
                     Refresh
@@ -304,10 +340,7 @@ function RankingToggle(props: {
   disabledHint?: string;
 }) {
   return (
-    <label
-      class="flex items-start gap-2 text-xs"
-      classList={{ "opacity-50": !!props.disabled }}
-    >
+    <label class="flex items-start gap-2 text-xs" classList={{ "opacity-50": !!props.disabled }}>
       <input
         type="checkbox"
         checked={props.checked && !props.disabled}
@@ -317,11 +350,9 @@ function RankingToggle(props: {
       />
       <span class="flex-1">
         <span class="font-medium">{props.label}</span>{" "}
-        <span class="text-[10px] text-[var(--color-muted-foreground)]">
-          · {props.detail}
-        </span>
+        <span class="text-[10px] text-[var(--color-muted-foreground)]">· {props.detail}</span>
         <Show when={props.disabled && props.disabledHint}>
-          <p class="mt-0.5 text-[10px] italic text-[var(--color-muted-foreground)]">
+          <p class="mt-0.5 text-[10px] text-[var(--color-muted-foreground)] italic">
             {props.disabledHint}
           </p>
         </Show>
@@ -355,7 +386,7 @@ function QualityTab(props: {
       classList={{ "is-active": props.active, "opacity-55 cursor-not-allowed": !!props.disabled }}
     >
       <div
-        class="text-[12px] font-semibold leading-tight"
+        class="text-[12px] leading-tight font-semibold"
         style={props.active ? { color: "var(--color-primary)" } : {}}
       >
         {props.label}

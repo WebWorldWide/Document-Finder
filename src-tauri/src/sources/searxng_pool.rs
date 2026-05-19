@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+use super::local_searxng;
 use super::{Document, Source};
 use crate::util::url_safety::validate_url;
 
@@ -93,13 +94,10 @@ async fn fetch_instances(client: &reqwest::Client) -> anyhow::Result<Vec<String>
         .await
         .map_err(|e| anyhow::anyhow!("SSRF check on INSTANCES_URL: {e}"))?;
 
-    let resp = tokio::time::timeout(
-        Duration::from_secs(15),
-        client.get(INSTANCES_URL).send(),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("timeout fetching instance list"))?
-    .map_err(|e| anyhow::anyhow!("fetch failed: {e}"))?;
+    let resp = tokio::time::timeout(Duration::from_secs(15), client.get(INSTANCES_URL).send())
+        .await
+        .map_err(|_| anyhow::anyhow!("timeout fetching instance list"))?
+        .map_err(|e| anyhow::anyhow!("fetch failed: {e}"))?;
 
     let list: InstanceList = resp
         .json()
@@ -134,7 +132,10 @@ async fn get_instances(client: &reqwest::Client) -> Vec<String> {
     // Check cache under lock — clone if fresh.
     let cached = {
         let guard = INSTANCE_CACHE.lock();
-        guard.as_ref().filter(|c| c.fetched_at.elapsed() < CACHE_TTL).cloned()
+        guard
+            .as_ref()
+            .filter(|c| c.fetched_at.elapsed() < CACHE_TTL)
+            .cloned()
     };
 
     if let Some(c) = cached {
@@ -161,6 +162,63 @@ async fn get_instances(client: &reqwest::Client) -> Vec<String> {
                 .unwrap_or_default()
         }
     }
+}
+
+/// Issue a SearXNG query to the in-process local server (no SSRF check
+/// needed — we control the URL and it is always 127.0.0.1).
+async fn query_local(
+    client: &reqwest::Client,
+    base_url: &str,
+    keywords: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<Document>> {
+    let search_url = format!("{base_url}/search");
+    let resp = tokio::time::timeout(
+        Duration::from_secs(15),
+        client
+            .get(&search_url)
+            .query(&[
+                ("q", keywords),
+                ("format", "json"),
+                ("pageno", "1"),
+                ("language", "en"),
+            ])
+            .send(),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("timeout querying local searxng"))?
+    .map_err(|e| anyhow::anyhow!("local request: {e}"))?;
+
+    #[derive(Deserialize)]
+    struct SearxResp {
+        results: Vec<SearxResult>,
+    }
+    #[derive(Deserialize)]
+    struct SearxResult {
+        url: String,
+        title: String,
+        content: Option<String>,
+    }
+
+    let body: SearxResp = resp
+        .json()
+        .await
+        .map_err(|e| anyhow::anyhow!("parse local searxng response: {e}"))?;
+
+    Ok(body
+        .results
+        .into_iter()
+        .take(limit)
+        .map(|r| Document {
+            title: r.title,
+            url: r.url,
+            source: "searxng_local".to_string(),
+            authors: vec![],
+            year: None,
+            abstract_: r.content,
+            identifier: None,
+        })
+        .collect())
 }
 
 /// Issue a SearXNG search query to one instance and return the raw results.
@@ -241,6 +299,26 @@ impl Source for SearxngPoolSource {
         limit: usize,
     ) -> BoxStream<'static, anyhow::Result<Document>> {
         let query = keywords.join(" ");
+
+        // Prefer the in-process SearXNG-compatible server when available.
+        // Bypasses public-instance fan-out entirely on success, which keeps
+        // us off third-party infrastructure for the common case.
+        if let Some(port) = local_searxng::local_port() {
+            let base_url = format!("http://127.0.0.1:{port}");
+            match query_local(&self.client, &base_url, &query, limit).await {
+                Ok(docs) if !docs.is_empty() => {
+                    tracing::debug!("searxng_pool: local server returned {} docs", docs.len());
+                    return stream::iter(docs.into_iter().map(Ok)).boxed();
+                }
+                Ok(_) => tracing::debug!(
+                    "searxng_pool: local server returned 0 docs; falling back to public pool"
+                ),
+                Err(e) => tracing::warn!(
+                    "searxng_pool: local server query failed ({e}); falling back to public pool"
+                ),
+            }
+        }
+
         let instances = get_instances(&self.client).await;
 
         if instances.is_empty() {

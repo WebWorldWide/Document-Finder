@@ -67,10 +67,7 @@ mod tests {
             clean_title("Attention <b>Is All</b> You Need &amp; More"),
             "Attention Is All You Need & More"
         );
-        assert_eq!(
-            clean_title("She&#39;s &nbsp; brilliant"),
-            "She's brilliant"
-        );
+        assert_eq!(clean_title("She&#39;s &nbsp; brilliant"), "She's brilliant");
     }
 
     #[test]

@@ -144,9 +144,7 @@ function apply(ev: DfEvent) {
       setState(
         produce((s) => {
           const { source, error, kind } = ev.payload;
-          const existing = s.sourceIssues.find(
-            (i) => i.source === source && i.kind === kind
-          );
+          const existing = s.sourceIssues.find((i) => i.source === source && i.kind === kind);
           if (existing) {
             existing.count += 1;
             existing.ts = Date.now();
@@ -159,7 +157,7 @@ function apply(ev: DfEvent) {
               { source, error, kind, count: 1, ts: Date.now() },
             ].slice(-50);
           }
-        })
+        }),
       );
       addLog("warn", `   ${ev.payload.source}: ${ev.payload.error}`);
       break;
@@ -185,7 +183,7 @@ function apply(ev: DfEvent) {
             total: 0,
           };
           s.active = Object.keys(s.inFlight).length;
-        })
+        }),
       );
       break;
 
@@ -214,7 +212,7 @@ function apply(ev: DfEvent) {
           s.failed = ev.payload.failed;
           s.total = ev.payload.total;
           s.completed = [...s.completed, item].slice(-500);
-        })
+        }),
       );
       break;
     }
@@ -235,7 +233,7 @@ function apply(ev: DfEvent) {
           s.failed = ev.payload.failed;
           s.total = ev.payload.total;
           s.completed = [...s.completed, item].slice(-500);
-        })
+        }),
       );
       break;
     }
@@ -256,7 +254,7 @@ function apply(ev: DfEvent) {
         ev.type === "cancelled" ? "warn" : "info",
         ev.type === "cancelled"
           ? `Cancelled. Saved ${ev.payload.done} file(s).`
-          : `Done. ${ev.payload.done} saved, ${ev.payload.failed} failed.`
+          : `Done. ${ev.payload.done} saved, ${ev.payload.failed} failed.`,
       );
       break;
 
@@ -278,7 +276,7 @@ function apply(ev: DfEvent) {
           } else {
             s.candidates.push(ev.payload);
           }
-        })
+        }),
       );
       break;
 
@@ -290,7 +288,7 @@ function apply(ev: DfEvent) {
       });
       addLog(
         "info",
-        `Ranked ${ev.payload.total_candidates} candidate(s): ${ev.payload.kept} kept, ${ev.payload.rejected} rejected`
+        `Ranked ${ev.payload.total_candidates} candidate(s): ${ev.payload.kept} kept, ${ev.payload.rejected} rejected`,
       );
       break;
   }
@@ -347,9 +345,7 @@ export const runStore = {
     return state;
   },
   get overallPct() {
-    return state.total > 0
-      ? Math.round(((state.done + state.failed) / state.total) * 100)
-      : 0;
+    return state.total > 0 ? Math.round(((state.done + state.failed) / state.total) * 100) : 0;
   },
   apply,
   startSearch,

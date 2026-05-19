@@ -78,18 +78,34 @@ pub struct SourceErrorPayload {
 /// we don't need precision, just stable buckets.
 pub fn classify_source_error(msg: &str) -> &'static str {
     let lower = msg.to_lowercase();
-    if lower.contains("429") || lower.contains("rate limit") || lower.contains("too many requests") {
+    if lower.contains("429") || lower.contains("rate limit") || lower.contains("too many requests")
+    {
         "rate_limit"
-    } else if lower.contains("403") || lower.contains("401") || lower.contains("forbidden")
-        || lower.contains("unauthorized") || lower.contains("blocked") {
+    } else if lower.contains("403")
+        || lower.contains("401")
+        || lower.contains("forbidden")
+        || lower.contains("unauthorized")
+        || lower.contains("blocked")
+    {
         "forbidden"
-    } else if lower.contains("500") || lower.contains("502") || lower.contains("503")
-        || lower.contains("504") || lower.contains("server error") {
+    } else if lower.contains("500")
+        || lower.contains("502")
+        || lower.contains("503")
+        || lower.contains("504")
+        || lower.contains("server error")
+    {
         "server_error"
-    } else if lower.contains("timeout") || lower.contains("timed out") || lower.contains("operation took") {
+    } else if lower.contains("timeout")
+        || lower.contains("timed out")
+        || lower.contains("operation took")
+    {
         "timeout"
-    } else if lower.contains("parse") || lower.contains("regex") || lower.contains("decode")
-        || lower.contains("non-json") || lower.contains("missing") {
+    } else if lower.contains("parse")
+        || lower.contains("regex")
+        || lower.contains("decode")
+        || lower.contains("non-json")
+        || lower.contains("missing")
+    {
         "parse_error"
     } else {
         "other"
@@ -227,4 +243,58 @@ pub struct MetaSearchHealthPayload {
     pub status: String,
     pub result_count: usize,
     pub latency_ms: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_source_error;
+
+    #[test]
+    fn classifies_rate_limit_bucket() {
+        assert_eq!(classify_source_error("429 Too Many Requests"), "rate_limit");
+        assert_eq!(classify_source_error("rate limit exceeded"), "rate_limit");
+    }
+
+    #[test]
+    fn classifies_forbidden_bucket() {
+        assert_eq!(classify_source_error("HTTP 403 forbidden"), "forbidden");
+        assert_eq!(classify_source_error("blocked by upstream"), "forbidden");
+        assert_eq!(classify_source_error("401 Unauthorized"), "forbidden");
+    }
+
+    #[test]
+    fn classifies_server_error_bucket() {
+        assert_eq!(
+            classify_source_error("HTTP 502 Bad Gateway"),
+            "server_error"
+        );
+        assert_eq!(
+            classify_source_error("upstream returned 503"),
+            "server_error"
+        );
+        assert_eq!(
+            classify_source_error("internal server error"),
+            "server_error"
+        );
+    }
+
+    #[test]
+    fn classifies_timeout_bucket() {
+        assert_eq!(classify_source_error("connection timed out"), "timeout");
+        assert_eq!(classify_source_error("operation took 30s"), "timeout");
+    }
+
+    #[test]
+    fn classifies_parse_error_bucket() {
+        assert_eq!(classify_source_error("failed to parse JSON"), "parse_error");
+        assert_eq!(
+            classify_source_error("missing field 'title'"),
+            "parse_error"
+        );
+    }
+
+    #[test]
+    fn falls_through_to_other() {
+        assert_eq!(classify_source_error("some weird unknown failure"), "other");
+    }
 }

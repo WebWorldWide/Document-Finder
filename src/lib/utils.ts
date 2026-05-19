@@ -79,8 +79,6 @@ export const META_SEARCH_COVERED: SourceId[] = [
 export function sourceColor(source: string): string {
   // Strip the `meta_search/<engine>` prefix so candidate badges still color
   // by the originating engine.
-  const key = source.startsWith("meta_search/")
-    ? source.slice("meta_search/".length)
-    : source;
+  const key = source.startsWith("meta_search/") ? source.slice("meta_search/".length) : source;
   return `var(--color-source-${key.replace(/-/g, "_")}, oklch(0.7 0.1 270))`;
 }

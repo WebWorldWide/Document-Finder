@@ -73,12 +73,7 @@ pub fn rank_candidates(query_terms: &[String], candidates: Vec<MergedDoc>) -> Ve
     let mut tokenized: Vec<(Vec<String>, Vec<String>)> = Vec::with_capacity(candidates.len());
     for c in &candidates {
         let title_tokens = tokenize(&c.doc.title);
-        let abstract_tokens = c
-            .doc
-            .abstract_
-            .as_deref()
-            .map(tokenize)
-            .unwrap_or_default();
+        let abstract_tokens = c.doc.abstract_.as_deref().map(tokenize).unwrap_or_default();
         // Document frequency: each unique token in the doc counts once.
         let mut seen_in_doc: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for tok in title_tokens.iter().chain(abstract_tokens.iter()) {
@@ -134,7 +129,11 @@ pub fn rank_candidates(query_terms: &[String], candidates: Vec<MergedDoc>) -> Ve
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| b.rrf.partial_cmp(&a.rrf).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| {
+                b.rrf
+                    .partial_cmp(&a.rrf)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .then_with(|| {
                 b.authority
                     .partial_cmp(&a.authority)
@@ -160,10 +159,7 @@ pub fn flag_rejects(mut ranked: Vec<RankedDoc>) -> Vec<RankedDoc> {
 
     for r in &mut ranked {
         if r.tfidf < cutoff {
-            r.reject_reason = Some(format!(
-                "TF-IDF {:.2} below cutoff {:.2}",
-                r.tfidf, cutoff
-            ));
+            r.reject_reason = Some(format!("TF-IDF {:.2} below cutoff {:.2}", r.tfidf, cutoff));
         }
     }
     ranked
@@ -213,8 +209,7 @@ mod tests {
         // Different titles to avoid TF-IDF tie; equal lexical match.
         single.doc.title = "Single Source Match".into();
         multi.doc.title = "Multi Source Match".into();
-        let ranked =
-            rank_candidates(&["match".into()], vec![single.clone(), multi.clone()]);
+        let ranked = rank_candidates(&["match".into()], vec![single.clone(), multi.clone()]);
         assert_eq!(ranked[0].doc.doc.title, "Multi Source Match");
     }
 
@@ -230,10 +225,7 @@ mod tests {
             merged("Many Civil War Civil War Primary", None, "web", 1),
             merged("Totally Off Topic Pottery", None, "web", 1),
         ];
-        let ranked = flag_rejects(rank_candidates(
-            &["civil".into(), "war".into()],
-            cands,
-        ));
+        let ranked = flag_rejects(rank_candidates(&["civil".into(), "war".into()], cands));
         assert!(ranked.iter().any(|r| r.reject_reason.is_some()));
     }
 }

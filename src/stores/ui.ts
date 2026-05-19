@@ -10,11 +10,17 @@ const [activeLibrary, setActiveLibrary] = createSignal<LibraryInfo | null>(null)
 const [knownLibraries, setKnownLibraries] = createSignal<LibraryInfo[]>([]);
 
 export const uiStore = {
-  get view() { return view(); },
+  get view() {
+    return view();
+  },
   setView,
-  get activeLibrary() { return activeLibrary(); },
+  get activeLibrary() {
+    return activeLibrary();
+  },
   setActiveLibrary,
-  get knownLibraries() { return knownLibraries(); },
+  get knownLibraries() {
+    return knownLibraries();
+  },
   setKnownLibraries,
   /// Aggregate stats across all loaded libraries — count + total bytes + total docs.
   get lifetimeStats() {

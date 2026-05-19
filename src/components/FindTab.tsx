@@ -1,7 +1,15 @@
 import { createSignal, Show, For, createMemo } from "solid-js";
 import {
-  Search, X, FolderOpen, BookOpen, Loader2, AlertTriangle, Archive,
-  ChevronUp, ChevronDown, Sliders,
+  Search,
+  X,
+  FolderOpen,
+  BookOpen,
+  Loader2,
+  AlertTriangle,
+  Archive,
+  ChevronUp,
+  ChevronDown,
+  Sliders,
 } from "lucide-solid";
 import LiveResultsView from "./LiveResultsView";
 import ModelStatusBadge from "./ModelStatusBadge";
@@ -15,17 +23,23 @@ import { ALL_SOURCES, META_SEARCH_COVERED, SOURCE_LABELS, type SourceId } from "
 // avoid clutter — they're still selectable from the "Individual engines"
 // expander when meta_search is off or the user wants surgical control.
 const PRIMARY_SOURCES: readonly SourceId[] = ALL_SOURCES.filter(
-  (s) => !META_SEARCH_COVERED.includes(s)
+  (s) => !META_SEARCH_COVERED.includes(s),
 );
 
 function humanIssueKind(kind: string): string {
   switch (kind) {
-    case "rate_limit": return "rate limited";
-    case "forbidden": return "blocked";
-    case "server_error": return "server error";
-    case "timeout": return "timed out";
-    case "parse_error": return "parse";
-    default: return "issue";
+    case "rate_limit":
+      return "rate limited";
+    case "forbidden":
+      return "blocked";
+    case "server_error":
+      return "server error";
+    case "timeout":
+      return "timed out";
+    case "parse_error":
+      return "parse";
+    default:
+      return "issue";
   }
 }
 
@@ -51,11 +65,10 @@ export default function FindTab() {
       rs().running ||
       rs().candidates.length > 0 ||
       Object.keys(rs().inFlight).length > 0 ||
-      rs().completed.length > 0
+      rs().completed.length > 0,
   );
   const issueCount = () =>
-    rs().sourceIssues.length +
-    rs().completed.filter((c) => c.status === "failed").length;
+    rs().sourceIssues.length + rs().completed.filter((c) => c.status === "failed").length;
   const hasIssues = () => issueCount() > 0;
   const failedItems = () => rs().completed.filter((c) => c.status === "failed");
 
@@ -118,9 +131,9 @@ export default function FindTab() {
 
       {/* Optional collapsed-options panel */}
       <Show when={showOptions()}>
-        <div class="surface-pressed-sm mx-4 mb-2 px-4 py-3 space-y-2">
+        <div class="surface-pressed-sm mx-4 mb-2 space-y-2 px-4 py-3">
           <div class="flex flex-wrap items-center gap-1.5">
-            <span class="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-foreground-muted)] mr-2">
+            <span class="mr-2 text-[10px] font-semibold tracking-wider text-[var(--color-foreground-muted)] uppercase">
               Sources
             </span>
             <For each={PRIMARY_SOURCES}>
@@ -187,36 +200,36 @@ export default function FindTab() {
       <div class="flex-1 overflow-hidden">
         <Show
           when={hasRunResults()}
-          fallback={
-            <WelcomeBody
-              onPickExample={(ex) => setQuery(ex)}
-            />
-          }
+          fallback={<WelcomeBody onPickExample={(ex) => setQuery(ex)} />}
         >
           <div class="flex h-full flex-col">
             {/* Status row + post-run actions — raised pills on canvas */}
             <div class="flex flex-wrap items-center gap-2 px-4 py-3 text-[11px]">
-              <span class="surface-raised-xs px-3 py-1.5 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
-                <strong class="text-[var(--color-foreground)]">{rs().found}</strong>{" "}
-                found
+              <span
+                class="surface-raised-xs px-3 py-1.5 text-[var(--color-foreground-muted)]"
+                style={{ "border-radius": "var(--radius-pill)" }}
+              >
+                <strong class="text-[var(--color-foreground)]">{rs().found}</strong> found
               </span>
-              <span class="surface-raised-xs px-3 py-1.5 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
-                <strong style={{ color: "var(--color-success)" }}>{rs().done}</strong>{" "}
-                saved
+              <span
+                class="surface-raised-xs px-3 py-1.5 text-[var(--color-foreground-muted)]"
+                style={{ "border-radius": "var(--radius-pill)" }}
+              >
+                <strong style={{ color: "var(--color-success)" }}>{rs().done}</strong> saved
               </span>
               <Show when={rs().failed > 0}>
-                <span class="surface-raised-xs px-3 py-1.5 text-[var(--color-foreground-muted)]" style={{ "border-radius": "var(--radius-pill)" }}>
-                  <strong class="text-[var(--color-destructive)]">
-                    {rs().failed}
-                  </strong>{" "}
-                  failed
+                <span
+                  class="surface-raised-xs px-3 py-1.5 text-[var(--color-foreground-muted)]"
+                  style={{ "border-radius": "var(--radius-pill)" }}
+                >
+                  <strong class="text-[var(--color-destructive)]">{rs().failed}</strong> failed
                 </span>
               </Show>
               <ModelStatusBadge />
 
               <Show when={rs().total > 0}>
                 <div class="ml-auto flex items-center gap-2">
-                  <span class="text-[10px] font-mono text-[var(--color-foreground-muted)]">
+                  <span class="font-mono text-[10px] text-[var(--color-foreground-muted)]">
                     {runStore.overallPct}%
                   </span>
                   <div class="surface-pressed-sm h-1.5 w-32 overflow-hidden">
@@ -320,22 +333,23 @@ export default function FindTab() {
                   </span>
                 </button>
                 <Show when={showIssues()}>
-                  <div class="space-y-1 pb-3 pt-1">
+                  <div class="space-y-1 pt-1 pb-3">
                     <For each={rs().sourceIssues}>
                       {(issue) => (
                         <div class="flex items-baseline gap-2 text-[11px]">
-                          <span class="shrink-0 font-medium text-amber-600">
-                            {issue.source}
-                          </span>
-                          <span class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-mono"
+                          <span class="shrink-0 font-medium text-amber-600">{issue.source}</span>
+                          <span
+                            class="shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[9px]"
                             style={{
-                              "background-color": "color-mix(in oklch, var(--color-foreground-muted) 18%, transparent)",
+                              "background-color":
+                                "color-mix(in oklch, var(--color-foreground-muted) 18%, transparent)",
                               color: "var(--color-foreground-muted)",
                             }}
                           >
-                            {humanIssueKind(issue.kind)}{issue.count > 1 ? ` ×${issue.count}` : ""}
+                            {humanIssueKind(issue.kind)}
+                            {issue.count > 1 ? ` ×${issue.count}` : ""}
                           </span>
-                          <span class="text-[var(--color-foreground-muted)] truncate">
+                          <span class="truncate text-[var(--color-foreground-muted)]">
                             {issue.error}
                           </span>
                         </div>
@@ -347,9 +361,7 @@ export default function FindTab() {
                           <span class="shrink-0 font-medium text-[var(--color-destructive)]">
                             {item.title.slice(0, 40)}
                           </span>
-                          <span class="text-[var(--color-foreground-muted)]">
-                            {item.error}
-                          </span>
+                          <span class="text-[var(--color-foreground-muted)]">{item.error}</span>
                         </div>
                       )}
                     </For>
@@ -375,7 +387,7 @@ function FullHeader(props: {
   setShowOptions: (v: boolean) => void;
 }) {
   return (
-    <div class="p-6 pt-10 space-y-4">
+    <div class="space-y-4 p-6 pt-10">
       {/* Inset query input */}
       <div class="relative">
         <textarea
@@ -392,7 +404,7 @@ function FullHeader(props: {
             }
           }}
         />
-        <div class="absolute right-3 top-3 text-[var(--color-foreground-muted)]">
+        <div class="absolute top-3 right-3 text-[var(--color-foreground-muted)]">
           <Search size={16} />
         </div>
       </div>
@@ -455,20 +467,14 @@ function FullHeader(props: {
       </div>
 
       <Show when={settings.selectedSources.length === 0}>
-        <p class="text-xs text-[var(--color-destructive)]">
-          Select at least one source to search.
-        </p>
+        <p class="text-xs text-[var(--color-destructive)]">Select at least one source to search.</p>
       </Show>
 
       {/* Primary action — raised, depresses on click */}
       <div class="flex items-center gap-3">
         <button
           onClick={props.onSearch}
-          disabled={
-            !props.query.trim() ||
-            settings.selectedSources.length === 0 ||
-            props.running
-          }
+          disabled={!props.query.trim() || settings.selectedSources.length === 0 || props.running}
           class="btn-tactile flex items-center gap-2 px-6 py-2.5 text-sm font-semibold"
           style={{
             background: "var(--color-primary)",
@@ -507,7 +513,7 @@ function CompactHeader(props: {
             }
           }}
         />
-        <div class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-foreground-muted)]">
+        <div class="absolute top-1/2 right-2.5 -translate-y-1/2 text-[var(--color-foreground-muted)]">
           <Search size={12} />
         </div>
       </div>
@@ -536,9 +542,7 @@ function CompactHeader(props: {
       >
         <button
           onClick={props.onSearch}
-          disabled={
-            !props.query.trim() || settings.selectedSources.length === 0
-          }
+          disabled={!props.query.trim() || settings.selectedSources.length === 0}
           class="btn-tactile flex items-center gap-1 px-3 py-1.5 text-[12px] font-semibold"
           style={{ background: "var(--color-primary)", color: "white" }}
         >
@@ -559,13 +563,14 @@ const PIPELINE_STAGES: { label: string; detail: string }[] = [
 
 function WelcomeBody(props: { onPickExample: (ex: string) => void }) {
   return (
-    <div class="flex h-full items-center justify-center overflow-y-auto p-6 scroll-inset">
-      <div class="material-linen border-stitched max-w-2xl w-full p-8 space-y-6">
-        <div class="text-center space-y-2">
-          <h2 class="text-lg font-semibold text-embossed">Find documents anywhere</h2>
-          <p class="text-sm text-[var(--color-foreground-muted)] leading-relaxed">
+    <div class="scroll-inset flex h-full items-center justify-center overflow-y-auto p-6">
+      <div class="material-linen border-stitched w-full max-w-2xl space-y-6 p-8">
+        <div class="space-y-2 text-center">
+          <h2 class="text-embossed text-lg font-semibold">Find documents anywhere</h2>
+          <p class="text-sm leading-relaxed text-[var(--color-foreground-muted)]">
             Pick a source set, type a query, and watch results stream in.
-            <br />Built-in meta-search hits 6 web engines in parallel — no setup.
+            <br />
+            Built-in meta-search hits 6 web engines in parallel — no setup.
           </p>
         </div>
 
@@ -582,7 +587,7 @@ function WelcomeBody(props: { onPickExample: (ex: string) => void }) {
           </For>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-4">
           <For each={PIPELINE_STAGES}>
             {(stage, i) => (
               <div class="surface-raised-subtle surface-bevel-sm p-3 text-center">
@@ -590,9 +595,7 @@ function WelcomeBody(props: { onPickExample: (ex: string) => void }) {
                   <span class="font-mono text-[10px] text-[var(--color-foreground-muted)]">
                     {String(i() + 1).padStart(2, "0")}
                   </span>
-                  <span class="text-[11px] font-semibold text-embossed">
-                    {stage.label}
-                  </span>
+                  <span class="text-embossed text-[11px] font-semibold">{stage.label}</span>
                 </div>
                 <p class="text-[9.5px] leading-snug text-[var(--color-foreground-muted)]">
                   {stage.detail}

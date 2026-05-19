@@ -53,17 +53,17 @@ function migrateQuality(saved: Record<string, unknown>): Quality {
 }
 
 export const [settings, setSettings] = createStore({
-  libraryRoot:     safeStr(saved.libraryRoot, ""),
-  perSource:       posInt(saved.perSource, 100),
-  maxTotal:        posInt(saved.maxTotal, 500),
-  concurrency:     posInt(saved.concurrency, 8),
+  libraryRoot: safeStr(saved.libraryRoot, ""),
+  perSource: posInt(saved.perSource, 100),
+  maxTotal: posInt(saved.maxTotal, 500),
+  concurrency: posInt(saved.concurrency, 8),
   selectedSources: safeSources(saved.selectedSources),
   useCitationGraph: safeBool(saved.useCitationGraph, false),
   /// Search quality preset — replaces the previous useSemanticRerank /
   /// useLlmExpansion / useLlmFilter trio. See `qualityToFlags` for the
   /// concrete flag mapping.
-  quality:         migrateQuality(saved),
-  llmModelId:      safeStr(saved.llmModelId, "qwen2.5-3b-instruct-q4_k_m"),
+  quality: migrateQuality(saved),
+  llmModelId: safeStr(saved.llmModelId, "qwen2.5-3b-instruct-q4_k_m"),
   // Whether to dismiss the first-run AI download prompt (sticky once dismissed)
   aiOnboardingDismissed: safeBool(saved.aiOnboardingDismissed, false),
 });
@@ -87,7 +87,8 @@ export function qualityToFlags(q: Quality): {
 }
 
 if (!settings.libraryRoot) {
-  api.defaultLibraryDir()
+  api
+    .defaultLibraryDir()
     .then(({ library_root }) => setSettings("libraryRoot", library_root))
     .catch(() => {});
 }
@@ -98,7 +99,7 @@ export function saveSettings() {
 
 export function toggleSource(id: SourceId) {
   setSettings("selectedSources", (prev) =>
-    prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
+    prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id],
   );
   saveSettings();
 }

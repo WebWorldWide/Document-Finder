@@ -56,8 +56,8 @@ impl EmbeddingModel {
 
         let onnx = std::fs::read(dir.join("model_quantized.onnx"))
             .context("reading bundled model_quantized.onnx")?;
-        let tokenizer_file = std::fs::read(dir.join("tokenizer.json"))
-            .context("reading bundled tokenizer.json")?;
+        let tokenizer_file =
+            std::fs::read(dir.join("tokenizer.json")).context("reading bundled tokenizer.json")?;
         let config_file =
             std::fs::read(dir.join("config.json")).context("reading bundled config.json")?;
         let tokenizer_config_file = std::fs::read(dir.join("tokenizer_config.json"))
@@ -76,11 +76,9 @@ impl EmbeddingModel {
             .with_pooling(Pooling::Cls)
             .with_quantization(QuantizationMode::Static);
 
-        let inner = TextEmbedding::try_new_from_user_defined(
-            user_model,
-            InitOptionsUserDefined::new(),
-        )
-        .context("fastembed user-defined init failed (bundled BGE files)")?;
+        let inner =
+            TextEmbedding::try_new_from_user_defined(user_model, InitOptionsUserDefined::new())
+                .context("fastembed user-defined init failed (bundled BGE files)")?;
 
         Ok(Self { inner })
     }
@@ -124,8 +122,8 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
 // force re-initialization on the next search.
 // =============================================================================
 
-use std::sync::RwLock as StdRwLock;
 use std::sync::OnceLock;
+use std::sync::RwLock as StdRwLock;
 
 static MODEL: OnceLock<StdRwLock<Option<Arc<Mutex<EmbeddingModel>>>>> = OnceLock::new();
 
@@ -141,18 +139,14 @@ fn model_lock() -> &'static StdRwLock<Option<Arc<Mutex<EmbeddingModel>>>> {
 pub fn get_or_init(app: &AppHandle) -> Result<Arc<Mutex<EmbeddingModel>>> {
     // Fast path: model already loaded.
     {
-        let guard = model_lock()
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
+        let guard = model_lock().read().unwrap_or_else(|e| e.into_inner());
         if let Some(ref m) = *guard {
             return Ok(m.clone());
         }
     }
 
     // Slow path: initialize under write lock.
-    let mut guard = model_lock()
-        .write()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut guard = model_lock().write().unwrap_or_else(|e| e.into_inner());
 
     // Re-check after acquiring write lock (another thread may have raced us).
     if let Some(ref m) = *guard {
@@ -167,9 +161,7 @@ pub fn get_or_init(app: &AppHandle) -> Result<Arc<Mutex<EmbeddingModel>>> {
 /// Drop the loaded model so the next call to `get_or_init` re-initializes it.
 /// Called by the `reset_ai_state` Tauri command after an inference error.
 pub fn reset_embedding_model() {
-    let mut guard = model_lock()
-        .write()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut guard = model_lock().write().unwrap_or_else(|e| e.into_inner());
     *guard = None;
     tracing::info!("embedding model reset");
 }

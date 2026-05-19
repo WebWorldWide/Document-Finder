@@ -1,13 +1,5 @@
 import { Show, createMemo } from "solid-js";
-import {
-  Download,
-  CheckCircle2,
-  XCircle,
-  Loader2,
-  Trash2,
-  X,
-  RefreshCw,
-} from "lucide-solid";
+import { Download, CheckCircle2, XCircle, Loader2, Trash2, X, RefreshCw } from "lucide-solid";
 import type { ModelInfo } from "@/lib/tauri";
 import { modelsStore } from "@/stores/models";
 import { formatBytes, formatDuration } from "@/lib/utils";
@@ -96,7 +88,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
       </div>
 
       {/* Always-visible status block — never looks "frozen" because we show
-        * "Starting…" until bytes/sec arrives. */}
+       * "Starting…" until bytes/sec arrives. */}
       <div class="mt-3 flex items-center gap-2 text-[10px] text-[var(--color-foreground-muted)]">
         <StatusIcon status={m().status} />
         <span class="font-mono">{sizeLine()}</span>
@@ -127,9 +119,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
           const failedStatus = m().status as { kind: "failed"; msg: string };
           return (
             <div class="mt-3 space-y-2">
-              <p class="text-[10px] text-[var(--color-destructive)]">
-                {failedStatus.msg}
-              </p>
+              <p class="text-[10px] text-[var(--color-destructive)]">{failedStatus.msg}</p>
               <button
                 onClick={() => modelsStore.download(m().id)}
                 class="btn-tactile flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
@@ -144,11 +134,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
       </Show>
 
       {/* Primary action when not downloaded yet */}
-      <Show
-        when={
-          m().status.kind === "not_downloaded" || m().status.kind === "cancelled"
-        }
-      >
+      <Show when={m().status.kind === "not_downloaded" || m().status.kind === "cancelled"}>
         <button
           onClick={() => modelsStore.download(m().id)}
           class="btn-tactile mt-3 flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold"

@@ -5,6 +5,7 @@ pub mod doaj;
 pub mod duckduckgo;
 pub mod gutenberg;
 pub mod internet_archive;
+pub mod local_searxng;
 pub mod marginalia_html;
 pub mod meta_search;
 pub mod mojeek_html;

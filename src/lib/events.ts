@@ -208,13 +208,11 @@ const EVENTS = [
   "model_status",
 ] as const;
 
-export async function listenAll(
-  handler: (e: DfEvent) => void
-): Promise<UnlistenFn> {
+export async function listenAll(handler: (e: DfEvent) => void): Promise<UnlistenFn> {
   const unsubs: UnlistenFn[] = [];
   for (const name of EVENTS) {
     const u = await listen(`df:${name}`, (ev) =>
-      handler({ type: name, payload: ev.payload as never })
+      handler({ type: name, payload: ev.payload as never }),
     );
     unsubs.push(u);
   }

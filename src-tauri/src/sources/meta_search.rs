@@ -75,15 +75,37 @@ pub struct MetaSearchSource {
 impl MetaSearchSource {
     pub fn new(client: Arc<reqwest::Client>, app: Option<AppHandle>) -> Self {
         let engines = vec![
-            EngineEntry { name: "duckduckgo", source: Box::new(DuckDuckGoSource::new(client.clone())) },
-            EngineEntry { name: "brave",      source: Box::new(BraveHtmlSource::new(client.clone())) },
-            EngineEntry { name: "bing",       source: Box::new(BingHtmlSource::new(client.clone())) },
-            EngineEntry { name: "mojeek",     source: Box::new(MojeekHtmlSource::new(client.clone())) },
-            EngineEntry { name: "marginalia", source: Box::new(MarginaliaHtmlSource::new(client.clone())) },
-            EngineEntry { name: "startpage",  source: Box::new(StartpageHtmlSource::new(client.clone())) },
+            EngineEntry {
+                name: "duckduckgo",
+                source: Box::new(DuckDuckGoSource::new(client.clone())),
+            },
+            EngineEntry {
+                name: "brave",
+                source: Box::new(BraveHtmlSource::new(client.clone())),
+            },
+            EngineEntry {
+                name: "bing",
+                source: Box::new(BingHtmlSource::new(client.clone())),
+            },
+            EngineEntry {
+                name: "mojeek",
+                source: Box::new(MojeekHtmlSource::new(client.clone())),
+            },
+            EngineEntry {
+                name: "marginalia",
+                source: Box::new(MarginaliaHtmlSource::new(client.clone())),
+            },
+            EngineEntry {
+                name: "startpage",
+                source: Box::new(StartpageHtmlSource::new(client.clone())),
+            },
         ];
         let fallback = Arc::new(SearxngPoolSource::new(client));
-        Self { engines, app, fallback }
+        Self {
+            engines,
+            app,
+            fallback,
+        }
     }
 
     fn emit_health(&self, backend: &str, status: &str, result_count: usize, latency_ms: u64) {
@@ -134,7 +156,10 @@ impl Source for MetaSearchSource {
             active_count += 1;
 
             let name = entry.name;
-            let stream = entry.source.search(keywords.clone(), per_engine_limit).await;
+            let stream = entry
+                .source
+                .search(keywords.clone(), per_engine_limit)
+                .await;
             let tx = tx.clone();
             let app_clone = self.app.clone();
 
@@ -147,12 +172,15 @@ impl Source for MetaSearchSource {
                 tokio::pin!(stream);
                 let result = tokio::time::timeout(BACKEND_TIMEOUT, async {
                     while let Some(item) = stream.next().await {
-                        if item.is_ok() { count += 1; }
+                        if item.is_ok() {
+                            count += 1;
+                        }
                         if tx.send(item).await.is_err() {
                             break;
                         }
                     }
-                }).await;
+                })
+                .await;
 
                 if result.is_err() {
                     timed_out = true;

@@ -78,12 +78,12 @@ fn doi_from(doc: &Document) -> Option<String> {
 static FETCH_CACHE: Lazy<RwLock<HashMap<(&'static str, String), Vec<String>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
-async fn fetch_dois(
-    client: &reqwest::Client,
-    template: &str,
-    paper_doi: &str,
-) -> Vec<String> {
-    let kind = if template == REFERENCES_URL { "refs" } else { "cites" };
+async fn fetch_dois(client: &reqwest::Client, template: &str, paper_doi: &str) -> Vec<String> {
+    let kind = if template == REFERENCES_URL {
+        "refs"
+    } else {
+        "cites"
+    };
     let key = (kind, paper_doi.to_string());
     if let Ok(g) = FETCH_CACHE.read() {
         if let Some(hit) = g.get(&key) {
@@ -94,10 +94,7 @@ async fn fetch_dois(
     let endpoint = template.replace("{}", &format!("DOI:{}", paper_doi));
     let resp = client
         .get(&endpoint)
-        .query(&[
-            ("fields", "externalIds"),
-            ("limit", &FANOUT.to_string()),
-        ])
+        .query(&[("fields", "externalIds"), ("limit", &FANOUT.to_string())])
         .send()
         .await;
     let Ok(resp) = resp else { return Vec::new() };
@@ -135,7 +132,12 @@ pub async fn enrich_with_citation_graph(
     }
 
     // Build a (top-K) DOI → index lookup so we can detect intra-set citations.
-    let top_indices: Vec<usize> = ranked.iter().take(TOP_K).enumerate().map(|(i, _)| i).collect();
+    let top_indices: Vec<usize> = ranked
+        .iter()
+        .take(TOP_K)
+        .enumerate()
+        .map(|(i, _)| i)
+        .collect();
     let mut doi_to_index: HashMap<String, usize> = HashMap::new();
     for &i in &top_indices {
         if let Some(d) = doi_from(&ranked[i].doc.doc) {
@@ -172,7 +174,9 @@ pub async fn enrich_with_citation_graph(
     // Tally how many top-K candidates each top-K candidate is connected to.
     let mut intra_citations: HashMap<usize, usize> = HashMap::new();
     while let Some(res) = tasks.join_next().await {
-        let Ok((source_idx, related)) = res else { continue };
+        let Ok((source_idx, related)) = res else {
+            continue;
+        };
         for d in related {
             if let Some(&target_idx) = doi_to_index.get(&d) {
                 if target_idx != source_idx {
