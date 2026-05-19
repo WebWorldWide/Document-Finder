@@ -20,7 +20,12 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          # Pinned to 10. pnpm 11 hard-fails install on any unapproved
+          # postinstall script (ERR_PNPM_IGNORED_BUILDS) and the new
+          # pnpm-workspace.yaml onlyBuiltDependencies route doesn't
+          # apply to non-workspace projects. v10 matches the local
+          # toolchain and is known-good here.
+          version: 10
 
       - uses: actions/setup-node@v4
         with:
@@ -60,7 +65,12 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          # Pinned to 10. pnpm 11 hard-fails install on any unapproved
+          # postinstall script (ERR_PNPM_IGNORED_BUILDS) and the new
+          # pnpm-workspace.yaml onlyBuiltDependencies route doesn't
+          # apply to non-workspace projects. v10 matches the local
+          # toolchain and is known-good here.
+          version: 10
 
       - uses: actions/setup-node@v4
         with:
