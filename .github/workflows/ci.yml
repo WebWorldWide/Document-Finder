@@ -32,7 +32,11 @@ jobs:
           node-version: "22"
           cache: "pnpm"
 
-      - run: pnpm install --frozen-lockfile
+      # `--ignore-scripts` bypasses pnpm 11's hard error on unapproved build
+      # scripts. esbuild's platform binary ships via the optional
+      # `@esbuild/<platform>` packages, so we don't actually need the
+      # postinstall script to run.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Lint
         run: pnpm lint
@@ -171,7 +175,11 @@ jobs:
           node-version: "22"
           cache: "pnpm"
 
-      - run: pnpm install --frozen-lockfile
+      # `--ignore-scripts` bypasses pnpm 11's hard error on unapproved build
+      # scripts. esbuild's platform binary ships via the optional
+      # `@esbuild/<platform>` packages, so we don't actually need the
+      # postinstall script to run.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Install Linux system deps
         if: runner.os == 'Linux'
