@@ -42,12 +42,14 @@ export type Accent =
   | "sky" | "blue" | "ink" | "electric" | "teal"
   | "emerald" | "amber" | "crimson" | "plum";
 export type Density = "compact" | "regular";
+export type StreamLayout = "stacked" | "split";
 
 export const THEMES: readonly Theme[] = ["paper", "slate", "midnight"] as const;
 export const ACCENTS: readonly Accent[] = [
   "sky", "blue", "ink", "electric", "teal", "emerald", "amber", "crimson", "plum",
 ] as const;
 export const DENSITIES: readonly Density[] = ["compact", "regular"] as const;
+export const STREAM_LAYOUTS: readonly StreamLayout[] = ["stacked", "split"] as const;
 
 function safeTheme(v: unknown): Theme {
   return THEMES.includes(v as Theme) ? (v as Theme) : "slate";
@@ -57,6 +59,9 @@ function safeAccent(v: unknown): Accent {
 }
 function safeDensity(v: unknown): Density {
   return DENSITIES.includes(v as Density) ? (v as Density) : "regular";
+}
+function safeStreamLayout(v: unknown): StreamLayout {
+  return STREAM_LAYOUTS.includes(v as StreamLayout) ? (v as StreamLayout) : "stacked";
 }
 
 export const [settings, setSettings] = createStore({
@@ -69,6 +74,7 @@ export const [settings, setSettings] = createStore({
   theme:           safeTheme(saved.theme),
   accent:          safeAccent(saved.accent),
   density:         safeDensity(saved.density),
+  streamLayout:    safeStreamLayout(saved.streamLayout),
 });
 
 if (!settings.libraryRoot) {
@@ -103,6 +109,10 @@ export function setAccent(a: Accent) {
 export function setDensity(d: Density) {
   setSettings("density", d);
   applyAttrs();
+  saveSettings();
+}
+export function setStreamLayout(l: StreamLayout) {
+  setSettings("streamLayout", l);
   saveSettings();
 }
 

@@ -1,9 +1,9 @@
 import { For } from "solid-js";
 import {
   settings,
-  setTheme, setAccent, setDensity,
-  THEMES, ACCENTS, DENSITIES,
-  type Theme, type Accent, type Density,
+  setTheme, setAccent, setDensity, setStreamLayout,
+  THEMES, ACCENTS, DENSITIES, STREAM_LAYOUTS,
+  type Theme, type Accent, type Density, type StreamLayout,
 } from "@/stores/settings";
 
 const THEME_LABELS: Record<Theme, string> = {
@@ -15,6 +15,11 @@ const THEME_LABELS: Record<Theme, string> = {
 const DENSITY_LABELS: Record<Density, string> = {
   compact: "Compact",
   regular: "Regular",
+};
+
+const STREAM_LAYOUT_LABELS: Record<StreamLayout, string> = {
+  stacked: "Stacked",
+  split: "Split",
 };
 
 // Hex swatches matching styles/globals.css [data-accent] rules.
@@ -74,19 +79,37 @@ export default function ThemeAccentPicker() {
           </div>
         </div>
 
-        <div>
-          <div style={{ "margin-bottom": "8px", "font-size": "11px",
-            "text-transform": "uppercase", "letter-spacing": "0.06em",
-            color: "var(--ink-3)", "font-weight": "500" }}>Density</div>
-          <div class="df-theme-radio" role="radiogroup" aria-label="Density">
-            <For each={DENSITIES}>{(d) => (
-              <button
-                aria-pressed={settings.density === d}
-                onClick={() => setDensity(d)}
-              >
-                {DENSITY_LABELS[d]}
-              </button>
-            )}</For>
+        <div style={{ display: "flex", gap: "var(--pad-5)", "flex-wrap": "wrap" }}>
+          <div>
+            <div style={{ "margin-bottom": "8px", "font-size": "11px",
+              "text-transform": "uppercase", "letter-spacing": "0.06em",
+              color: "var(--ink-3)", "font-weight": "500" }}>Density</div>
+            <div class="df-theme-radio" role="radiogroup" aria-label="Density">
+              <For each={DENSITIES}>{(d) => (
+                <button
+                  aria-pressed={settings.density === d}
+                  onClick={() => setDensity(d)}
+                >
+                  {DENSITY_LABELS[d]}
+                </button>
+              )}</For>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ "margin-bottom": "8px", "font-size": "11px",
+              "text-transform": "uppercase", "letter-spacing": "0.06em",
+              color: "var(--ink-3)", "font-weight": "500" }}>Stream layout</div>
+            <div class="df-theme-radio" role="radiogroup" aria-label="Stream layout">
+              <For each={STREAM_LAYOUTS}>{(l) => (
+                <button
+                  aria-pressed={settings.streamLayout === l}
+                  onClick={() => setStreamLayout(l)}
+                >
+                  {STREAM_LAYOUT_LABELS[l]}
+                </button>
+              )}</For>
+            </div>
           </div>
         </div>
       </div>

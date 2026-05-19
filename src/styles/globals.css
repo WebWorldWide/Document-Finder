@@ -763,6 +763,24 @@ button:focus-visible {
 .df-doc-status.ok { color: var(--ok); }
 .df-doc-status.bad { color: var(--bad); }
 
+/* Split-layout variant: in-flight + saved side-by-side instead of stacked.
+   Toggled by RunCard wrapping its two .df-stream-section children in a
+   parent with .df-stream-split when settings.streamLayout === "split". */
+.df-stream-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--pad-4);
+  padding: var(--pad-3) var(--pad-5);
+}
+.df-stream-split > .df-stream-section {
+  min-width: 0;
+  padding: 0;
+}
+.df-stream-split .df-doc {
+  padding-left: var(--pad-3);
+  padding-right: var(--pad-3);
+}
+
 /* ========== Library cards ========== */
 .df-libgrid {
   display: grid;

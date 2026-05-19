@@ -275,9 +275,13 @@ export default function RunCard() {
         </div>
       </Show>
 
-      {/* Recent completions */}
+      {/* Recent completions — layout flips between stacked (default) and a
+          two-column split based on settings.streamLayout. */}
       <Show when={rs().completed.length > 0 || Object.keys(rs().inFlight).length > 0}>
-        <div class="df-stream">
+        <div
+          class="df-stream"
+          classList={{ "df-stream-split": settings.streamLayout === "split" }}
+        >
           <Show when={Object.keys(rs().inFlight).length > 0}>
             <div class="df-stream-section">
               <div class="df-stream-label">
