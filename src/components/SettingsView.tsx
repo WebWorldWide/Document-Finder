@@ -5,6 +5,7 @@ import { settings, setSettings, saveSettings } from "@/stores/settings";
 import { log } from "@/lib/log";
 import ThemeAccentPicker from "./ThemeAccentPicker";
 import LogsPanel from "./LogsPanel";
+import ModelsPanel from "./ModelsPanel";
 
 export default function SettingsView() {
   const [settingUpSearx, setSettingUpSearx] = createSignal(false);
@@ -174,6 +175,9 @@ export default function SettingsView() {
               </Show>
             </div>
           </section>
+
+          {/* AI Models (optional embedding + LLM for smarter ranking) */}
+          <ModelsPanel />
 
           {/* Logs (frontend buffer + backend runlog) */}
           <LogsPanel />
