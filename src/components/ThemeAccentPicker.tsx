@@ -3,32 +3,16 @@ import {
   settings,
   setTheme,
   setAccent,
-  setDensity,
-  setStreamLayout,
   THEMES,
   ACCENTS,
-  DENSITIES,
-  STREAM_LAYOUTS,
   type Theme,
   type Accent,
-  type Density,
-  type StreamLayout,
 } from "@/stores/settings";
 
 const THEME_LABELS: Record<Theme, string> = {
   paper: "Paper",
   slate: "Slate",
   midnight: "Dark",
-};
-
-const DENSITY_LABELS: Record<Density, string> = {
-  compact: "Compact",
-  regular: "Regular",
-};
-
-const STREAM_LAYOUT_LABELS: Record<StreamLayout, string> = {
-  stacked: "Stacked",
-  split: "Split",
 };
 
 // Hex swatches matching styles/globals.css [data-accent] rules.
@@ -43,6 +27,12 @@ const ACCENT_HEX: Record<Accent, string> = {
   crimson: "#a83a55",
   plum: "#5d2e7c",
 };
+
+// Density and Stream layout are still in settings.ts (with defaults
+// "regular" and "stacked") for backward compatibility — anyone who set
+// them previously keeps their preference. They're just not exposed
+// here anymore. Removing them was a deliberate design call: this panel
+// is for visual identity, not behavior knobs.
 
 export default function ThemeAccentPicker() {
   return (
@@ -105,59 +95,6 @@ export default function ThemeAccentPicker() {
                 />
               )}
             </For>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", gap: "var(--pad-5)", "flex-wrap": "wrap" }}>
-          <div>
-            <div
-              style={{
-                "margin-bottom": "8px",
-                "font-size": "11px",
-                "text-transform": "uppercase",
-                "letter-spacing": "0.06em",
-                color: "var(--ink-3)",
-                "font-weight": "500",
-              }}
-            >
-              Density
-            </div>
-            <div class="df-theme-radio" role="radiogroup" aria-label="Density">
-              <For each={DENSITIES}>
-                {(d) => (
-                  <button aria-pressed={settings.density === d} onClick={() => setDensity(d)}>
-                    {DENSITY_LABELS[d]}
-                  </button>
-                )}
-              </For>
-            </div>
-          </div>
-
-          <div>
-            <div
-              style={{
-                "margin-bottom": "8px",
-                "font-size": "11px",
-                "text-transform": "uppercase",
-                "letter-spacing": "0.06em",
-                color: "var(--ink-3)",
-                "font-weight": "500",
-              }}
-            >
-              Stream layout
-            </div>
-            <div class="df-theme-radio" role="radiogroup" aria-label="Stream layout">
-              <For each={STREAM_LAYOUTS}>
-                {(l) => (
-                  <button
-                    aria-pressed={settings.streamLayout === l}
-                    onClick={() => setStreamLayout(l)}
-                  >
-                    {STREAM_LAYOUT_LABELS[l]}
-                  </button>
-                )}
-              </For>
-            </div>
           </div>
         </div>
       </div>
