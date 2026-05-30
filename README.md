@@ -124,4 +124,5 @@ Contributions welcome. The Rust sources live in `src-tauri/src/sources/` — eac
 
 ## License
 
-[MIT](LICENSE) © Adam Nolle.
+Licensed under the [GNU Affero General Public License v3.0](LICENSE).
+Copyright © 2026 Web World Wide.
