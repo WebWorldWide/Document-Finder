@@ -27,7 +27,6 @@
       <a href="#sources">Sources</a>
       <a href="#how">How it works</a>
       <a href="#features">Features</a>
-      <a href="#releases">Releases</a>
       <a href="#specs">Specs</a>
     </nav>
     <div class="nav-cta">
@@ -44,23 +43,23 @@
 <section class="hero">
   <div class="wrap hero-grid">
     <div class="hero-copy">
-      <div class="eyebrow"><span class="dot"></span> v2.0 &middot; The Rewrite</div>
       <h1 class="display">
-        Research,<br/>
-        <em>found.</em>
+        Find open-access research.<br/>
+        <em>Pack it for your AI.</em>
       </h1>
       <p class="lede">
-        A small, fast desktop app that searches seven open-access sources
-        in parallel, downloads the papers, and files them into a tidy library
-        on your disk. No accounts. No paywalls. No tabs to close.
+        A small, fast desktop app that searches seven open-access sources in
+        parallel, downloads the papers, extracts the text, and bundles it into a
+        tidy local library — ready to drop into any AI context window. No
+        accounts, no API keys.
       </p>
       <div class="hero-cta">
         <a href="#download" class="btn accent">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M6 11l6 6 6-6M5 21h14"/></svg>
           Download
         </a>
-        <a href="#releases" class="btn">
-          See what&rsquo;s new
+        <a href="#how" class="btn">
+          See how it works
         </a>
       </div>
       <div class="hero-meta">
@@ -408,117 +407,6 @@
   </div>
 </section>
 
-<!-- ============== RELEASES ============== -->
-<section id="releases" class="band alt">
-  <div class="wrap">
-    <div class="sec-head">
-      <div class="eyebrow">Changelog</div>
-      <h2 class="sec-title">
-        Releases.<br/>
-        <em>A short history.</em>
-      </h2>
-      <p class="sec-sub">
-        Document Finder ships when it&rsquo;s ready. Every release is a tagged commit on GitHub
-        with unsigned installers for macOS, Linux, and Windows.
-      </p>
-    </div>
-
-    <ol class="changelog">
-      <li class="release current">
-        <div class="rel-side">
-          <div class="rel-ver mono">v2.0</div>
-          <div class="rel-date">The Rewrite</div>
-          <div class="rel-tag">Current</div>
-        </div>
-        <div class="rel-body">
-          <h3>The Rewrite</h3>
-          <p class="rel-tag-line">
-            Rebuilt from scratch on <b>Tauri 2</b> and <b>Rust</b> — a native binary instead of an Electron bundle, and a new Discover screen that actually shows you what the app is doing.
-          </p>
-          <ul class="rel-list">
-            <li><span class="tag new">New</span> Live download stream with sub-query telemetry, per-source lanes, throughput, and ETA.</li>
-            <li><span class="tag new">New</span> Built-in web meta-search — DuckDuckGo, Bing, Brave, Mojeek, Marginalia &amp; Startpage behind a circuit breaker, with a no-Docker local SearXNG fallback. Zero setup.</li>
-            <li><span class="tag new">New</span> On-device AI: bge-small embeddings rerank results and a bundled 3B LLM expands queries — all offline, no API keys.</li>
-            <li><span class="tag new">New</span> Warm and Apple-HIG themes, each in light and dark, with reduced-motion support.</li>
-            <li><span class="tag improved">Improved</span> Library detail view with the full document list, per-doc source attribution, and in-app ZIP export.</li>
-            <li><span class="tag fixed">Fixed</span> arXiv URL canonicalization correctly handles the <span class="mono">vN</span> suffix.</li>
-            <li><span class="tag fixed">Fixed</span> Long titles no longer overflow the sidebar on the Library tab.</li>
-          </ul>
-        </div>
-      </li>
-
-      <li class="release">
-        <div class="rel-side">
-          <div class="rel-ver mono">v1.8</div>
-          <div class="rel-date">Wider coverage</div>
-        </div>
-        <div class="rel-body">
-          <h3>Wider coverage</h3>
-          <ul class="rel-list">
-            <li><span class="tag new">New</span> DOAJ source — vetted, peer-reviewed journals.</li>
-            <li><span class="tag new">New</span> Gutenberg source — public-domain EPUBs for humanities work.</li>
-            <li><span class="tag improved">Improved</span> Concurrency bumped; the download queue stays sticky across runs.</li>
-            <li><span class="tag improved">Improved</span> Settings: per-source caps and a hard total limit.</li>
-            <li><span class="tag fixed">Fixed</span> Internet Archive 503s now back off exponentially instead of failing the run.</li>
-          </ul>
-        </div>
-      </li>
-
-      <li class="release">
-        <div class="rel-side">
-          <div class="rel-ver mono">v1.7</div>
-          <div class="rel-date">Library detail</div>
-        </div>
-        <div class="rel-body">
-          <h3>Library detail</h3>
-          <ul class="rel-list">
-            <li><span class="tag new">New</span> Click any library to see every saved doc, with per-source colour bars and bytes.</li>
-            <li><span class="tag new">New</span> &ldquo;Show in Finder/Files&rdquo; from anywhere a path is shown.</li>
-            <li><span class="tag improved">Improved</span> arXiv parser handles the new HTML-rendered abstract pages.</li>
-            <li><span class="tag fixed">Fixed</span> Duplicate detection by SHA-256 of the decoded PDF stream, not the URL.</li>
-          </ul>
-        </div>
-      </li>
-
-      <li class="release">
-        <div class="rel-side">
-          <div class="rel-ver mono">v1.6</div>
-          <div class="rel-date">The archive update</div>
-        </div>
-        <div class="rel-body">
-          <h3>The archive update</h3>
-          <ul class="rel-list">
-            <li><span class="tag new">New</span> Internet Archive source — pulls scanned books and older papers.</li>
-            <li><span class="tag new">New</span> Run log persisted to disk; one-click open from Settings.</li>
-            <li><span class="tag improved">Improved</span> PDF deduplication moved from per-source to per-run.</li>
-          </ul>
-        </div>
-      </li>
-
-      <li class="release">
-        <div class="rel-side">
-          <div class="rel-ver mono">v1.5</div>
-          <div class="rel-date">First release</div>
-        </div>
-        <div class="rel-body">
-          <h3>Initial public release</h3>
-          <p class="rel-tag-line">
-            arXiv, OpenAlex, Semantic Scholar, Web. The whole thing was about
-            900 lines of TypeScript and a prayer.
-          </p>
-        </div>
-      </li>
-    </ol>
-
-    <div class="rel-foot">
-      <a href="https://github.com/AdamNolle/Document-Finder/releases" target="_blank" rel="noopener" class="btn">
-        Full changelog on GitHub
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
-      </a>
-    </div>
-  </div>
-</section>
-
 <!-- ============== SPECS ============== -->
 <section id="specs" class="band">
   <div class="wrap">
@@ -569,7 +457,7 @@
       </div>
       <div class="spec">
         <div class="spec-k">Made by</div>
-        <div class="spec-v">Web World Wide, in the open since 2025.</div>
+        <div class="spec-v">Web World Wide.</div>
       </div>
     </div>
   </div>
@@ -580,7 +468,7 @@
   <div class="wrap">
     <div class="dl-card">
       <div class="dl-left">
-        <div class="eyebrow"><span class="dot"></span> Latest &middot; v2.0</div>
+        <div class="eyebrow"><span class="dot"></span> Download</div>
         <h2 class="sec-title">
           Get Document Finder.<br/>
           <em>Free, forever.</em>
@@ -603,12 +491,12 @@
         </a>
         <div class="dl-row">
           <a href="https://github.com/AdamNolle/Document-Finder/releases/latest" target="_blank" rel="noopener" class="dl-btn small">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.5 0v11.5h11C23 5.2 18.3.3 12.5 0zm-1 0C5.7.3 1 5.2.5 11.5h11V0zM.5 12.5C1 18.8 5.7 23.7 11.5 24V12.5H.5zm12 0V24c5.8-.3 10.5-5.2 11-11.5h-11z"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/></svg>
             <span><b>Windows</b><i>.exe &middot; .msi</i></span>
           </a>
           <a href="https://github.com/AdamNolle/Document-Finder/releases/latest" target="_blank" rel="noopener" class="dl-btn small">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.5 2c-1 0-1.9.4-2.6 1.1-.7.7-1.1 1.6-1.1 2.6 0 .4.1.8.2 1.1-.3.3-.6.6-.8.9-.5.7-.9 1.6-1 2.5l-.7 4.4c-.1.7-.5 1.4-1 2-.5.6-1.2 1.1-2 1.4-.4.2-.7.4-.9.7-.2.3-.3.7-.2 1 .1.3.3.6.6.7l1.5.5c.6.2 1.2.4 1.8.7.4.2.7.5.9.9.2.4.3.8.3 1.2 0 .3.1.5.3.7.2.2.5.3.7.3h11c.3 0 .5-.1.7-.3.2-.2.3-.4.3-.7 0-.4.1-.8.3-1.2.2-.4.5-.7.9-.9.6-.3 1.2-.5 1.8-.7l1.5-.5c.3-.1.5-.4.6-.7.1-.3 0-.7-.2-1-.2-.3-.5-.5-.9-.7-.8-.3-1.5-.8-2-1.4-.5-.6-.9-1.3-1-2l-.7-4.4c-.1-.9-.5-1.8-1-2.5-.2-.3-.5-.6-.8-.9.1-.3.2-.7.2-1.1 0-1-.4-1.9-1.1-2.6C14.4 2.4 13.5 2 12.5 2zm0 2c.5 0 1 .2 1.3.5.4.4.5.8.5 1.3 0 .4-.2.9-.5 1.2-.4.4-.8.5-1.3.5s-1-.2-1.3-.5c-.4-.4-.5-.8-.5-1.2 0-.5.2-1 .5-1.3.4-.4.8-.5 1.3-.5z"/></svg>
-            <span><b>Linux</b><i>.AppImage &middot; .deb</i></span>
+            <img src="linux.svg" width="18" height="18" alt="" />
+            <span><b>Linux</b><i>.AppImage &middot; .deb &middot; Flatpak</i></span>
           </a>
         </div>
         <div class="dl-fine mono">
@@ -629,7 +517,7 @@
       <img src="logo.svg" class="brand-mark" alt="Document Finder logo" />
       <div>
         <div class="brand-name">Document <em>Finder</em></div>
-        <div class="foot-tag">Research, found. Since 2025.</div>
+        <div class="foot-tag">Open-access research, AI-ready.</div>
       </div>
     </div>
     <div class="foot-cols">
@@ -637,7 +525,6 @@
         <div class="foot-h">Product</div>
         <a href="#features">Features</a>
         <a href="#sources">Sources</a>
-        <a href="#releases">Releases</a>
         <a href="#specs">Specs</a>
       </div>
       <div>

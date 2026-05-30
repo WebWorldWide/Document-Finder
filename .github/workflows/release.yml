@@ -1,9 +1,8 @@
 name: Release
 
-# Triggered when a `v*` tag is pushed. Builds installers on each of the
-# three desktop OSes, then `tauri-apps/tauri-action@v0` aggregates them
-# into a draft GitHub Release. The user reviews and publishes manually
-# (releaseDraft: true) — first review prevents an accidental ship.
+# Triggered when a `v*` tag is pushed. Builds installers on each desktop OS plus
+# a Linux Flatpak, then aggregates them into a draft GitHub Release. The user
+# reviews and publishes manually (releaseDraft: true).
 
 on:
   push:
@@ -23,11 +22,9 @@ jobs:
           - label: macOS (Apple Silicon)
             os: macos-14
             args: --target aarch64-apple-darwin
-          # ubuntu-24.04 (glibc 2.39) is required: the `ort` crate's
-          # prebuilt ONNX Runtime binary references __isoc23_strtoll etc.
-          # (glibc 2.38+ C23 symbols), so linking on 22.04's glibc 2.35
-          # fails with "undefined symbol". The produced .deb/.AppImage
-          # therefore needs glibc 2.39+ — fine for modern distros.
+          # ubuntu-24.04 (glibc 2.39) is required: the `ort` crate's prebuilt
+          # ONNX Runtime binary references glibc 2.38+ C23 symbols, so linking
+          # on 22.04's glibc 2.35 fails. The .deb/.AppImage need glibc 2.39+.
           - label: Linux (x86_64)
             os: ubuntu-24.04
             args: ""
@@ -52,13 +49,6 @@ jobs:
             cmake \
             clang
 
-      - name: Install macOS build deps
-        if: matrix.platform.os == 'macos-14'
-        run: |
-          # llama-cpp-2 builds llama.cpp via cmake; the runner already
-          # has Xcode + cmake but make double-sure cmake is on PATH.
-          which cmake
-
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -68,14 +58,13 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          # Key the cache by the platform so we don't cross-share macOS
-          # build artifacts with Linux/Windows.
           key: ${{ matrix.platform.os }}-release
+          # The Windows full build fills the runner disk; skip the cache save so
+          # its post-step can't fail the job (the build itself is unaffected).
+          save-if: ${{ matrix.platform.os != 'windows-latest' }}
 
       - uses: pnpm/action-setup@v4
         with:
-          # pnpm 11, matching ci.yml. The `--ignore-scripts` flag on the
-          # install below sidesteps pnpm 11's ERR_PNPM_IGNORED_BUILDS.
           version: 11
 
       - uses: actions/setup-node@v4
@@ -83,9 +72,9 @@ jobs:
           node-version: "22"
           cache: "pnpm"
 
-      # `--ignore-scripts` bypasses pnpm 11's hard error on unapproved build
-      # scripts. esbuild's platform binary ships via the optional
-      # `@esbuild/<platform>` packages, so the postinstall isn't needed.
+      # `--ignore-scripts` sidesteps pnpm 11's unapproved-build hard error;
+      # esbuild's binary ships in its platform package, so its postinstall
+      # isn't needed.
       - run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Build Tauri app
@@ -96,35 +85,65 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Document Finder ${{ github.ref_name }}"
           releaseBody: |
-            Document Finder ${{ github.ref_name }}
+            Native installers for **macOS** (Apple Silicon), **Windows**, and **Linux** (Flatpak, `.deb`, `.AppImage`).
 
-            ## Installers in this release
-
-            | Platform | File | Notes |
-            |---|---|---|
-            | macOS (Apple Silicon) | `Document.Finder_${{ github.ref_name }}_aarch64.dmg` | Drag to Applications. **Unsigned** — see below. |
-            | Linux | `document-finder_${{ github.ref_name }}_amd64.deb` / `*.AppImage` | `.deb` for Debian/Ubuntu, `.AppImage` portable. Needs glibc 2.39+. |
-            | Windows | `Document.Finder_${{ github.ref_name }}_x64-setup.exe` / `*.msi` | NSIS installer or MSI. |
-
-            ## First-launch notes (unsigned binaries)
-
-            **macOS** — Gatekeeper will block the unsigned `.app`. After dragging to Applications:
-            1. System Settings → Privacy & Security → scroll down
-            2. Click **Open Anyway** next to the Document Finder warning
-            3. Confirm in the next dialog
-
-            **Windows** — SmartScreen will warn on first run. Click **More info** → **Run anyway**.
-
-            **Linux** — `.AppImage` is portable, no install. Mark it executable:
-            `chmod +x Document.Finder_*.AppImage && ./Document.Finder_*.AppImage`
-
-            ## Why unsigned?
-
-            Code signing requires per-OS developer certificates (Apple Developer Program $99/yr,
-            Authenticode for Windows). The app makes no outbound connections except to the
-            open-access sources you enable. Verify the binary with:
-            - macOS: `codesign -dvvv /Applications/Document\ Finder.app`
-            - Windows: `Get-AuthenticodeSignature .\document-finder.exe`
+            Builds are **unsigned** — on first launch, allow the app via your OS:
+            macOS → System Settings → Privacy & Security → **Open Anyway**;
+            Windows → SmartScreen → **More info** → **Run anyway**.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.platform.args }}
+
+  # Repackage the Linux .deb into a Flatpak bundle and attach it to the draft
+  # release. Self-contained (builds its own .deb) so it can't be broken by, or
+  # break, the matrix above.
+  flatpak:
+    name: Build Linux Flatpak
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system + Flatpak deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            cmake clang flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: flatpak-linux
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build .deb
+        run: pnpm tauri build --bundles deb
+
+      - name: Stage .deb for the Flatpak manifest
+        run: cp src-tauri/target/release/bundle/deb/*.deb packaging/flatpak/document-finder.deb
+
+      - name: Build Flatpak bundle
+        working-directory: packaging/flatpak
+        run: |
+          flatpak-builder --user --force-clean --repo=repo build-dir com.webworldwide.DocumentFinder.yml
+          flatpak build-bundle repo "Document Finder_${{ github.ref_name }}_x86_64.flatpak" com.webworldwide.DocumentFinder
+
+      - name: Upload Flatpak to the draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" packaging/flatpak/*.flatpak --clobber

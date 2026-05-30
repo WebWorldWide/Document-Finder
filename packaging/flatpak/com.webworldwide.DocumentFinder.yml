@@ -1,0 +1,29 @@
+id: com.webworldwide.DocumentFinder
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+command: document-finder
+
+finish-args:
+  - --share=network # fetches papers + (optional) model downloads
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --filesystem=home # the library lives under ~/Documents by default
+
+modules:
+  - name: document-finder
+    buildsystem: simple
+    sources:
+      - type: file
+        path: document-finder.deb
+    build-commands:
+      # Unpack the Tauri-built .deb and install its payload into /app. Globs keep
+      # this resilient to Tauri's exact binary/desktop/icon file names.
+      - ar x document-finder.deb
+      - tar -xf data.tar.*
+      - install -Dm755 usr/bin/* /app/bin/document-finder
+      - desk=$(ls usr/share/applications/*.desktop | head -n1); install -Dm644 "$desk" /app/share/applications/com.webworldwide.DocumentFinder.desktop
+      - sed -i 's/^Icon=.*/Icon=com.webworldwide.DocumentFinder/' /app/share/applications/com.webworldwide.DocumentFinder.desktop
+      - icon=$(ls usr/share/icons/hicolor/128x128/apps/*.png | head -n1); install -Dm644 "$icon" /app/share/icons/hicolor/128x128/apps/com.webworldwide.DocumentFinder.png
