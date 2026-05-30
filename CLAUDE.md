@@ -145,8 +145,9 @@ needs glibc 2.39+ C23 symbols).
    git push origin main --tags
    ```
 2. `release.yml` builds unsigned installers — macOS (Apple Silicon `.dmg`),
-   Linux (`.deb` + `.AppImage`, glibc 2.39+), Windows (`.exe` + `.msi`) — and
-   attaches them to a **draft** GitHub Release. Review, edit notes, publish.
+   Linux (`.deb`, `.AppImage`, and a `.flatpak` from `packaging/flatpak/`,
+   glibc 2.39+), Windows (`.exe` + `.msi`) — and attaches them to a **draft**
+   GitHub Release. Review, edit notes, publish.
 
 The builds are unsigned, so first launch needs a manual allow:
 - **macOS** — System Settings → Privacy & Security → **Open Anyway**, or

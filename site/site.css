@@ -295,10 +295,8 @@ button { font: inherit; cursor: pointer; }
   border-bottom: 0.5px solid var(--line);
   position: relative;
 }
-.tl { width: 10px; height: 10px; border-radius: 50%; border: 0.5px solid rgba(0,0,0,0.12); }
-.tl-r { background: #ff5f57; }
-.tl-y { background: #febc2e; }
-.tl-g { background: #28c840; }
+/* Muted window-chrome dots — tinted to the page palette, not macOS colors. */
+.tl { width: 10px; height: 10px; border-radius: 50%; border: 0.5px solid var(--line-2); background: var(--ink-4); opacity: 0.5; }
 .mini-title {
   position: absolute; left: 0; right: 0; text-align: center;
   font-size: 10.5px; font-weight: 600; color: var(--ink-2);
