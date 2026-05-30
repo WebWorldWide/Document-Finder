@@ -2,6 +2,11 @@
   <img src="src-tauri/icons/icon.png" alt="Document Finder Logo" width="160" height="160" />
   <h1>Document Finder v2</h1>
   <p><strong>A blazingly fast, cross-platform desktop application for discovering, downloading, and bundling open-access research for AI contexts.</strong></p>
+  <p>
+    <a href="https://adamnolle.github.io/Document-Finder/">Website</a> ·
+    <a href="https://github.com/AdamNolle/Document-Finder/releases">Releases</a> ·
+    <a href="CLAUDE.md">Developer guide</a>
+  </p>
 </div>
 
 ---
@@ -15,7 +20,7 @@ Document Finder v2 is a complete rewrite of the original Python-based tool, now 
 - **Library Management**: Manage your collections in the Library tab. View metadata, doc counts, and total sizes.
 - **AI-Ready Exports**: Export libraries as `.zip` files containing PDFs, EPUBs, and extracted plain text — ready to drop into any AI context window.
 - **Blazing Fast**: Rust handles parallel downloads, PDF/EPUB text extraction, and SQLite persistence natively.
-- **Privacy-First Meta-Search**: Aggregates DuckDuckGo, Bing, Brave, and public SearXNG instances with a circuit breaker — no Docker required, no setup.
+- **Privacy-First Meta-Search**: A built-in web aggregator fans out to DuckDuckGo, Bing, Brave, Mojeek, Marginalia, and Startpage behind a per-engine circuit breaker, with an in-process SearXNG-compatible server and a public SearXNG pool as fallbacks — no Docker, no setup, no API keys.
 - **Local AI Ranking**: Two small bundled models — `bge-small-en-v1.5` (~33 MB) for semantic reranking and `Qwen 2.5 3B Instruct` (~2 GB) for query expansion + borderline filtering. Downloaded on first use. Everything runs offline; no API keys, ever.
 - **4-Theme Design System**: Warm (light + dark) and Apple HIG (light + dark) themes switchable from Settings, with full reduced-motion support.
 
@@ -31,7 +36,7 @@ Document Finder v2 is a complete rewrite of the original Python-based tool, now 
 | [Internet Archive](https://archive.org/) | Millions of books, papers, and media |
 | [DOAJ](https://doaj.org/) | Directory of Open Access Journals |
 | [Project Gutenberg](https://www.gutenberg.org/) | 70,000+ free ebooks |
-| **Web** | Meta-search aggregator: DuckDuckGo, Bing, Brave + public SearXNG pool |
+| **Web** | Built-in meta-search: DuckDuckGo, Bing, Brave, Mojeek, Marginalia, Startpage + in-process & public SearXNG fallback (no Docker) |
 
 ---
 
@@ -40,7 +45,7 @@ Document Finder v2 is a complete rewrite of the original Python-based tool, now 
 ### Prerequisites
 
 - [Rust](https://rustup.rs/) (installed via `rustup`)
-- [Node.js](https://nodejs.org/) v20+
+- [Node.js](https://nodejs.org/) v22+ (the build uses [pnpm](https://pnpm.io/) v11)
 - **C++ build toolchain** (for the local LLM via llama.cpp):
   - **macOS**: `brew install cmake` + Xcode Command Line Tools (`xcode-select --install`). Metal GPU support is built in.
   - **Linux**: cmake + clang/g++ (e.g. `sudo apt install build-essential cmake clang`).
@@ -88,7 +93,7 @@ This produces platform-native installers in `src-tauri/target/release/bundle/`.
 Each search creates a folder under your configured library root:
 
 ```
-~/Documents/DocumentFinder/
+~/Documents/Document Finder/library/
 └── your-query-slug/
     ├── library.db        ← SQLite database (metadata, run history)
     ├── _text/            ← Extracted plain text files
@@ -115,4 +120,8 @@ The `library.db` file contains full metadata for all downloaded documents and ca
 
 ## Contributing
 
-Contributions welcome. The Rust sources live in `src-tauri/src/sources/` — each source is a self-contained module implementing the `Source` trait with a `search()` method that returns a stream of `Document`s.
+Contributions welcome. The Rust sources live in `src-tauri/src/sources/` — each source is a self-contained module implementing the `Source` trait with a `search()` method that returns a stream of `Document`s. See [`CLAUDE.md`](CLAUDE.md) for the architecture map, build internals, the release process, and icon regeneration.
+
+## License
+
+[MIT](LICENSE) © Adam Nolle.

@@ -92,7 +92,7 @@ pub fn rank_candidates(query_terms: &[String], candidates: Vec<MergedDoc>) -> Ve
     // ----- Score each doc ---------------------------------------------
     let mut ranked: Vec<RankedDoc> = candidates
         .into_iter()
-        .zip(tokenized.into_iter())
+        .zip(tokenized)
         .map(|(merged, (title_toks, abs_toks))| {
             let mut tfidf = 0.0f32;
             for q in &q_tokens {

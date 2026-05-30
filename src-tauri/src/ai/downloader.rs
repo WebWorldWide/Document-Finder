@@ -16,7 +16,7 @@ use crate::ai::storage::{model_file, partial_file};
 use crate::events::{ModelProgressPayload, ModelStatusPayload, EV_MODEL_PROGRESS, EV_MODEL_STATUS};
 use futures::StreamExt;
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::fs::OpenOptions;
@@ -217,8 +217,8 @@ pub async fn download(
 /// Stream the file through SHA256. Done on a blocking thread because file I/O
 /// at this size hits the disk hard and we don't want to monopolize the
 /// async runtime.
-async fn verify_sha256(path: &PathBuf, expected: &str) -> anyhow::Result<bool> {
-    let path = path.clone();
+async fn verify_sha256(path: &Path, expected: &str) -> anyhow::Result<bool> {
+    let path = path.to_path_buf();
     let expected = expected.to_lowercase();
     tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
         let mut file = std::fs::File::open(&path)?;

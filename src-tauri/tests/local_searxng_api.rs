@@ -68,7 +68,6 @@ struct SearxLikeResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct SearxLikeResult {
     url: String,
     title: String,
@@ -112,6 +111,16 @@ async fn server_starts_and_serves_searxng_shape() {
     assert_eq!(body.number_of_results, 2);
     assert_eq!(body.results.len(), 2);
     assert_eq!(body.results[0].url, "https://www.rust-lang.org");
+    assert_eq!(body.results[0].title, "Rust Programming Language");
+    assert_eq!(
+        body.results[0].content.as_deref(),
+        Some("Safe systems programming")
+    );
+    // The backend's source id is surfaced as SearXNG's `engine` field, and
+    // scores decay with rank (so the first result outranks the second).
+    assert_eq!(body.results[0].engine, "stub");
+    assert!(body.results[0].score > 0.0);
+    assert!(body.results[0].score >= body.results[1].score);
     assert!(body.answers.is_empty());
     assert!(body.suggestions.is_empty());
 }

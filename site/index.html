@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Document Finder — Research, found.</title>
+  <meta name="description" content="A desktop app that finds and downloads open-access research across the web — arXiv, OpenAlex, Semantic Scholar, Internet Archive and more — and files it into a tidy local library. No accounts, no API keys." />
+
+  <link rel="icon" href="favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,500;1,6..72,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+
+  <link rel="stylesheet" href="site.css" />
+</head>
+<body>
+
+<!-- ============== NAV ============== -->
+<header class="nav">
+  <div class="wrap nav-row">
+    <a href="#" class="brand">
+      <img src="logo.svg" class="brand-mark" alt="Document Finder logo" />
+      <span class="brand-name">Document <em>Finder</em></span>
+    </a>
+    <nav class="nav-links">
+      <a href="#sources">Sources</a>
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#releases">Releases</a>
+      <a href="#specs">Specs</a>
+    </nav>
+    <div class="nav-cta">
+      <a href="https://github.com/AdamNolle/Document-Finder" target="_blank" rel="noopener" class="btn ghost sm">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.58.11.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.95.1-.74.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.15 1.18a10.97 10.97 0 0 1 5.74 0c2.19-1.49 3.15-1.18 3.15-1.18.63 1.58.23 2.75.11 3.04.74.81 1.18 1.84 1.18 3.1 0 4.43-2.7 5.4-5.27 5.68.42.36.78 1.06.78 2.13v3.16c0 .31.21.68.8.56A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z"/></svg>
+        GitHub
+      </a>
+      <a href="#download" class="btn primary sm">Download</a>
+    </div>
+  </div>
+</header>
+
+<!-- ============== HERO ============== -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <div class="eyebrow"><span class="dot"></span> v2.0 &middot; The Rewrite</div>
+      <h1 class="display">
+        Research,<br/>
+        <em>found.</em>
+      </h1>
+      <p class="lede">
+        A small, fast desktop app that searches seven open-access sources
+        in parallel, downloads the papers, and files them into a tidy library
+        on your disk. No accounts. No paywalls. No tabs to close.
+      </p>
+      <div class="hero-cta">
+        <a href="#download" class="btn accent">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M6 11l6 6 6-6M5 21h14"/></svg>
+          Download
+        </a>
+        <a href="#releases" class="btn">
+          See what&rsquo;s new
+        </a>
+      </div>
+      <div class="hero-meta">
+        <span>Free &amp; open source &middot; <span class="mono">MIT</span></span>
+        <span class="sep">·</span>
+        <span>macOS &middot; Linux &middot; Windows</span>
+        <span class="sep">·</span>
+        <span>No accounts, no telemetry</span>
+      </div>
+    </div>
+
+    <!-- Mini app preview — built from the same design language -->
+    <div class="hero-preview" aria-hidden="true">
+      <div class="mini-window" data-theme="paper" data-accent="teal">
+        <div class="mini-titlebar">
+          <span class="tl tl-r"></span><span class="tl tl-y"></span><span class="tl tl-g"></span>
+          <span class="mini-title">Document Finder</span>
+        </div>
+        <div class="mini-body">
+          <aside class="mini-side">
+            <div class="mini-brand">
+              <img src="logo.svg" class="brand-mark sm" alt="" />
+              <span class="mini-brand-name">Document <em>Finder</em></span>
+            </div>
+            <div class="mini-nav">
+              <button class="mini-nav-item on">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m14.5 9.5-2.5 5-5 2.5 2.5-5z"/></svg>
+                Discover
+              </button>
+              <button class="mini-nav-item">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h3v16H4zM11 4h3v16h-3z"/><path d="m18 4 3.2 16-3 .6L15 4.6z"/></svg>
+                Library
+                <span class="ct">6</span>
+              </button>
+              <button class="mini-nav-item">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.6"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 4.7 1.7 1.7 0 0 0 10 3.1V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+                Settings
+              </button>
+            </div>
+            <div class="mini-side-section">Recent</div>
+            <div class="mini-recents">
+              <div class="mini-recent on">
+                <span>crispr-gene-editing-review</span>
+                <span class="m">18 docs · 94 MB</span>
+              </div>
+              <div class="mini-recent">
+                <span>climate-adaptation-policy</span>
+                <span class="m">47 docs · 312 MB</span>
+              </div>
+              <div class="mini-recent">
+                <span>quantum-algorithms</span>
+                <span class="m">23 docs · 157 MB</span>
+              </div>
+            </div>
+          </aside>
+
+          <main class="mini-main">
+            <div class="mini-head">
+              <h2>Discover</h2>
+              <div class="mini-headstats">
+                <span><b>6</b><i>libraries</i></span>
+                <span><b>150</b><i>docs</i></span>
+                <span><b>910<u>MB</u></b><i>on disk</i></span>
+              </div>
+            </div>
+
+            <div class="mini-query">
+              <div class="mini-query-input">transformer architecture attention</div>
+              <div class="mini-query-bar">
+                <span class="hint">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+                  Natural language &mdash; we&rsquo;ll split it into sub-queries
+                </span>
+                <span class="kbd">⌘</span><span class="kbd">↵</span>
+                <button class="mini-btn danger">Stop</button>
+              </div>
+            </div>
+
+            <div class="mini-runcard">
+              <div class="mini-run-head">
+                <span class="pulse"></span>
+                <span class="run-q"><i>RUN</i> &ldquo;transformer architecture attention&rdquo;</span>
+                <span class="run-spacer"></span>
+                <span class="run-pct">71%</span>
+              </div>
+              <div class="mini-stats">
+                <span><b>34</b><i>found</i></span>
+                <span><b class="ok">17</b><i>saved</i></span>
+                <span><b class="bad">1</b><i>failed</i></span>
+                <span><b>2.41<u>MB/s</u></b><i>throughput</i></span>
+                <span><b>23s</b><i>eta</i></span>
+              </div>
+              <div class="mini-progress"><div class="mini-progress-fill" style="width:71%"></div></div>
+
+              <div class="mini-stream">
+                <div class="mini-stream-label">Downloading <b>3</b></div>
+                <div class="mini-doc inflight" style="--c:var(--src-arxiv)">
+                  <span class="src">arXiv</span>
+                  <span class="t">Flash Attention: Fast and Memory-Efficient Exact Attention</span>
+                  <span class="bar"><i style="width:64%"></i></span>
+                  <span class="b">1.14 MB</span>
+                </div>
+                <div class="mini-doc inflight" style="--c:var(--src-openalex)">
+                  <span class="src">OpenAlex</span>
+                  <span class="t">DeBERTa: Decoding-enhanced BERT with Disentangled Attention</span>
+                  <span class="bar"><i style="width:42%"></i></span>
+                  <span class="b">980 KB</span>
+                </div>
+                <div class="mini-doc inflight" style="--c:var(--src-semantic)">
+                  <span class="src">Semantic</span>
+                  <span class="t">Big Bird: Transformers for Longer Sequences</span>
+                  <span class="bar"><i style="width:18%"></i></span>
+                  <span class="b">298 KB</span>
+                </div>
+
+                <div class="mini-stream-label saved">Saved <b class="ok">14</b></div>
+                <div class="mini-doc" style="--c:var(--src-arxiv)">
+                  <span class="src">arXiv</span>
+                  <span class="t">Attention Is All You Need</span>
+                  <span class="ok">✓ done</span>
+                </div>
+                <div class="mini-doc" style="--c:var(--src-openalex)">
+                  <span class="src">OpenAlex</span>
+                  <span class="t">BERT: Pre-training of Deep Bidirectional Transformers</span>
+                  <span class="ok">✓ done</span>
+                </div>
+                <div class="mini-doc" style="--c:var(--src-doaj)">
+                  <span class="src">DOAJ</span>
+                  <span class="t">Linformer: Self-Attention with Linear Complexity</span>
+                  <span class="ok">✓ done</span>
+                </div>
+                <div class="mini-doc" style="--c:var(--src-arxiv)">
+                  <span class="src">arXiv</span>
+                  <span class="t">Longformer: The Long-Document Transformer</span>
+                  <span class="ok">✓ done</span>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+      <div class="hero-preview-tag mono">discover</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== SOURCES ============== -->
+<section id="sources" class="band">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Sources</div>
+      <h2 class="sec-title">
+        Seven open-access sources.<br/>
+        <em>One query.</em>
+      </h2>
+      <p class="sec-sub">
+        Document Finder fans out to every source in parallel, deduplicates by DOI and content
+        hash, and streams the PDFs and EPUBs into your library as they arrive. All open-access,
+        no API keys.
+      </p>
+    </div>
+
+    <div class="srcgrid">
+      <div class="srccard" style="--c:var(--src-arxiv)">
+        <div class="srccard-head">
+          <span class="srcdot"></span>
+          <span class="srcname">arXiv</span>
+          <span class="srcid mono">arxiv.org</span>
+        </div>
+        <p>Preprints in CS, physics, math, biology. Direct PDF links, no rate-limit pain.</p>
+        <div class="srcstat"><b class="mono">2.4M</b><span>papers</span></div>
+      </div>
+      <div class="srccard" style="--c:var(--src-openalex)">
+        <div class="srccard-head">
+          <span class="srcdot"></span>
+          <span class="srcname">OpenAlex</span>
+          <span class="srcid mono">openalex.org</span>
+        </div>
+        <p>~250M scholarly works with an open-access filter applied by default.</p>
+        <div class="srcstat"><b class="mono">250M</b><span>works</span></div>
+      </div>
+      <div class="srccard" style="--c:var(--src-semantic)">
+        <div class="srccard-head">
+          <span class="srcdot"></span>
+          <span class="srcname">Semantic Scholar</span>
+          <span class="srcid mono">semanticscholar.org</span>
+        </div>
+        <p>~200M papers with semantic relevance ranking and citation graphs.</p>
+        <div class="srcstat"><b class="mono">200M</b><span>papers</span></div>
+      </div>
+      <div class="srccard" style="--c:var(--src-ia)">
+        <div class="srccard-head">
+          <span class="srcdot"></span>
+          <span class="srcname">Internet Archive</span>
+          <span class="srcid mono">archive.org</span>
+        </div>
+        <p>Books, papers, scanned media. Slow but deep — perfect for older work.</p>
+        <div class="srcstat"><b class="mono">40M+</b><span>items</span></div>
+      </div>
+      <div class="srccard" style="--c:var(--src-doaj)">
+        <div class="srccard-head">
+          <span class="srcdot"></span>
+          <span class="srcname">DOAJ</span>
+          <span class="srcid mono">doaj.org</span>
+        </div>
+        <p>Directory of Open Access Journals — vetted, peer-reviewed publications only.</p>
+        <div class="srcstat"><b class="mono">20K</b><span>journals</span></div>
+      </div>
+      <div class="srccard" style="--c:var(--src-gut)">
+        <div class="srccard-head">
+          <span class="srcdot"></span>
+          <span class="srcname">Gutenberg</span>
+          <span class="srcid mono">gutenberg.org</span>
+        </div>
+        <p>70,000+ public-domain ebooks. EPUB native, ideal for the history of ideas.</p>
+        <div class="srcstat"><b class="mono">70K</b><span>ebooks</span></div>
+      </div>
+      <div class="srccard" style="--c:var(--src-web)">
+        <div class="srccard-head">
+          <span class="srcdot"></span>
+          <span class="srcname">Web meta-search</span>
+          <span class="srcid mono">built-in</span>
+        </div>
+        <p>Aggregates DuckDuckGo, Bing, Brave, Mojeek, Marginalia &amp; Startpage behind a circuit
+           breaker — plus a no-Docker local SearXNG fallback. Catches the long tail.</p>
+        <div class="srcstat"><b class="mono">6+</b><span>engines, zero setup</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== HOW IT WORKS ============== -->
+<section id="how" class="band alt">
+  <div class="wrap">
+    <div class="sec-head center">
+      <div class="eyebrow">How it works</div>
+      <h2 class="sec-title">
+        Three steps.<br/>
+        <em>Mostly waiting.</em>
+      </h2>
+    </div>
+
+    <ol class="steps">
+      <li class="step">
+        <span class="step-num mono">01</span>
+        <h3>Ask in plain English.</h3>
+        <p>
+          Type what you&rsquo;re looking for. An optional local model splits your question into
+          three or four scholarly sub-queries — Document Finder shows you exactly what it
+          searched, so nothing is hidden.
+        </p>
+        <div class="step-art">
+          <div class="step-q">&ldquo;reinforcement learning robotics&rdquo;</div>
+          <div class="step-arrow">↓</div>
+          <div class="step-subs">
+            <div><span class="mono">01</span> reinforcement learning manipulation <span class="dots mono">●●●○○</span></div>
+            <div><span class="mono">02</span> sim-to-real transfer robotics <span class="dots mono">●●○○○</span></div>
+            <div><span class="mono">03</span> deep RL policy gradient robot <span class="dots mono">●●●●○</span></div>
+          </div>
+        </div>
+      </li>
+      <li class="step">
+        <span class="step-num mono">02</span>
+        <h3>Fan out across every source.</h3>
+        <p>
+          Seven sources, queried in parallel, with per-source rate limiting and
+          retries. You watch the progress bars fill, the source lanes climb,
+          and the queue drain in real time. Stop any time.
+        </p>
+        <div class="step-art lanes">
+          <div class="lane" style="--c:var(--src-arxiv)"><i style="height:88%"></i><span>arXiv</span><b class="mono">14</b></div>
+          <div class="lane" style="--c:var(--src-openalex)"><i style="height:62%"></i><span>OpenAlex</span><b class="mono">9</b></div>
+          <div class="lane" style="--c:var(--src-semantic)"><i style="height:48%"></i><span>Semantic</span><b class="mono">7</b></div>
+          <div class="lane" style="--c:var(--src-ia)"><i style="height:24%"></i><span>IA</span><b class="mono">3</b></div>
+          <div class="lane" style="--c:var(--src-doaj)"><i style="height:38%"></i><span>DOAJ</span><b class="mono">5</b></div>
+          <div class="lane" style="--c:var(--src-gut)"><i style="height:8%"></i><span>Gut.</span><b class="mono">1</b></div>
+          <div class="lane" style="--c:var(--src-web)"><i style="height:34%"></i><span>Web</span><b class="mono">4</b></div>
+        </div>
+      </li>
+      <li class="step">
+        <span class="step-num mono">03</span>
+        <h3>Save to a library.</h3>
+        <p>
+          Each search gets its own folder on disk. PDFs and EPUBs land in the folder,
+          extracted text in <span class="mono">_text/</span>, and a single
+          <span class="mono">library.db</span> holds the metadata. Browse, search,
+          export as ZIP, or feed straight into your favorite LLM tool.
+        </p>
+        <div class="step-art">
+          <div class="folder mono">
+            <div>📁 reinforcement-learning/</div>
+            <div class="indent">📄 attention-is-all-you-need-a1b2c3.pdf<span class="m">· 1.1 MB</span></div>
+            <div class="indent">📁 _text/<span class="m">· 41 files · 18 MB</span></div>
+            <div class="indent">📄 library.db<span class="m">· SQLite · 1.2 MB</span></div>
+          </div>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ============== FEATURES ============== -->
+<section id="features" class="band">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Features</div>
+      <h2 class="sec-title">
+        Built for researchers,<br/>
+        <em>by one.</em>
+      </h2>
+    </div>
+
+    <div class="feats">
+      <div class="feat">
+        <div class="feat-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></div>
+        <h3>Parallel by default</h3>
+        <p>Concurrent downloads with adaptive backoff and silent retries. A big run streams in while you watch, not after.</p>
+      </div>
+      <div class="feat">
+        <div class="feat-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></div>
+        <h3>Local first</h3>
+        <p>Your queries, your library, your machine. Optional on-device AI (a small embedding model plus a 3B LLM) reranks results and expands queries — fully offline, no API keys, no telemetry.</p>
+      </div>
+      <div class="feat">
+        <div class="feat-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></div>
+        <h3>Full-text extraction</h3>
+        <p>Every PDF and EPUB is run through a fast Rust extractor and stored alongside as plain text. Grep-able. LLM-ready. No vendor lock-in.</p>
+      </div>
+      <div class="feat">
+        <div class="feat-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="5" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/></svg></div>
+        <h3>One-click export</h3>
+        <p>Bundle any library into a portable <span class="mono">.zip</span> of PDFs, EPUBs and extracted text — ready to drop into any AI context window.</p>
+      </div>
+      <div class="feat">
+        <div class="feat-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m14.5 9.5-2.5 5-5 2.5 2.5-5z"/></svg></div>
+        <h3>Live telemetry</h3>
+        <p>Sub-query progress, per-source lanes, throughput, ETA, and a per-engine health bar for the web meta-search. For people who like watching their work.</p>
+      </div>
+      <div class="feat">
+        <div class="feat-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2.6"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 4.7 1.7 1.7 0 0 0 10 3.1V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></div>
+        <h3>Themeable</h3>
+        <p>Warm and Apple-HIG themes, each in light and dark, with full reduced-motion support. It should look the way you like.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== RELEASES ============== -->
+<section id="releases" class="band alt">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Changelog</div>
+      <h2 class="sec-title">
+        Releases.<br/>
+        <em>A short history.</em>
+      </h2>
+      <p class="sec-sub">
+        Document Finder ships when it&rsquo;s ready. Every release is a tagged commit on GitHub
+        with unsigned installers for macOS, Linux, and Windows.
+      </p>
+    </div>
+
+    <ol class="changelog">
+      <li class="release current">
+        <div class="rel-side">
+          <div class="rel-ver mono">v2.0</div>
+          <div class="rel-date">The Rewrite</div>
+          <div class="rel-tag">Current</div>
+        </div>
+        <div class="rel-body">
+          <h3>The Rewrite</h3>
+          <p class="rel-tag-line">
+            Rebuilt from scratch on <b>Tauri 2</b> and <b>Rust</b> — a native binary instead of an Electron bundle, and a new Discover screen that actually shows you what the app is doing.
+          </p>
+          <ul class="rel-list">
+            <li><span class="tag new">New</span> Live download stream with sub-query telemetry, per-source lanes, throughput, and ETA.</li>
+            <li><span class="tag new">New</span> Built-in web meta-search — DuckDuckGo, Bing, Brave, Mojeek, Marginalia &amp; Startpage behind a circuit breaker, with a no-Docker local SearXNG fallback. Zero setup.</li>
+            <li><span class="tag new">New</span> On-device AI: bge-small embeddings rerank results and a bundled 3B LLM expands queries — all offline, no API keys.</li>
+            <li><span class="tag new">New</span> Warm and Apple-HIG themes, each in light and dark, with reduced-motion support.</li>
+            <li><span class="tag improved">Improved</span> Library detail view with the full document list, per-doc source attribution, and in-app ZIP export.</li>
+            <li><span class="tag fixed">Fixed</span> arXiv URL canonicalization correctly handles the <span class="mono">vN</span> suffix.</li>
+            <li><span class="tag fixed">Fixed</span> Long titles no longer overflow the sidebar on the Library tab.</li>
+          </ul>
+        </div>
+      </li>
+
+      <li class="release">
+        <div class="rel-side">
+          <div class="rel-ver mono">v1.8</div>
+          <div class="rel-date">Wider coverage</div>
+        </div>
+        <div class="rel-body">
+          <h3>Wider coverage</h3>
+          <ul class="rel-list">
+            <li><span class="tag new">New</span> DOAJ source — vetted, peer-reviewed journals.</li>
+            <li><span class="tag new">New</span> Gutenberg source — public-domain EPUBs for humanities work.</li>
+            <li><span class="tag improved">Improved</span> Concurrency bumped; the download queue stays sticky across runs.</li>
+            <li><span class="tag improved">Improved</span> Settings: per-source caps and a hard total limit.</li>
+            <li><span class="tag fixed">Fixed</span> Internet Archive 503s now back off exponentially instead of failing the run.</li>
+          </ul>
+        </div>
+      </li>
+
+      <li class="release">
+        <div class="rel-side">
+          <div class="rel-ver mono">v1.7</div>
+          <div class="rel-date">Library detail</div>
+        </div>
+        <div class="rel-body">
+          <h3>Library detail</h3>
+          <ul class="rel-list">
+            <li><span class="tag new">New</span> Click any library to see every saved doc, with per-source colour bars and bytes.</li>
+            <li><span class="tag new">New</span> &ldquo;Show in Finder/Files&rdquo; from anywhere a path is shown.</li>
+            <li><span class="tag improved">Improved</span> arXiv parser handles the new HTML-rendered abstract pages.</li>
+            <li><span class="tag fixed">Fixed</span> Duplicate detection by SHA-256 of the decoded PDF stream, not the URL.</li>
+          </ul>
+        </div>
+      </li>
+
+      <li class="release">
+        <div class="rel-side">
+          <div class="rel-ver mono">v1.6</div>
+          <div class="rel-date">The archive update</div>
+        </div>
+        <div class="rel-body">
+          <h3>The archive update</h3>
+          <ul class="rel-list">
+            <li><span class="tag new">New</span> Internet Archive source — pulls scanned books and older papers.</li>
+            <li><span class="tag new">New</span> Run log persisted to disk; one-click open from Settings.</li>
+            <li><span class="tag improved">Improved</span> PDF deduplication moved from per-source to per-run.</li>
+          </ul>
+        </div>
+      </li>
+
+      <li class="release">
+        <div class="rel-side">
+          <div class="rel-ver mono">v1.5</div>
+          <div class="rel-date">First release</div>
+        </div>
+        <div class="rel-body">
+          <h3>Initial public release</h3>
+          <p class="rel-tag-line">
+            arXiv, OpenAlex, Semantic Scholar, Web. The whole thing was about
+            900 lines of TypeScript and a prayer.
+          </p>
+        </div>
+      </li>
+    </ol>
+
+    <div class="rel-foot">
+      <a href="https://github.com/AdamNolle/Document-Finder/releases" target="_blank" rel="noopener" class="btn">
+        Full changelog on GitHub
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ============== SPECS ============== -->
+<section id="specs" class="band">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Under the hood</div>
+      <h2 class="sec-title">
+        Small, fast,<br/>
+        <em>boringly stable.</em>
+      </h2>
+    </div>
+
+    <div class="spec-grid">
+      <div class="spec">
+        <div class="spec-k">Stack</div>
+        <div class="spec-v">
+          <span class="chip mono">Tauri 2</span>
+          <span class="chip mono">Rust</span>
+          <span class="chip mono">Solid.js</span>
+          <span class="chip mono">SQLite</span>
+        </div>
+      </div>
+      <div class="spec">
+        <div class="spec-k">Footprint</div>
+        <div class="spec-v mono lg">Native <span class="dim">— no Electron, no bundled browser</span></div>
+      </div>
+      <div class="spec">
+        <div class="spec-k">Local AI</div>
+        <div class="spec-v">Optional, downloaded on first use, run offline: <span class="mono">bge-small</span> (~33 MB) reranks results, <span class="mono">Qwen 2.5 3B</span> (~2 GB) expands queries. No API keys, ever.</div>
+      </div>
+      <div class="spec">
+        <div class="spec-k">Sources</div>
+        <div class="spec-v">Seven open-access APIs plus a built-in web meta-search over six engines. No keys, no quotas.</div>
+      </div>
+      <div class="spec">
+        <div class="spec-k">Storage</div>
+        <div class="spec-v">Plain files on disk &mdash; PDFs and EPUBs in the query folder, extracted text in <span class="mono">_text/</span>, metadata in a per-library <span class="mono">library.db</span> (SQLite).</div>
+      </div>
+      <div class="spec">
+        <div class="spec-k">Permissions</div>
+        <div class="spec-v">Filesystem (your library folder) and network (the sources you enable). No telemetry.</div>
+      </div>
+      <div class="spec">
+        <div class="spec-k">License</div>
+        <div class="spec-v">
+          <span class="chip mono">MIT</span>
+          <span class="dim">&mdash; source on GitHub, contributions welcome.</span>
+        </div>
+      </div>
+      <div class="spec">
+        <div class="spec-k">Made by</div>
+        <div class="spec-v">Adam Nolle, in the open since 2025.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== DOWNLOAD ============== -->
+<section id="download" class="band download">
+  <div class="wrap">
+    <div class="dl-card">
+      <div class="dl-left">
+        <div class="eyebrow"><span class="dot"></span> Latest &middot; v2.0</div>
+        <h2 class="sec-title">
+          Get Document Finder.<br/>
+          <em>Free, forever.</em>
+        </h2>
+        <p class="sec-sub">
+          Native installers for all three desktop platforms, built from the same commit.
+          The binaries are unsigned — first-launch steps are on the release page.
+        </p>
+      </div>
+      <div class="dl-right">
+        <a href="https://github.com/AdamNolle/Document-Finder/releases/latest" target="_blank" rel="noopener" class="dl-btn">
+          <span class="dl-os">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 13.1c0-2.7 2.2-4 2.3-4.1-1.3-1.8-3.2-2.1-3.9-2.1-1.7-.2-3.2 1-4 1-.9 0-2.1-1-3.5-1-1.8 0-3.4 1-4.3 2.7-1.9 3.2-.5 8 1.3 10.7.9 1.3 1.9 2.7 3.3 2.7 1.3-.1 1.8-.9 3.4-.9 1.6 0 2 .9 3.4.8 1.4 0 2.3-1.3 3.2-2.6 1-1.5 1.4-2.9 1.4-3-.1 0-2.7-1-2.6-4.1zM13.7 5.4c.7-.9 1.2-2.1 1.1-3.4-1 0-2.3.7-3 1.6-.7.8-1.3 2.1-1.1 3.3 1.1.1 2.3-.6 3-1.5z"/></svg>
+          </span>
+          <span class="dl-main">
+            <b>Download for macOS</b>
+            <span>Apple Silicon &middot; macOS 14+</span>
+          </span>
+          <span class="dl-size mono">.dmg</span>
+        </a>
+        <div class="dl-row">
+          <a href="https://github.com/AdamNolle/Document-Finder/releases/latest" target="_blank" rel="noopener" class="dl-btn small">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.5 0v11.5h11C23 5.2 18.3.3 12.5 0zm-1 0C5.7.3 1 5.2.5 11.5h11V0zM.5 12.5C1 18.8 5.7 23.7 11.5 24V12.5H.5zm12 0V24c5.8-.3 10.5-5.2 11-11.5h-11z"/></svg>
+            <span><b>Windows</b><i>.exe &middot; .msi</i></span>
+          </a>
+          <a href="https://github.com/AdamNolle/Document-Finder/releases/latest" target="_blank" rel="noopener" class="dl-btn small">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.5 2c-1 0-1.9.4-2.6 1.1-.7.7-1.1 1.6-1.1 2.6 0 .4.1.8.2 1.1-.3.3-.6.6-.8.9-.5.7-.9 1.6-1 2.5l-.7 4.4c-.1.7-.5 1.4-1 2-.5.6-1.2 1.1-2 1.4-.4.2-.7.4-.9.7-.2.3-.3.7-.2 1 .1.3.3.6.6.7l1.5.5c.6.2 1.2.4 1.8.7.4.2.7.5.9.9.2.4.3.8.3 1.2 0 .3.1.5.3.7.2.2.5.3.7.3h11c.3 0 .5-.1.7-.3.2-.2.3-.4.3-.7 0-.4.1-.8.3-1.2.2-.4.5-.7.9-.9.6-.3 1.2-.5 1.8-.7l1.5-.5c.3-.1.5-.4.6-.7.1-.3 0-.7-.2-1-.2-.3-.5-.5-.9-.7-.8-.3-1.5-.8-2-1.4-.5-.6-.9-1.3-1-2l-.7-4.4c-.1-.9-.5-1.8-1-2.5-.2-.3-.5-.6-.8-.9.1-.3.2-.7.2-1.1 0-1-.4-1.9-1.1-2.6C14.4 2.4 13.5 2 12.5 2zm0 2c.5 0 1 .2 1.3.5.4.4.5.8.5 1.3 0 .4-.2.9-.5 1.2-.4.4-.8.5-1.3.5s-1-.2-1.3-.5c-.4-.4-.5-.8-.5-1.2 0-.5.2-1 .5-1.3.4-.4.8-.5 1.3-.5z"/></svg>
+            <span><b>Linux</b><i>.AppImage &middot; .deb</i></span>
+          </a>
+        </div>
+        <div class="dl-fine mono">
+          Unsigned builds &middot; verify on the
+          <a href="https://github.com/AdamNolle/Document-Finder/releases/latest" target="_blank" rel="noopener">release page</a>
+          <span class="sep">·</span>
+          <a href="https://github.com/AdamNolle/Document-Finder" target="_blank" rel="noopener">source</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== FOOTER ============== -->
+<footer class="footer">
+  <div class="wrap foot-row">
+    <div class="foot-brand">
+      <img src="logo.svg" class="brand-mark" alt="Document Finder logo" />
+      <div>
+        <div class="brand-name">Document <em>Finder</em></div>
+        <div class="foot-tag">Research, found. Since 2025.</div>
+      </div>
+    </div>
+    <div class="foot-cols">
+      <div>
+        <div class="foot-h">Product</div>
+        <a href="#features">Features</a>
+        <a href="#sources">Sources</a>
+        <a href="#releases">Releases</a>
+        <a href="#specs">Specs</a>
+      </div>
+      <div>
+        <div class="foot-h">Project</div>
+        <a href="https://github.com/AdamNolle/Document-Finder" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/AdamNolle/Document-Finder/issues" target="_blank" rel="noopener">Issues</a>
+        <a href="https://github.com/AdamNolle/Document-Finder/releases" target="_blank" rel="noopener">Releases</a>
+      </div>
+      <div>
+        <div class="foot-h">Read</div>
+        <a href="https://github.com/AdamNolle/Document-Finder#readme" target="_blank" rel="noopener">README</a>
+        <a href="https://github.com/AdamNolle/Document-Finder/blob/main/LICENSE" target="_blank" rel="noopener">License (MIT)</a>
+        <a href="#download">Download</a>
+      </div>
+    </div>
+  </div>
+  <div class="wrap foot-fine">
+    <span>© 2026 Document Finder contributors.</span>
+    <span class="mono">Open source · MIT</span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -23,7 +23,6 @@ export interface RunRequest {
   use_llm_expansion?: boolean;
   use_llm_filter?: boolean;
   llm_model_id?: string | null;
-  source_options?: Record<string, { instance_url?: string }>;
 }
 
 export type ModelKind = "embedding" | "llm";

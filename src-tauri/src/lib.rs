@@ -46,10 +46,14 @@ pub fn run() {
             // without needing Docker or a Python SearXNG install.
             let handle = app.handle().clone();
             let client = std::sync::Arc::new(sources::make_client());
-            let meta_search = std::sync::Arc::new(sources::meta_search::MetaSearchSource::new(
-                client,
-                Some(handle),
-            ));
+            // Back the local server with a *no-pool* aggregator: the pool
+            // prefers the local server, so a pool-backed one here would recurse.
+            let meta_search = std::sync::Arc::new(
+                sources::meta_search::MetaSearchSource::new_without_pool_fallback(
+                    client,
+                    Some(handle),
+                ),
+            );
             tauri::async_runtime::spawn(async move {
                 match sources::local_searxng::spawn_server(meta_search).await {
                     Ok(port) => tracing::info!("local SearXNG listening on 127.0.0.1:{port}"),

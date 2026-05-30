@@ -69,12 +69,39 @@ struct EngineEntry {
 pub struct MetaSearchSource {
     engines: Vec<EngineEntry>,
     app: Option<AppHandle>,
-    fallback: Arc<SearxngPoolSource>,
+    fallback: Option<Arc<SearxngPoolSource>>,
 }
 
 impl MetaSearchSource {
+    /// Standard aggregator: six web scrapers with the public SearXNG pool as a
+    /// fallback when every scraper's circuit is open.
     pub fn new(client: Arc<reqwest::Client>, app: Option<AppHandle>) -> Self {
-        let engines = vec![
+        let engines = Self::build_engines(&client);
+        let fallback = Some(Arc::new(SearxngPoolSource::new(client)));
+        Self {
+            engines,
+            app,
+            fallback,
+        }
+    }
+
+    /// Variant with **no** public-pool fallback. Used to back the in-process
+    /// SearXNG server (`local_searxng`): the pool prefers that same local
+    /// server, so a pool-backed aggregator there would recurse local → pool →
+    /// local indefinitely. Without a fallback the local server returns an empty
+    /// page when all circuits are open, and the real pool fan-out runs one
+    /// level up in the caller.
+    pub fn new_without_pool_fallback(client: Arc<reqwest::Client>, app: Option<AppHandle>) -> Self {
+        let engines = Self::build_engines(&client);
+        Self {
+            engines,
+            app,
+            fallback: None,
+        }
+    }
+
+    fn build_engines(client: &Arc<reqwest::Client>) -> Vec<EngineEntry> {
+        vec![
             EngineEntry {
                 name: "duckduckgo",
                 source: Box::new(DuckDuckGoSource::new(client.clone())),
@@ -99,13 +126,7 @@ impl MetaSearchSource {
                 name: "startpage",
                 source: Box::new(StartpageHtmlSource::new(client.clone())),
             },
-        ];
-        let fallback = Arc::new(SearxngPoolSource::new(client));
-        Self {
-            engines,
-            app,
-            fallback,
-        }
+        ]
     }
 
     fn emit_health(&self, backend: &str, status: &str, result_count: usize, latency_ms: u64) {
@@ -223,11 +244,18 @@ impl Source for MetaSearchSource {
             });
         }
 
-        // If all circuits are open, fall back to public SearXNG pool.
+        // If all circuits are open, fall back to the public SearXNG pool —
+        // unless this aggregator was built without one (it backs the in-process
+        // local SearXNG server), in which case return an empty page so callers
+        // move on instead of looping back into us.
         if active_count == 0 {
-            tracing::info!("meta_search: all circuits open, falling back to SearxNG pool");
-            let fallback = Arc::clone(&self.fallback);
-            return fallback.search(keywords, limit).await;
+            if let Some(fallback) = &self.fallback {
+                tracing::info!("meta_search: all circuits open, falling back to SearXNG pool");
+                let fallback = Arc::clone(fallback);
+                return fallback.search(keywords, limit).await;
+            }
+            tracing::info!("meta_search: all circuits open and no pool fallback — empty result");
+            return stream::empty().boxed();
         }
 
         drop(tx);

@@ -1,7 +1,5 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:is(.dark *));
-
 /* =============================================================================
  * Neumorphic / Skeumorphic design system — Mavericks/iOS-6 era palette.
  *
@@ -54,6 +52,9 @@
   --color-source-mojeek: oklch(0.55 0.18 240);
   --color-source-marginalia: oklch(0.5 0.18 100);
   --color-source-startpage: oklch(0.5 0.18 220);
+  /* SearXNG fallback sources — surface only when every web scraper is down. */
+  --color-source-searxng_local: oklch(0.5 0.18 300);
+  --color-source-searxng_pool: oklch(0.55 0.16 300);
 
   /* ---- Backwards-compatible aliases (resolve to warm canvas hue) ------ */
   --color-background: oklch(0.945 0.008 80);

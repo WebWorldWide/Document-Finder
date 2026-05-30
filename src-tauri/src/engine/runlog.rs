@@ -11,7 +11,7 @@
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::Value;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -107,15 +107,45 @@ pub fn log(event: Event<'_>) {
 }
 
 /// Returns recent log lines as parsed JSON, newest first. Capped at `max`.
+///
+/// Reads only a bounded tail window of the file (scaled to `max`, clamped to a
+/// few MB) rather than the whole log, so a long-lived `runs.jsonl` that has
+/// grown to tens of megabytes can't pull it all into memory.
 pub fn read_tail(max: usize) -> Vec<Value> {
     let Some(path) = log_path() else {
         return Vec::new();
     };
-    let Ok(content) = std::fs::read_to_string(&path) else {
+    let Ok(mut file) = std::fs::File::open(&path) else {
         return Vec::new();
     };
-    let mut lines: Vec<Value> = content
-        .lines()
+    let Ok(len) = file.metadata().map(|m| m.len()) else {
+        return Vec::new();
+    };
+
+    // Budget ~2 KB per requested line, clamped to [64 KB, 4 MB], never past
+    // the file length. Bounds memory regardless of `max` or file size.
+    let window = (max as u64)
+        .saturating_mul(2048)
+        .clamp(64 * 1024, 4 * 1024 * 1024)
+        .min(len);
+    let start = len - window;
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return Vec::new();
+    }
+
+    let mut bytes = Vec::with_capacity(window as usize);
+    if file.read_to_end(&mut bytes).is_err() {
+        return Vec::new();
+    }
+    // Lossy decode tolerates a multibyte char split at the window boundary;
+    // that first (partial) line is dropped below when we seeked past the start.
+    let buf = String::from_utf8_lossy(&bytes);
+
+    let mut iter = buf.lines();
+    if start > 0 {
+        iter.next();
+    }
+    let mut lines: Vec<Value> = iter
         .rev()
         .filter_map(|l| serde_json::from_str(l).ok())
         .take(max)

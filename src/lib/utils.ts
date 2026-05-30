@@ -31,6 +31,9 @@ export const SOURCE_LABELS: Record<string, string> = {
   mojeek: "Mojeek",
   marginalia: "Marginalia",
   startpage: "Startpage",
+  // Internal fallback sources tagged by SearxngPoolSource (not user-selectable).
+  searxng_local: "SearXNG (local)",
+  searxng_pool: "SearXNG (pool)",
 };
 
 export const ALL_SOURCES = [

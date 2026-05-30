@@ -1,4 +1,9 @@
 packages:
   - "."
+allowBuilds:
+  esbuild: set this to true or false
+# esbuild ships its prebuilt binary in the platform optional dependency
+# (@esbuild/<os>-<arch>), so its postinstall script is not needed. Declaring it
+# here acknowledges that and silences pnpm 11's unapproved-build hard error.
 onlyBuiltDependencies:
   - esbuild

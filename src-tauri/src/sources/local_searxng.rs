@@ -74,6 +74,19 @@ struct AppCtx {
     backend: Arc<dyn Source>,
 }
 
+fn empty_response(query: String) -> SearchResponse {
+    SearchResponse {
+        query,
+        number_of_results: 0,
+        results: vec![],
+        answers: vec![],
+        corrections: vec![],
+        infoboxes: vec![],
+        suggestions: vec![],
+        unresponsive_engines: vec![],
+    }
+}
+
 /// SearXNG mirrors `?q=` straight through; honor that.
 async fn search(
     State(ctx): State<AppCtx>,
@@ -81,19 +94,15 @@ async fn search(
 ) -> impl IntoResponse {
     let keywords: Vec<String> = params.q.split_whitespace().map(|s| s.to_string()).collect();
     if keywords.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(SearchResponse {
-                query: params.q,
-                number_of_results: 0,
-                results: vec![],
-                answers: vec![],
-                corrections: vec![],
-                infoboxes: vec![],
-                suggestions: vec![],
-                unresponsive_engines: vec![],
-            }),
-        );
+        return (StatusCode::BAD_REQUEST, Json(empty_response(params.q)));
+    }
+
+    // We don't paginate — the backend returns a single ranked batch. Mirror
+    // SearXNG's "no more results" for any page past the first so a paginating
+    // client terminates cleanly. `language` is accepted for API compatibility
+    // but unused (the backing web scrapers are English-centric).
+    if params.pageno.unwrap_or(1) > 1 {
+        return (StatusCode::OK, Json(empty_response(params.q)));
     }
 
     let stream = ctx.backend.search(keywords, 30).await;
@@ -149,29 +158,36 @@ pub async fn spawn_server(backend: Arc<dyn Source>) -> std::io::Result<u16> {
         .route("/healthz", get(healthz))
         .with_state(ctx);
 
-    let _ = LOCAL_PORT.set(port);
-
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, router).await {
             tracing::error!("local_searxng server exited: {}", e);
         }
     });
 
-    // Health-poll briefly so callers know we're ready.
+    // Health-poll *before* registering the port so `local_port()` only ever
+    // hands out a port that is actually accepting connections — closes the
+    // startup race where a caller could query the server before it binds.
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(500))
         .build()
         .expect("reqwest client");
     let url = format!("http://127.0.0.1:{port}/healthz");
+    let mut ready = false;
     for _ in 0..20 {
         if client.get(&url).send().await.is_ok() {
-            tracing::info!("local_searxng ready on 127.0.0.1:{port}");
-            return Ok(port);
+            ready = true;
+            break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    // Server didn't respond in 2s — return the port anyway; queries will
-    // surface errors if it is genuinely wedged.
-    tracing::warn!("local_searxng health check timed out; returning port {port} anyway");
+
+    let _ = LOCAL_PORT.set(port);
+    if ready {
+        tracing::info!("local_searxng ready on 127.0.0.1:{port}");
+    } else {
+        // Didn't respond in 2s — register anyway; queries will surface errors
+        // if it is genuinely wedged.
+        tracing::warn!("local_searxng health check timed out; registered port {port} anyway");
+    }
     Ok(port)
 }

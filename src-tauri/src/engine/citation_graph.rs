@@ -75,8 +75,8 @@ fn doi_from(doc: &Document) -> Option<String> {
 /// Refs/cites are immutable once published (papers don't un-cite each other),
 /// so any later query that looks at the same DOI gets a free hit. Bounded by
 /// unique DOIs ever queried this process — practically a few hundred.
-static FETCH_CACHE: Lazy<RwLock<HashMap<(&'static str, String), Vec<String>>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
+type FetchCache = RwLock<HashMap<(&'static str, String), Vec<String>>>;
+static FETCH_CACHE: Lazy<FetchCache> = Lazy::new(|| RwLock::new(HashMap::new()));
 
 async fn fetch_dois(client: &reqwest::Client, template: &str, paper_doi: &str) -> Vec<String> {
     let kind = if template == REFERENCES_URL {

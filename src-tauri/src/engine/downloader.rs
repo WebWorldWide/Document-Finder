@@ -214,8 +214,9 @@ where
         Err(e) => return DownloadOutcome::Failed(e.to_string()),
     };
 
-    // Pre-reject oversized files declared in Content-Length before writing anything.
-    if total > 0 && total > MAX_FILE_BYTES {
+    // Pre-reject oversized files declared in Content-Length before writing
+    // anything. (`total == 0` means "unknown length" and is never > the cap.)
+    if total > MAX_FILE_BYTES {
         return DownloadOutcome::Failed(format!(
             "file too large ({} bytes declared in Content-Length)",
             total

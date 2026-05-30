@@ -139,19 +139,15 @@ fn parse_feed(xml: &str) -> Vec<EntryBuilder> {
                 }
             }
 
-            Ok(Event::Text(ref e)) => {
-                if active_field.is_some() {
-                    if let Ok(t) = e.unescape() {
-                        text_buf.push_str(&t);
-                    }
+            Ok(Event::Text(ref e)) if active_field.is_some() => {
+                if let Ok(t) = e.unescape() {
+                    text_buf.push_str(&t);
                 }
             }
 
-            Ok(Event::CData(ref e)) => {
-                if active_field.is_some() {
-                    if let Ok(t) = std::str::from_utf8(e.as_ref()) {
-                        text_buf.push_str(t);
-                    }
+            Ok(Event::CData(ref e)) if active_field.is_some() => {
+                if let Ok(t) = std::str::from_utf8(e.as_ref()) {
+                    text_buf.push_str(t);
                 }
             }
 

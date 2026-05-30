@@ -1,5 +1,10 @@
 name: Release
 
+# Triggered when a `v*` tag is pushed. Builds installers on each of the
+# three desktop OSes, then `tauri-apps/tauri-action@v0` aggregates them
+# into a draft GitHub Release. The user reviews and publishes manually
+# (releaseDraft: true) — first review prevents an accidental ship.
+
 on:
   push:
     tags:
@@ -9,33 +14,81 @@ permissions:
   contents: write
 
 jobs:
-  build-macos:
-    runs-on: macos-14
+  build:
+    name: Build ${{ matrix.platform.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - label: macOS (Apple Silicon)
+            os: macos-14
+            args: --target aarch64-apple-darwin
+          # ubuntu-24.04 (glibc 2.39) is required: the `ort` crate's
+          # prebuilt ONNX Runtime binary references __isoc23_strtoll etc.
+          # (glibc 2.38+ C23 symbols), so linking on 22.04's glibc 2.35
+          # fails with "undefined symbol". The produced .deb/.AppImage
+          # therefore needs glibc 2.39+ — fine for modern distros.
+          - label: Linux (x86_64)
+            os: ubuntu-24.04
+            args: ""
+          - label: Windows (x86_64)
+            os: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.platform.os }}
+
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux system deps
+        if: matrix.platform.os == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            cmake \
+            clang
+
+      - name: Install macOS build deps
+        if: matrix.platform.os == 'macos-14'
+        run: |
+          # llama-cpp-2 builds llama.cpp via cmake; the runner already
+          # has Xcode + cmake but make double-sure cmake is on PATH.
+          which cmake
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.platform.os == 'macos-14' && 'aarch64-apple-darwin' || '' }}
 
       - name: Cache Rust
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Key the cache by the platform so we don't cross-share macOS
+          # build artifacts with Linux/Windows.
+          key: ${{ matrix.platform.os }}-release
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          # pnpm 11, matching ci.yml. The `--ignore-scripts` flag on the
+          # install below sidesteps pnpm 11's ERR_PNPM_IGNORED_BUILDS.
+          version: 11
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "pnpm"
 
-      - run: pnpm install --frozen-lockfile
+      # `--ignore-scripts` bypasses pnpm 11's hard error on unapproved build
+      # scripts. esbuild's platform binary ships via the optional
+      # `@esbuild/<platform>` packages, so the postinstall isn't needed.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Build Tauri app (universal macOS)
+      - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -43,97 +96,35 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Document Finder ${{ github.ref_name }}"
           releaseBody: |
-            ## Install
+            Document Finder ${{ github.ref_name }}
 
-            ### macOS (unsigned — Gatekeeper bypass required)
+            ## Installers in this release
 
-            1. Download `Document.Finder_${{ github.ref_name }}_universal.dmg`
-            2. Open the DMG and drag **Document Finder** to Applications
-            3. On first launch, macOS will block it with "cannot be opened because it is from an unidentified developer"
-            4. Open **System Settings → Privacy & Security**, scroll down, click **Open Anyway**
-            5. Confirm in the next dialog
+            | Platform | File | Notes |
+            |---|---|---|
+            | macOS (Apple Silicon) | `Document.Finder_${{ github.ref_name }}_aarch64.dmg` | Drag to Applications. **Unsigned** — see below. |
+            | Linux | `document-finder_${{ github.ref_name }}_amd64.deb` / `*.AppImage` | `.deb` for Debian/Ubuntu, `.AppImage` portable. Needs glibc 2.39+. |
+            | Windows | `Document.Finder_${{ github.ref_name }}_x64-setup.exe` / `*.msi` | NSIS installer or MSI. |
 
-            > **Why unsigned?** Code signing requires an Apple Developer account ($99/yr).
-            > The app makes no outbound connections except to the sources you enable.
-            > You can verify the binary with `codesign -dvvv /Applications/Document\ Finder.app`.
+            ## First-launch notes (unsigned binaries)
 
+            **macOS** — Gatekeeper will block the unsigned `.app`. After dragging to Applications:
+            1. System Settings → Privacy & Security → scroll down
+            2. Click **Open Anyway** next to the Document Finder warning
+            3. Confirm in the next dialog
+
+            **Windows** — SmartScreen will warn on first run. Click **More info** → **Run anyway**.
+
+            **Linux** — `.AppImage` is portable, no install. Mark it executable:
+            `chmod +x Document.Finder_*.AppImage && ./Document.Finder_*.AppImage`
+
+            ## Why unsigned?
+
+            Code signing requires per-OS developer certificates (Apple Developer Program $99/yr,
+            Authenticode for Windows). The app makes no outbound connections except to the
+            open-access sources you enable. Verify the binary with:
+            - macOS: `codesign -dvvv /Applications/Document\ Finder.app`
+            - Windows: `Get-AuthenticodeSignature .\document-finder.exe`
           releaseDraft: true
           prerelease: false
-          args: --target universal-apple-darwin
-
-  build-linux:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: latest
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "pnpm"
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Build Tauri app (Linux)
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Document Finder ${{ github.ref_name }}"
-          releaseDraft: true
-          prerelease: false
-
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: latest
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "pnpm"
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Build Tauri app (Windows)
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Document Finder ${{ github.ref_name }}"
-          releaseDraft: true
-          prerelease: false
+          args: ${{ matrix.platform.args }}

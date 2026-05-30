@@ -53,26 +53,6 @@ pub async fn validate_url(raw: &str) -> Result<Url, String> {
     Ok(url)
 }
 
-/// Synchronous variant for contexts where async is not available.
-/// Does NOT perform DNS resolution — only validates scheme, credentials,
-/// and parses the URL. Call the async `validate_url` for full SSRF protection.
-pub fn validate_url_sync(raw: &str) -> Result<Url, String> {
-    let url = Url::parse(raw).map_err(|e| format!("Invalid URL: {e}"))?;
-
-    if url.scheme() != "https" {
-        return Err(format!("Rejected: scheme '{}' is not https", url.scheme()));
-    }
-
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err("Rejected: URL must not contain credentials".into());
-    }
-
-    url.host_str()
-        .ok_or_else(|| "Rejected: URL has no host".to_string())?;
-
-    Ok(url)
-}
-
 fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -99,26 +79,6 @@ fn is_private_ip(ip: &IpAddr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn rejects_http_scheme() {
-        assert!(validate_url_sync("http://example.com/path").is_err());
-    }
-
-    #[test]
-    fn rejects_file_scheme() {
-        assert!(validate_url_sync("file:///etc/passwd").is_err());
-    }
-
-    #[test]
-    fn rejects_credentials_in_url() {
-        assert!(validate_url_sync("https://user:pass@example.com/").is_err());
-    }
-
-    #[test]
-    fn accepts_clean_https() {
-        assert!(validate_url_sync("https://searx.space/data/instances.json").is_ok());
-    }
 
     #[test]
     fn loopback_is_private() {

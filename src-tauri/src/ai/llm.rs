@@ -19,7 +19,6 @@ use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
-use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::{Arc, OnceLock, RwLock};
 use tokio::sync::Mutex as AsyncMutex;
@@ -133,38 +132,6 @@ impl LlmModel {
     pub fn yes_no(&self, prompt: &str) -> anyhow::Result<bool> {
         let raw = self.generate(prompt, 6)?;
         Ok(parse_yes(&raw))
-    }
-
-    /// Batch variant — runs `yes_no` over many prompts in one call so the
-    /// caller pays the spawn_blocking + mutex acquisition cost once instead
-    /// of N times. The decode itself is still serial inside the model
-    /// (llama.cpp contexts aren't shareable across calls), but the
-    /// orchestration overhead drops to O(1).
-    ///
-    /// On any individual error or panic we conservatively keep the candidate
-    /// (true). `catch_unwind` around each call guards against llama.cpp C FFI
-    /// panics permanently hanging the async mutex on the blocking thread.
-    ///
-    /// SAFETY: llama.cpp is not formally unwind-safe (C FFI), but we accept a
-    /// potential small resource leak in exchange for not deadlocking the mutex.
-    pub fn batch_yes_no(&self, prompts: &[String]) -> Vec<bool> {
-        prompts
-            .iter()
-            .map(|p| {
-                let result = std::panic::catch_unwind(AssertUnwindSafe(|| self.yes_no(p)));
-                match result {
-                    Ok(Ok(v)) => v,
-                    Ok(Err(e)) => {
-                        tracing::warn!("llm yes_no error (conservative keep): {e}");
-                        true
-                    }
-                    Err(_) => {
-                        tracing::error!("llm yes_no panicked — conservative keep");
-                        true
-                    }
-                }
-            })
-            .collect()
     }
 }
 

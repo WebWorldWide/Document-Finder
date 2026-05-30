@@ -1,9 +1,6 @@
 //! Persistence logic for the `manifest.json` file which tracks all documents within a library.
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
-
-use crate::sources::Document;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Manifest {
@@ -40,43 +37,7 @@ pub struct DocumentExt {
     pub identifier: Option<String>,
 }
 
-impl From<&Document> for DocumentExt {
-    fn from(d: &Document) -> Self {
-        Self {
-            title: d.title.clone(),
-            url: d.url.clone(),
-            source: d.source.clone(),
-            authors: d.authors.clone(),
-            year: d.year.clone(),
-            abstract_: d.abstract_.clone(),
-            identifier: d.identifier.clone(),
-        }
-    }
-}
-
-pub fn load(path: &Path, query: &str) -> Manifest {
-    if !path.exists() {
-        return Manifest {
-            query: query.to_string(),
-            documents: Vec::new(),
-        };
-    }
-    match std::fs::read_to_string(path) {
-        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|_| Manifest {
-            query: query.to_string(),
-            documents: Vec::new(),
-        }),
-        Err(_) => Manifest {
-            query: query.to_string(),
-            documents: Vec::new(),
-        },
-    }
-}
-
-pub fn save(path: &Path, manifest: &Manifest) -> std::io::Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    let json = serde_json::to_string_pretty(manifest)?;
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
-}
+// NOTE: `Manifest` is read (never written) by the library export path in
+// `commands.rs`, which deserializes a legacy `manifest.json` directly via
+// serde. The app itself persists to SQLite, so there are no `save`/`load`
+// helpers here anymore.

@@ -164,73 +164,23 @@ async fn get_instances(client: &reqwest::Client) -> Vec<String> {
     }
 }
 
-/// Issue a SearXNG query to the in-process local server (no SSRF check
-/// needed — we control the URL and it is always 127.0.0.1).
-async fn query_local(
+/// Issue a SearXNG `/search?format=json` query to `base_url` and map the
+/// results to `Document`s tagged with `source_label`. Shared by the in-process
+/// local server and the public pool instances — they speak the same API.
+///
+/// Callers are responsible for SSRF-validating `base_url` first; the local
+/// server is exempt because it is always our own `127.0.0.1` address.
+async fn query_searxng(
     client: &reqwest::Client,
     base_url: &str,
     keywords: &str,
     limit: usize,
+    source_label: &'static str,
+    timeout: Duration,
 ) -> anyhow::Result<Vec<Document>> {
     let search_url = format!("{base_url}/search");
     let resp = tokio::time::timeout(
-        Duration::from_secs(15),
-        client
-            .get(&search_url)
-            .query(&[
-                ("q", keywords),
-                ("format", "json"),
-                ("pageno", "1"),
-                ("language", "en"),
-            ])
-            .send(),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("timeout querying local searxng"))?
-    .map_err(|e| anyhow::anyhow!("local request: {e}"))?;
-
-    #[derive(Deserialize)]
-    struct SearxResp {
-        results: Vec<SearxResult>,
-    }
-    #[derive(Deserialize)]
-    struct SearxResult {
-        url: String,
-        title: String,
-        content: Option<String>,
-    }
-
-    let body: SearxResp = resp
-        .json()
-        .await
-        .map_err(|e| anyhow::anyhow!("parse local searxng response: {e}"))?;
-
-    Ok(body
-        .results
-        .into_iter()
-        .take(limit)
-        .map(|r| Document {
-            title: r.title,
-            url: r.url,
-            source: "searxng_local".to_string(),
-            authors: vec![],
-            year: None,
-            abstract_: r.content,
-            identifier: None,
-        })
-        .collect())
-}
-
-/// Issue a SearXNG search query to one instance and return the raw results.
-async fn query_instance(
-    client: &reqwest::Client,
-    base_url: &str,
-    keywords: &str,
-    limit: usize,
-) -> anyhow::Result<Vec<Document>> {
-    let search_url = format!("{base_url}/search");
-    let resp = tokio::time::timeout(
-        QUERY_TIMEOUT,
+        timeout,
         client
             .get(&search_url)
             .query(&[
@@ -259,7 +209,7 @@ async fn query_instance(
     let body: SearxResp = resp
         .json()
         .await
-        .map_err(|e| anyhow::anyhow!("parse SearXNG response: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("parse SearXNG response from {base_url}: {e}"))?;
 
     Ok(body
         .results
@@ -268,7 +218,7 @@ async fn query_instance(
         .map(|r| Document {
             title: r.title,
             url: r.url,
-            source: "searxng_pool".to_string(),
+            source: source_label.to_string(),
             authors: vec![],
             year: None,
             abstract_: r.content,
@@ -305,7 +255,16 @@ impl Source for SearxngPoolSource {
         // us off third-party infrastructure for the common case.
         if let Some(port) = local_searxng::local_port() {
             let base_url = format!("http://127.0.0.1:{port}");
-            match query_local(&self.client, &base_url, &query, limit).await {
+            match query_searxng(
+                &self.client,
+                &base_url,
+                &query,
+                limit,
+                "searxng_local",
+                Duration::from_secs(15),
+            )
+            .await
+            {
                 Ok(docs) if !docs.is_empty() => {
                     tracing::debug!("searxng_pool: local server returned {} docs", docs.len());
                     return stream::iter(docs.into_iter().map(Ok)).boxed();
@@ -358,7 +317,16 @@ impl Source for SearxngPoolSource {
             let client = client.clone();
             let query = query_clone.clone();
             tokio::spawn(async move {
-                match query_instance(&client, &url, &query, per_instance).await {
+                match query_searxng(
+                    &client,
+                    &url,
+                    &query,
+                    per_instance,
+                    "searxng_pool",
+                    QUERY_TIMEOUT,
+                )
+                .await
+                {
                     Ok(docs) => {
                         for doc in docs {
                             if tx.send(Ok(doc)).await.is_err() {
