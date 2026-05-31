@@ -59,6 +59,14 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
                 default
               </span>
             </Show>
+            <Show when={m().license}>
+              <span
+                class="rounded-full bg-[var(--color-foreground)]/6 px-1.5 py-0.5 text-[9px] font-medium text-[var(--color-foreground-muted)]"
+                title="Model weights license"
+              >
+                {m().license}
+              </span>
+            </Show>
           </div>
           <p class="mt-1 text-[11px] leading-relaxed text-[var(--color-foreground-muted)]">
             {m().description}

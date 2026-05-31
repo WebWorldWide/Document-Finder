@@ -33,6 +33,7 @@ export interface ModelInfo {
   display_name: string;
   description: string;
   is_default: boolean;
+  license: string;
   approx_bytes: number;
   on_disk_bytes: number;
   status:
