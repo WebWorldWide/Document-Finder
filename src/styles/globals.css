@@ -37,6 +37,7 @@
   --color-success: oklch(0.6 0.16 148);
   --color-success-fg: oklch(0.3 0.1 148);
   --color-success-bg: oklch(0.95 0.04 148);
+  --color-warning: oklch(0.72 0.16 75);
 
   /* ---- Source colors (unchanged: encode source identity) -------------- */
   --color-source-arxiv: oklch(0.5 0.18 30);
@@ -790,6 +791,7 @@ h4 {
   --color-success: oklch(0.65 0.16 148);
   --color-success-fg: oklch(0.85 0.1 148);
   --color-success-bg: oklch(0.25 0.06 148);
+  --color-warning: oklch(0.78 0.15 75);
 
   /* Compat aliases */
   --color-background: oklch(0.17 0.01 80);
@@ -932,6 +934,7 @@ h4 {
   --color-success: oklch(0.55 0.18 148);
   --color-success-fg: oklch(0.28 0.12 148);
   --color-success-bg: oklch(0.94 0.04 148);
+  --color-warning: oklch(0.7 0.16 70);
 
   --color-background: oklch(0.96 0.003 270);
   --color-card: oklch(1 0 0);
@@ -1040,6 +1043,7 @@ h4 {
   --color-success: oklch(0.65 0.18 148);
   --color-success-fg: oklch(0.85 0.1 148);
   --color-success-bg: oklch(0.22 0.07 148);
+  --color-warning: oklch(0.78 0.15 75);
 
   --color-background: oklch(0.115 0.004 270);
   --color-card: oklch(0.175 0.005 270);

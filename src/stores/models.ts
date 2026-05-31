@@ -2,6 +2,7 @@ import { createStore, produce } from "solid-js/store";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api, type ModelInfo } from "@/lib/tauri";
 import type { ModelProgressPayload, ModelStatusPayload } from "@/lib/events";
+import { reconcileLlmModel } from "@/stores/settings";
 
 interface ModelsState {
   models: ModelInfo[];
@@ -39,6 +40,8 @@ async function refresh() {
   try {
     const list = await api.listModels();
     setState("models", list);
+    // Drop a persisted LLM selection that's no longer in the catalog.
+    reconcileLlmModel(list.map((m) => m.id));
     // Embedding readiness is decoupled from the registry list — fastembed
     // owns its own model cache. Best-effort poll; ignore errors.
     api

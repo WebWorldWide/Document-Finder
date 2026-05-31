@@ -4,8 +4,15 @@
 //! to put it on disk, and how to verify it. SHA256 hashes are pinned so a
 //! tampered or corrupted file is rejected after download.
 //!
-//! Adding a model: append to `REGISTRY`, fill out all fields, ship in a PR.
-//! The frontend automatically picks up new entries via `list_models()`.
+//! Licensing: this app is AGPL-3.0-or-later, so the catalog ships only models
+//! under permissive licenses (Apache-2.0) that any user — including commercial
+//! — may run without extra restrictions. Models with non-commercial or
+//! custom-restricted terms (e.g. Qwen's "qwen-research", Meta's Llama Community
+//! License, Mistral's Research License) are intentionally excluded as defaults.
+//!
+//! Adding a model: append to `REGISTRY`, fill out all fields (including a
+//! permissive `license`), ship in a PR. The frontend automatically picks up new
+//! entries via `list_models()`.
 
 use once_cell::sync::Lazy;
 use serde::Serialize;
@@ -31,9 +38,15 @@ pub struct ModelEntry {
     /// the server reports Content-Length.
     pub approx_bytes: u64,
     /// Pinned SHA256 of the file. Verified after download. Empty string
-    /// disables verification (useful for files we don't yet have a hash
-    /// for, but every shipping default should have one).
+    /// disables verification — but every shipping entry has one pinned (taken
+    /// from the file's HuggingFace LFS ETag), so a tampered or corrupted
+    /// download is rejected and re-fetched.
     pub sha256: &'static str,
+    /// SPDX license identifier of the model weights (e.g. "Apache-2.0").
+    /// The catalog ships only permissive licenses compatible with this app's
+    /// AGPL-3.0-or-later license; surfaced in the Settings UI so users see the
+    /// terms before downloading.
+    pub license: &'static str,
     /// Human-readable description for the Settings UI.
     pub description: &'static str,
     /// Whether this entry is the recommended default for its kind.
@@ -61,37 +74,31 @@ pub static REGISTRY: Lazy<Vec<ModelEntry>> = Lazy::new(|| {
         // is exposed to the UI via the `is_embedding_loaded` Tauri command.
         //
         // ---- LLM models -------------------------------------------------
-        ModelEntry {
-            id: "qwen2.5-3b-instruct-q4_k_m",
-            kind: ModelKind::Llm,
-            display_name: "Qwen 2.5 3B Instruct (Q4_K_M)",
-            hf_repo: "Qwen/Qwen2.5-3B-Instruct-GGUF",
-            hf_filename: "qwen2.5-3b-instruct-q4_k_m.gguf",
-            approx_bytes: 2_020_000_000, // ~2.0 GB
-            sha256: "",
-            description: "Default local LLM. ~2 GB. Fast on Apple Silicon. Used for query expansion and borderline candidate filtering.",
-            is_default: true,
-        },
+        // Only Apache-2.0 models — small, permissive, and strong at the two
+        // lightweight tasks we use an LLM for (query expansion + borderline
+        // candidate filtering). Bigger models aren't needed for this work.
         ModelEntry {
             id: "qwen2.5-1.5b-instruct-q4_k_m",
             kind: ModelKind::Llm,
             display_name: "Qwen 2.5 1.5B Instruct (Q4_K_M)",
             hf_repo: "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
             hf_filename: "qwen2.5-1.5b-instruct-q4_k_m.gguf",
-            approx_bytes: 1_020_000_000,
-            sha256: "",
-            description: "Smaller, faster LLM (~1 GB). Pick this if your machine is older or RAM-limited.",
-            is_default: false,
+            approx_bytes: 1_117_320_736, // ~1.1 GB
+            sha256: "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+            license: "Apache-2.0",
+            description: "Default local LLM (~1.1 GB). Best-in-class at its size and fully permissive. Used for query expansion and borderline candidate filtering.",
+            is_default: true,
         },
         ModelEntry {
-            id: "llama-3.2-3b-instruct-q4_k_m",
+            id: "qwen2.5-0.5b-instruct-q4_k_m",
             kind: ModelKind::Llm,
-            display_name: "Llama 3.2 3B Instruct (Q4_K_M)",
-            hf_repo: "bartowski/Llama-3.2-3B-Instruct-GGUF",
-            hf_filename: "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-            approx_bytes: 2_020_000_000,
-            sha256: "",
-            description: "Alternative LLM (~2 GB). Different style than Qwen — try both if results disagree.",
+            display_name: "Qwen 2.5 0.5B Instruct (Q4_K_M)",
+            hf_repo: "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+            hf_filename: "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+            approx_bytes: 491_400_032, // ~470 MB
+            sha256: "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+            license: "Apache-2.0",
+            description: "Ultra-light LLM (~470 MB). Pick this on older or RAM-limited machines; slightly lower quality than the 1.5B.",
             is_default: false,
         },
     ]

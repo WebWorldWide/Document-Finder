@@ -63,7 +63,10 @@ export const [settings, setSettings] = createStore({
   /// useLlmExpansion / useLlmFilter trio. See `qualityToFlags` for the
   /// concrete flag mapping.
   quality: migrateQuality(saved),
-  llmModelId: safeStr(saved.llmModelId, "qwen2.5-3b-instruct-q4_k_m"),
+  // Empty string = "use the backend's default LLM" (resolved by the registry).
+  // A previously-persisted id is reconciled against the live catalog on load
+  // (see `reconcileLlmModel`) so a removed model never leaves a dangling id.
+  llmModelId: safeStr(saved.llmModelId, ""),
   // Whether to dismiss the first-run AI download prompt (sticky once dismissed)
   aiOnboardingDismissed: safeBool(saved.aiOnboardingDismissed, false),
 });
@@ -95,6 +98,16 @@ if (!settings.libraryRoot) {
 
 export function saveSettings() {
   localStorage.setItem(LS_KEY, JSON.stringify(settings));
+}
+
+/// Clears a persisted `llmModelId` that's no longer in the model catalog
+/// (e.g. a model removed between app versions). An empty id makes the backend
+/// fall back to the registry default. Called once the model list is loaded.
+export function reconcileLlmModel(validIds: string[]) {
+  if (settings.llmModelId && !validIds.includes(settings.llmModelId)) {
+    setSettings("llmModelId", "");
+    saveSettings();
+  }
 }
 
 export function toggleSource(id: SourceId) {
