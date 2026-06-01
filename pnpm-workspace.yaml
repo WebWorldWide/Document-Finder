@@ -1,9 +1,9 @@
 packages:
   - "."
+# esbuild ships its prebuilt binary in its platform optional dependency
+# (@esbuild/<os>-<arch>), so its postinstall isn't needed. `false` answers
+# pnpm 11's build-approval prompt (don't run esbuild's build) so `pnpm <script>`
+# stops hard-erroring with ERR_PNPM_IGNORED_BUILDS — which otherwise breaks
+# `pnpm build` and Tauri's beforeBuildCommand.
 allowBuilds:
-  esbuild: set this to true or false
-# esbuild ships its prebuilt binary in the platform optional dependency
-# (@esbuild/<os>-<arch>), so its postinstall script is not needed. Declaring it
-# here acknowledges that and silences pnpm 11's unapproved-build hard error.
-onlyBuiltDependencies:
-  - esbuild
+  esbuild: false

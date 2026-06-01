@@ -10,20 +10,16 @@ import { modelsStore } from "@/stores/models";
 export default function App() {
   // Kick off the models registry load at app start so the AI Models card in
   // Settings doesn't get stuck on "Loading…" if neither SettingsView nor
-  // FirstRunModelDialog has mounted yet.
+  // WelcomeDialog has mounted yet.
   onMount(() => {
     void modelsStore.refresh();
     void modelsStore.ensureSubscribed();
   });
 
   return (
-    <div class="bg-pinstripe-light flex h-screen w-screen overflow-hidden text-[var(--color-foreground)]">
-      {/* No custom drag region — Tauri's native macOS title bar (decorations:
-       * true in tauri.conf.json) handles dragging on its own. The previous
-       * fixed transparent drag region overlaid the pinstripe canvas at the
-       * top of the window and showed up as a striped artifact strip. */}
+    <div class="df-body">
       <Sidebar />
-      <main id="main-content" tabindex="-1" class="flex-1 overflow-hidden outline-none">
+      <main id="main-content" tabindex="-1" class="df-main">
         <Switch>
           <Match when={uiStore.view === "find"}>
             <FindTab />

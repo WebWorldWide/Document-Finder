@@ -42,6 +42,13 @@ export interface LogEntry {
   msg: string;
 }
 
+export interface SourceStat {
+  /// Live discovery phase for this source in the current run.
+  status: "querying" | "done" | "error";
+  /// Cumulative hits this source returned across sub-queries this run.
+  hits: number;
+}
+
 export type Candidate = CandidatePayload;
 
 interface RunState {
@@ -65,6 +72,10 @@ interface RunState {
   rankingDone: boolean;
   rankingKept: number;
   rankingRejected: number;
+  /// Per-source live status + hits, keyed by source id (for the Sources panel).
+  sourceStats: Record<string, SourceStat>;
+  /// Cumulative bytes pulled this run — sampled by Discover for throughput.
+  bytesDownloaded: number;
 }
 
 const [state, setState] = createStore<RunState>({
@@ -87,6 +98,8 @@ const [state, setState] = createStore<RunState>({
   rankingDone: false,
   rankingKept: 0,
   rankingRejected: 0,
+  sourceStats: {},
+  bytesDownloaded: 0,
 });
 
 function addLog(level: LogEntry["level"], msg: string) {
@@ -114,6 +127,8 @@ function reset(query: string) {
     rankingDone: false,
     rankingKept: 0,
     rankingRejected: 0,
+    sourceStats: {},
+    bytesDownloaded: 0,
   });
 }
 
@@ -128,10 +143,25 @@ function apply(ev: DfEvent) {
       break;
 
     case "source_start":
+      setState(
+        produce((s) => {
+          const cur = s.sourceStats[ev.payload.source];
+          s.sourceStats[ev.payload.source] = { status: "querying", hits: cur?.hits ?? 0 };
+        }),
+      );
       addLog("info", `   querying ${ev.payload.source}`);
       break;
 
     case "source_done":
+      setState(
+        produce((s) => {
+          const cur = s.sourceStats[ev.payload.source];
+          s.sourceStats[ev.payload.source] = {
+            status: "done",
+            hits: (cur?.hits ?? 0) + ev.payload.count,
+          };
+        }),
+      );
       addLog("info", `   ${ev.payload.source}: +${ev.payload.count}`);
       break;
 
@@ -157,6 +187,8 @@ function apply(ev: DfEvent) {
               { source, error, kind, count: 1, ts: Date.now() },
             ].slice(-50);
           }
+          const st = s.sourceStats[source];
+          s.sourceStats[source] = { status: "error", hits: st?.hits ?? 0 };
         }),
       );
       addLog("warn", `   ${ev.payload.source}: ${ev.payload.error}`);
@@ -189,6 +221,10 @@ function apply(ev: DfEvent) {
 
     case "download_progress":
       if (state.inFlight[ev.payload.url]) {
+        // Accumulate the positive delta so Discover can sample a throughput
+        // sparkline without tracking per-url byte history itself.
+        const delta = ev.payload.downloaded - state.inFlight[ev.payload.url].downloaded;
+        if (delta > 0) setState("bytesDownloaded", (b) => b + delta);
         setState("inFlight", ev.payload.url, "downloaded", ev.payload.downloaded);
         setState("inFlight", ev.payload.url, "total", ev.payload.total);
       }

@@ -32,6 +32,8 @@ pub fn run() {
             commands::run_log_tail,
             commands::list_models,
             commands::is_embedding_loaded,
+            commands::embedding_downloaded,
+            commands::warm_embedding,
             commands::download_model,
             commands::cancel_model_download,
             commands::delete_model,

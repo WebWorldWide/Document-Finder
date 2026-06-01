@@ -45,12 +45,23 @@ fn extract_epub(path: &Path) -> anyhow::Result<String> {
     }
 }
 
+/// Hard caps to defuse zip/decompression bombs: a small EPUB can otherwise
+/// declare a multi-GB uncompressed entry. We skip any entry whose declared
+/// uncompressed size exceeds the per-entry cap, read at most that many bytes,
+/// and stop once the accumulated text passes the total cap.
+const MAX_EPUB_ENTRY_BYTES: u64 = 64 * 1024 * 1024; // 64 MB per HTML entry
+const MAX_EPUB_TOTAL_BYTES: usize = 128 * 1024 * 1024; // 128 MB of text total
+
 fn extract_epub_inner(path: &Path) -> anyhow::Result<String> {
     let file = std::fs::File::open(path)?;
     let mut zip = zip::ZipArchive::new(file)?;
     let mut chunks: Vec<String> = Vec::new();
+    let mut total: usize = 0;
     for i in 0..zip.len() {
-        let mut entry = match zip.by_index(i) {
+        if total >= MAX_EPUB_TOTAL_BYTES {
+            break;
+        }
+        let entry = match zip.by_index(i) {
             Ok(e) => e,
             Err(_) => continue,
         };
@@ -58,9 +69,20 @@ fn extract_epub_inner(path: &Path) -> anyhow::Result<String> {
         if !(name.ends_with(".xhtml") || name.ends_with(".html") || name.ends_with(".htm")) {
             continue;
         }
+        // Skip entries whose declared uncompressed size is implausibly large…
+        if entry.size() > MAX_EPUB_ENTRY_BYTES {
+            continue;
+        }
+        // …and still cap the actual read in case the declared size lied.
         let mut buf = String::new();
-        if entry.read_to_string(&mut buf).is_ok() {
-            chunks.push(strip_html(&buf));
+        if entry
+            .take(MAX_EPUB_ENTRY_BYTES)
+            .read_to_string(&mut buf)
+            .is_ok()
+        {
+            let stripped = strip_html(&buf);
+            total += stripped.len();
+            chunks.push(stripped);
         }
     }
     if chunks.is_empty() {

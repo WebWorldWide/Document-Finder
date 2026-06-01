@@ -1,8 +1,9 @@
 import { Show, For, onMount, createSignal } from "solid-js";
-import { Sparkles, X, CheckCircle2, Brain } from "lucide-solid";
+import { X, CheckCircle2, Brain } from "lucide-solid";
 import { modelsStore } from "@/stores/models";
 import { settings, setSettings, saveSettings } from "@/stores/settings";
 import ModelDownloadCard from "./ModelDownloadCard";
+import Logo from "./Logo";
 import { formatBytes } from "@/lib/utils";
 
 /// One-time welcome experience. Two passive panels: built-in meta-search
@@ -44,7 +45,7 @@ export default function WelcomeDialog() {
       <div class="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm">
         <div
           class="material-linen border-stitched relative max-h-[88vh] w-full max-w-xl overflow-y-auto p-6"
-          style={{ "box-shadow": "var(--shadow-floating), inset 0 1px 0 oklch(1 0 0 / 0.95)" }}
+          style={{ "box-shadow": "0 24px 60px rgba(0,0,0,0.25), 0 0 0 0.5px var(--line)" }}
         >
           <button
             onClick={dismiss}
@@ -55,17 +56,7 @@ export default function WelcomeDialog() {
           </button>
 
           <div class="mb-2 flex items-center gap-2">
-            <div
-              class="surface-glossy flex h-8 w-8 items-center justify-center rounded-lg text-white"
-              style={{
-                background:
-                  "linear-gradient(135deg, var(--color-accent-warm) 0%, var(--color-primary) 55%, var(--color-accent-cool) 100%)",
-                "box-shadow":
-                  "var(--shadow-raised-xs), inset 0 1px 0 oklch(1 0 0 / 0.5), inset 0 -1px 0 oklch(0 0 0 / 0.20)",
-              }}
-            >
-              <Sparkles size={16} />
-            </div>
+            <Logo size={32} style={{ "border-radius": "8px" }} />
             <h2 class="text-embossed text-base font-semibold">Welcome to Document Finder</h2>
           </div>
           <p class="mb-5 text-xs leading-relaxed text-[var(--color-muted-foreground)]">
@@ -103,8 +94,8 @@ export default function WelcomeDialog() {
                   AI models (~{formatBytes(totalModelSize())} total)
                 </p>
                 <p class="mt-0.5 text-[11px] leading-relaxed text-[var(--color-foreground-muted)]">
-                  Two local models power semantic reranking + LLM query expansion and borderline
-                  filtering. Everything runs offline — no API keys, no telemetry. Recommended.
+                  Two local models power semantic reranking and LLM query expansion + borderline
+                  filtering.
                 </p>
               </div>
               <span class="ml-auto shrink-0 text-[10px] text-[var(--color-foreground-muted)]">

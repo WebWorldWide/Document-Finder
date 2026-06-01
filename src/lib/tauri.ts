@@ -89,6 +89,8 @@ export const api = {
   runLogTail: (max?: number) => invoke<unknown[]>("run_log_tail", max != null ? { max } : {}),
   listModels: () => invoke<ModelInfo[]>("list_models"),
   isEmbeddingLoaded: () => invoke<boolean>("is_embedding_loaded"),
+  embeddingDownloaded: () => invoke<boolean>("embedding_downloaded"),
+  warmEmbedding: () => invoke<void>("warm_embedding"),
   downloadModel: (modelId: string) => invoke<void>("download_model", { modelId }),
   cancelModelDownload: (modelId: string) => invoke<void>("cancel_model_download", { modelId }),
   deleteModel: (modelId: string) => invoke<void>("delete_model", { modelId }),

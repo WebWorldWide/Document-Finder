@@ -164,30 +164,43 @@ pub async fn spawn_server(backend: Arc<dyn Source>) -> std::io::Result<u16> {
         }
     });
 
-    // Health-poll *before* registering the port so `local_port()` only ever
-    // hands out a port that is actually accepting connections — closes the
-    // startup race where a caller could query the server before it binds.
+    // Register the port ONLY once `/healthz` actually answers, so `local_port()`
+    // never hands out an address that isn't serving yet. Otherwise the first web
+    // search would route at a dead local port and stall on a 15s timeout before
+    // falling back to the public pool. On the rare slow start we keep probing in
+    // the background and register as soon as it comes up; until then callers
+    // cleanly skip straight to the pool.
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(500))
         .build()
         .expect("reqwest client");
     let url = format!("http://127.0.0.1:{port}/healthz");
+
     let mut ready = false;
-    for _ in 0..20 {
-        if client.get(&url).send().await.is_ok() {
+    for _ in 0..30 {
+        if matches!(client.get(&url).send().await, Ok(r) if r.status().is_success()) {
             ready = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    let _ = LOCAL_PORT.set(port);
     if ready {
+        let _ = LOCAL_PORT.set(port);
         tracing::info!("local_searxng ready on 127.0.0.1:{port}");
     } else {
-        // Didn't respond in 2s — register anyway; queries will surface errors
-        // if it is genuinely wedged.
-        tracing::warn!("local_searxng health check timed out; registered port {port} anyway");
+        tracing::warn!("local_searxng slow to start; will register port {port} once it responds");
+        tokio::spawn(async move {
+            for _ in 0..120 {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if matches!(client.get(&url).send().await, Ok(r) if r.status().is_success()) {
+                    let _ = LOCAL_PORT.set(port);
+                    tracing::info!("local_searxng ready on 127.0.0.1:{port} (delayed start)");
+                    return;
+                }
+            }
+            tracing::error!("local_searxng never became healthy on port {port}");
+        });
     }
     Ok(port)
 }
