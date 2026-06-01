@@ -17,6 +17,8 @@ commands.allow = [
   "run_log_tail",
   "list_models",
   "is_embedding_loaded",
+  "embedding_downloaded",
+  "warm_embedding",
   "download_model",
   "cancel_model_download",
   "delete_model",

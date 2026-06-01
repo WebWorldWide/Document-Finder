@@ -1,7 +1,7 @@
 {
   "name": "document-finder",
   "private": true,
-  "version": "3.0.0",
+  "version": "0.1.0",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
@@ -9,6 +9,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "clean-build": "node scripts/rebuild.mjs",
+    "clean-build:full": "node scripts/rebuild.mjs --full",
+    "clean-build:dev": "node scripts/rebuild.mjs --dev",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",

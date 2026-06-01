@@ -25,6 +25,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   doaj: "DOAJ",
   gutenberg: "Gutenberg",
   meta_search: "Web (built-in)",
+  searxng: "SearXNG",
   web: "DuckDuckGo",
   brave: "Brave",
   bing: "Bing",
@@ -44,6 +45,7 @@ export const ALL_SOURCES = [
   "doaj",
   "gutenberg",
   "meta_search",
+  "searxng",
   "web",
   "brave",
   "bing",
@@ -65,6 +67,7 @@ export const DEFAULT_ENABLED_SOURCES: SourceId[] = [
   "doaj",
   "gutenberg",
   "meta_search",
+  "searxng",
 ];
 
 /// Web-engine ids that the meta_search aggregator covers. We keep these as
@@ -83,5 +86,38 @@ export function sourceColor(source: string): string {
   // Strip the `meta_search/<engine>` prefix so candidate badges still color
   // by the originating engine.
   const key = source.startsWith("meta_search/") ? source.slice("meta_search/".length) : source;
-  return `var(--color-source-${key.replace(/-/g, "_")}, oklch(0.7 0.1 270))`;
+  return `var(--color-source-${key.replace(/-/g, "_")}, #5f86b0)`;
+}
+
+/// One-line descriptions for the rich Sources panel on Discover.
+export const SOURCE_DESC: Record<string, string> = {
+  arxiv: "Preprints in CS, physics, math, biology",
+  openalex: "~250M scholarly works · open-access filter",
+  semantic_scholar: "~200M papers · semantic relevance ranking",
+  internet_archive: "Books, papers, scanned media · deep but slow",
+  doaj: "Directory of Open Access Journals",
+  gutenberg: "70,000+ public-domain ebooks · EPUB",
+  meta_search: "6 web engines in parallel · no setup",
+  searxng: "Privacy metasearch · in-process, no Docker",
+  web: "DuckDuckGo · open-web document discovery",
+  brave: "Brave Search · open-web results",
+  bing: "Bing · open-web results",
+  mojeek: "Mojeek · independent crawler",
+  marginalia: "Marginalia · indie & long-tail web",
+  startpage: "Startpage · privacy-front results",
+};
+
+export function sourceDesc(source: string): string {
+  return SOURCE_DESC[source] ?? "Open-access document source";
+}
+
+export type FileType = "pdf" | "epub" | "html" | "txt";
+
+/// Infer a document's file type from its saved path or URL, for the file-type
+/// breakdown chips. Returns null when it can't be determined.
+export function ftypeFromPath(path?: string | null): FileType | null {
+  if (!path) return null;
+  const m = path.toLowerCase().match(/\.(pdf|epub|html?|txt)(?:[?#].*)?$/);
+  if (!m) return null;
+  return m[1].startsWith("htm") ? "html" : (m[1] as FileType);
 }

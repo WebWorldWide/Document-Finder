@@ -57,6 +57,61 @@ fn coerce_string_list(v: &Value) -> Vec<String> {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct Metadata {
+    #[serde(default)]
+    files: Vec<MetaFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MetaFile {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
+}
+
+/// Resolve the real downloadable PDF URL for an Internet Archive item via its
+/// metadata API. The bulk-search API only returns the item *identifier*; the
+/// old guess of `{ident}/{ident}.pdf` 404s for the many items (arXiv/PubMed
+/// mirrors, scanned books) whose primary PDF is named something else. We ask
+/// `/metadata/{ident}` for the actual file list and build the URL from the
+/// first PDF file. Returns `None` (item dropped) on any error or if no PDF
+/// file exists, so a flaky lookup never blocks discovery.
+async fn resolve_pdf_url(client: &reqwest::Client, ident: &str) -> Option<String> {
+    let meta_url = format!("https://archive.org/metadata/{ident}");
+    let resp = client
+        .get(&meta_url)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?;
+    let meta: Metadata = resp.json().await.ok()?;
+    let name = meta
+        .files
+        .iter()
+        .find(|f| {
+            f.format
+                .as_deref()
+                .is_some_and(|s| s.to_lowercase().contains("pdf"))
+        })
+        .or_else(|| {
+            meta.files.iter().find(|f| {
+                f.name
+                    .as_deref()
+                    .is_some_and(|n| n.to_lowercase().ends_with(".pdf"))
+            })
+        })?
+        .name
+        .as_deref()?;
+    // Build the URL with proper path-segment encoding (file names can contain
+    // spaces or other reserved characters).
+    let mut u = url::Url::parse("https://archive.org/download/").ok()?;
+    u.path_segments_mut().ok()?.push(ident).push(name);
+    Some(u.to_string())
+}
+
 #[async_trait]
 impl Source for InternetArchiveSource {
     fn name(&self) -> &'static str {
@@ -118,14 +173,15 @@ impl Source for InternetArchiveSource {
                 }
                 let n = docs_in.len();
                 let next_done = n < per_page;
-                let mut docs = Vec::with_capacity(n);
+                // Collect raw candidates (items advertising a PDF), then resolve
+                // each one's real download URL concurrently via the metadata API.
+                let mut raw = Vec::with_capacity(n);
                 for d in docs_in {
                     let Some(ident) = d.get("identifier").and_then(coerce_string) else {
                         continue;
                     };
                     // Filter to items whose format list mentions PDF — avoids
-                    // hammering /download with 404s for items that only have
-                    // image scans or DjVu.
+                    // metadata lookups for items that only have image scans or DjVu.
                     let formats = d
                         .get("format")
                         .map(coerce_string_list)
@@ -135,7 +191,6 @@ impl Source for InternetArchiveSource {
                     if !formats.contains("pdf") {
                         continue;
                     }
-                    let pdf_url = format!("https://archive.org/download/{0}/{0}.pdf", ident);
                     let authors = d.get("creator").map(coerce_string_list).unwrap_or_default();
                     let desc = d.get("description").and_then(coerce_string);
                     let title = d
@@ -143,16 +198,28 @@ impl Source for InternetArchiveSource {
                         .and_then(coerce_string)
                         .unwrap_or_else(|| ident.clone());
                     let year = d.get("year").and_then(coerce_string);
-                    docs.push(Document {
-                        title,
-                        url: pdf_url,
-                        source: "internet_archive".to_string(),
-                        authors,
-                        year,
-                        abstract_: desc,
-                        identifier: Some(ident),
-                    });
+                    raw.push((ident, title, authors, year, desc));
                 }
+                let docs: Vec<Document> = stream::iter(raw)
+                    .map(|(ident, title, authors, year, desc)| {
+                        let client = client.clone();
+                        async move {
+                            let url = resolve_pdf_url(&client, &ident).await?;
+                            Some(Document {
+                                title,
+                                url,
+                                source: "internet_archive".to_string(),
+                                authors,
+                                year,
+                                abstract_: desc,
+                                identifier: Some(ident),
+                            })
+                        }
+                    })
+                    .buffer_unordered(8)
+                    .filter_map(|d| async move { d })
+                    .collect()
+                    .await;
                 let yielded_now = yielded + docs.len();
                 Some((Ok(docs), (page + 1, yielded_now, next_done)))
             }

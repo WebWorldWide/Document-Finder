@@ -1,27 +1,19 @@
 //! Semantic embeddings via `fastembed`.
 //!
-//! BGE-Small-EN-v1.5 (384-dim, ~33 MB quantized ONNX) ships **bundled** in
-//! the app — no network download at runtime. The five model files live under
-//! `src-tauri/resources/embeddings/bge-small-en-v1.5/` and are registered as
-//! Tauri bundle resources, so `app.path().resource_dir()` resolves to a
-//! readable directory containing them in both dev and packaged builds.
-//!
-//! On first call we read the bytes into memory and hand them to
-//! `TextEmbedding::try_new_from_user_defined` — this sidesteps fastembed's
-//! built-in HuggingFace download path entirely (whose hardcoded URL had
-//! gone 404 upstream, the cause of the previous "embeddings broken" bug).
+//! Uses BGE-Small-EN-v1.5 (384-dim, int8-quantized ONNX). fastembed downloads
+//! the model from Hugging Face on first use and caches it under the app data
+//! dir (`<app_data>/models/fastembed/`), so it's fetched once and then loaded
+//! offline on every subsequent run — nothing is bundled into the installer.
+//! (Earlier builds tried to bundle the ONNX files as Tauri resources, but they
+//! were never wired into `bundle.resources`, so the model never loaded.)
 //!
 //! Inference is synchronous (ort is blocking); we wrap calls in
 //! `tokio::task::spawn_blocking` so the orchestrator's async runtime
 //! stays responsive while reranking runs.
 
 use anyhow::{Context, Result};
-use fastembed::{
-    InitOptionsUserDefined, Pooling, QuantizationMode, TextEmbedding, TokenizerFiles,
-    UserDefinedEmbeddingModel,
-};
+use fastembed::{EmbeddingModel as FastEmbedModel, InitOptions, TextEmbedding};
 use parking_lot::Mutex;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
@@ -29,56 +21,30 @@ pub struct EmbeddingModel {
     inner: TextEmbedding,
 }
 
-/// Subdirectory under the bundle's resource dir where the BGE files live.
-const BGE_RESOURCE_SUBDIR: &str = "resources/embeddings/bge-small-en-v1.5";
-
-fn resolve_bge_dir(app: &AppHandle) -> Result<PathBuf> {
-    let resource_dir = app
+/// Where fastembed caches the downloaded model — under the app data dir so it
+/// survives across runs and is fetched only once.
+fn cache_dir(app: &AppHandle) -> Result<std::path::PathBuf> {
+    let dir = app
         .path()
-        .resource_dir()
-        .context("could not resolve Tauri resource directory")?;
-    let bge = resource_dir.join(BGE_RESOURCE_SUBDIR);
-    if !bge.exists() {
-        anyhow::bail!(
-            "bundled BGE embedding model not found at {} — did `bundle.resources` get out of sync?",
-            bge.display()
-        );
-    }
-    Ok(bge)
+        .app_data_dir()
+        .context("could not resolve app data directory")?
+        .join("models")
+        .join("fastembed");
+    let _ = std::fs::create_dir_all(&dir);
+    Ok(dir)
 }
 
 impl EmbeddingModel {
-    /// Build the model from the bundled resource files. Reads ~35 MB of
-    /// bytes off disk synchronously — fast on any reasonable machine and
-    /// only happens once per process via the singleton below.
+    /// Load BGE-Small-EN-v1.5 via fastembed, downloading + caching it on first
+    /// use (subsequent loads are offline from the cache). Only happens once per
+    /// process via the singleton below.
     pub fn init(app: &AppHandle) -> Result<Self> {
-        let dir = resolve_bge_dir(app)?;
-
-        let onnx = std::fs::read(dir.join("model_quantized.onnx"))
-            .context("reading bundled model_quantized.onnx")?;
-        let tokenizer_file =
-            std::fs::read(dir.join("tokenizer.json")).context("reading bundled tokenizer.json")?;
-        let config_file =
-            std::fs::read(dir.join("config.json")).context("reading bundled config.json")?;
-        let tokenizer_config_file = std::fs::read(dir.join("tokenizer_config.json"))
-            .context("reading bundled tokenizer_config.json")?;
-        let special_tokens_map_file = std::fs::read(dir.join("special_tokens_map.json"))
-            .context("reading bundled special_tokens_map.json")?;
-
-        let tokenizer_files = TokenizerFiles {
-            tokenizer_file,
-            config_file,
-            special_tokens_map_file,
-            tokenizer_config_file,
-        };
-
-        let user_model = UserDefinedEmbeddingModel::new(onnx, tokenizer_files)
-            .with_pooling(Pooling::Cls)
-            .with_quantization(QuantizationMode::Static);
-
-        let inner =
-            TextEmbedding::try_new_from_user_defined(user_model, InitOptionsUserDefined::new())
-                .context("fastembed user-defined init failed (bundled BGE files)")?;
+        let inner = TextEmbedding::try_new(
+            InitOptions::new(FastEmbedModel::BGESmallENV15Q)
+                .with_cache_dir(cache_dir(app)?)
+                .with_show_download_progress(false),
+        )
+        .context("fastembed BGE-Small init failed (first-run download needs internet)")?;
 
         Ok(Self { inner })
     }
@@ -174,6 +140,72 @@ pub fn is_loaded() -> bool {
         .is_some()
 }
 
+/// Whether the embedding model appears to be already downloaded to the on-disk
+/// cache (so it will load without a network fetch). Best-effort: scans the
+/// fastembed cache dir for a `.onnx` file. Distinct from [`is_loaded`], which
+/// reports whether it's loaded into memory this session.
+pub fn is_downloaded(app: &AppHandle) -> bool {
+    let Ok(dir) = cache_dir(app) else {
+        return false;
+    };
+    contains_onnx(&dir)
+}
+
+/// Recurse the cache dir looking for a `.onnx` file (fastembed nests the model
+/// under a repo-named subdir). Returns on the first hit.
+fn contains_onnx(dir: &std::path::Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if contains_onnx(&path) {
+                return true;
+            }
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) == Some("onnx") {
+            return true;
+        }
+    }
+    false
+}
+
+use std::sync::atomic::{AtomicBool, Ordering};
+static WARMING: AtomicBool = AtomicBool::new(false);
+
+/// Kick off a one-time background load (downloading the model on first ever use)
+/// without blocking the caller. Safe to call repeatedly — the `WARMING` flag
+/// dedups concurrent warms. Used by the orchestrator so a search never stalls
+/// on a cold ~60 MB model download: that run falls back to lexical ranking and
+/// semantic rerank kicks in on the next search once the model is ready.
+pub fn warm_in_background(app: AppHandle) {
+    if is_loaded() || WARMING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tokio::task::spawn_blocking(move || {
+        match get_or_init(&app) {
+            Ok(_) => {
+                tracing::info!("embedding model warmed and ready");
+                // Notify the UI so the Settings row flips from
+                // "loads on first search" to "ready".
+                use tauri::Emitter;
+                let _ = app.emit(
+                    crate::events::EV_MODEL_STATUS,
+                    crate::events::ModelStatusPayload {
+                        model_id: "bge-small-en-v1.5".to_string(),
+                        status: "embedding".to_string(),
+                        detail: Some("ready".to_string()),
+                    },
+                );
+            }
+            Err(e) => tracing::warn!("embedding model warm failed: {e}"),
+        }
+        WARMING.store(false, Ordering::SeqCst);
+    });
+}
+
 /// Semantic rerank step. Embeds the query and the (title + " " + abstract)
 /// of every candidate, computes cosine similarity, normalizes to [0,1],
 /// and blends with the existing Tier 1 score using
@@ -228,4 +260,31 @@ pub fn rerank_blocking(
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Proves fastembed can download + load BGE-Small and produce a 384-dim
+    /// vector. Hits the network and pulls ~33 MB, so it's `#[ignore]`d by
+    /// default — run explicitly with:
+    /// `cargo test --no-default-features --features=custom-protocol,ai-embeddings -- --ignored`
+    #[ignore]
+    #[test]
+    fn fastembed_downloads_and_embeds() {
+        let tmp = std::env::temp_dir().join("df-fastembed-test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut model = TextEmbedding::try_new(
+            InitOptions::new(FastEmbedModel::BGESmallENV15Q)
+                .with_cache_dir(tmp)
+                .with_show_download_progress(true),
+        )
+        .expect("fastembed init/download failed");
+        let out = model
+            .embed(vec!["the quick brown fox"], None)
+            .expect("embedding failed");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].len(), 384, "BGE-Small-EN-v1.5 is 384-dimensional");
+    }
 }

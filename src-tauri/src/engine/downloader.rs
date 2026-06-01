@@ -28,6 +28,54 @@ const MIN_DOC_BYTES: u64 = 4 * 1024;
 /// Hard cap per file — prevents a malicious or runaway server from exhausting disk.
 const MAX_FILE_BYTES: u64 = 500 * 1024 * 1024;
 
+/// Accept header for document downloads. Biases content-negotiation toward real
+/// documents but still accepts anything (`*/*`) so picky servers don't 406.
+const DOC_ACCEPT: &str =
+    "application/pdf,application/epub+zip,application/octet-stream;q=0.9,text/html;q=0.5,*/*;q=0.4";
+
+/// A plain-language explanation for an HTTP error status, written for a
+/// non-technical reader. The numeric code is appended separately (for logs).
+fn http_status_message(status: u16) -> &'static str {
+    match status {
+        400 => {
+            "The download link was rejected by the server — it may have expired or need a sign-in"
+        }
+        401 | 403 => "This source blocked the download — it may need a subscription or sign-in",
+        404 | 410 => "The document is no longer available at this link",
+        408 => "The server took too long to respond",
+        429 => "The source is busy and asked us to slow down",
+        500..=599 => "The source's server had a temporary problem",
+        _ => "The server refused to send the file",
+    }
+}
+
+/// Plain-language message for a transport-level (non-HTTP-status) error.
+fn network_error_message(e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        "The download timed out — the server was too slow to respond.".to_string()
+    } else if e.is_connect() {
+        "Couldn't reach the server — check your internet connection.".to_string()
+    } else {
+        "Couldn't reach the server (network error).".to_string()
+    }
+}
+
+/// Origin (`scheme://host/`) of a URL, used as a Referer. Many publisher servers
+/// reject document requests that arrive without one. A tiny manual parse keeps
+/// this dependency-free.
+fn referer_for(url: &str) -> Option<String> {
+    let scheme_end = url.find("://")?;
+    let scheme = &url[..scheme_end];
+    let rest = &url[scheme_end + 3..];
+    let host_end = rest.find('/').unwrap_or(rest.len());
+    let host = &rest[..host_end];
+    if host.is_empty() {
+        None
+    } else {
+        Some(format!("{scheme}://{host}/"))
+    }
+}
+
 pub fn ext_from(url: &str, content_type: &str) -> &'static str {
     let ct = content_type.to_lowercase();
     let u = url.to_lowercase();
@@ -65,14 +113,7 @@ fn reject_content_type(url: &str, content_type: &str) -> Option<String> {
         || ct.contains("application/xml")
         || ct.contains("text/xml")
     {
-        return Some(format!(
-            "Skipped: Landing page (detected {})",
-            content_type
-                .split(';')
-                .next()
-                .unwrap_or(content_type)
-                .trim()
-        ));
+        return Some("This link opened a web page, not a downloadable document.".to_string());
     }
     None
 }
@@ -92,12 +133,12 @@ async fn check_magic_bytes(path: &Path) -> Option<String> {
 
     let mut file = match tokio::fs::File::open(path).await {
         Ok(f) => f,
-        Err(_) => return Some("could not open downloaded file for validation".to_string()),
+        Err(_) => return Some("Couldn't verify the downloaded file.".to_string()),
     };
     let mut head = [0u8; 4];
     use tokio::io::AsyncReadExt;
     if file.read_exact(&mut head).await.is_err() {
-        return Some("file too short to validate magic bytes".to_string());
+        return Some("The downloaded file was too small to be a real document.".to_string());
     }
 
     match ext.as_str() {
@@ -105,14 +146,20 @@ async fn check_magic_bytes(path: &Path) -> Option<String> {
             if &head == b"%PDF" {
                 None
             } else {
-                Some("downloaded file is not a valid PDF (invalid signature)".to_string())
+                Some(
+                    "The downloaded file wasn't a valid PDF (it was probably an error page)."
+                        .to_string(),
+                )
             }
         }
         "epub" => {
             if &head == b"PK\x03\x04" {
                 None
             } else {
-                Some("downloaded file is not a valid EPUB (invalid zip signature)".to_string())
+                Some(
+                    "The downloaded file wasn't a valid EPUB (it was probably an error page)."
+                        .to_string(),
+                )
             }
         }
         _ => None,
@@ -154,12 +201,32 @@ where
         let _ = tokio::fs::remove_file(&out).await;
     }
 
+    // SSRF guard: the document URL comes from arbitrary remote search results,
+    // so validate it (http/https only, no credentials, resolves to a public IP)
+    // before we connect. Redirects are re-checked by the client's redirect
+    // policy (see `sources::make_client`).
+    if let Err(reason) = crate::util::url_safety::validate_download_url(&doc.url).await {
+        return DownloadOutcome::Failed(format!("Blocked for safety: {reason}"));
+    }
+
+    // Send document-shaped headers. A browser UA alone isn't enough for many
+    // publisher CDNs: without an Accept that lists the document type and a
+    // same-origin Referer, they answer 400/403. Adding both turns a chunk of
+    // those rejections into successful downloads.
+    let referer = referer_for(&doc.url);
     let mut resp = None;
     for attempt in 0..3 {
         if cancel.is_cancelled() {
             return DownloadOutcome::Cancelled;
         }
-        match client.get(&doc.url).send().await {
+        let mut req = client
+            .get(&doc.url)
+            .header(reqwest::header::ACCEPT, DOC_ACCEPT)
+            .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9");
+        if let Some(r) = &referer {
+            req = req.header(reqwest::header::REFERER, r.clone());
+        }
+        match req.send().await {
             Ok(r) => match r.error_for_status() {
                 Ok(r) => {
                     resp = Some(r);
@@ -172,7 +239,10 @@ where
                         tokio::time::sleep(wait).await;
                         continue;
                     }
-                    return DownloadOutcome::Failed(format!("HTTP {}: {}", status, e));
+                    return DownloadOutcome::Failed(format!(
+                        "{}. (HTTP {status})",
+                        http_status_message(status)
+                    ));
                 }
             },
             Err(_e) if attempt < 2 => {
@@ -180,10 +250,14 @@ where
                 tokio::time::sleep(wait).await;
                 continue;
             }
-            Err(e) => return DownloadOutcome::Failed(format!("Network error: {}", e)),
+            Err(e) => return DownloadOutcome::Failed(network_error_message(&e)),
         }
     }
-    let resp = resp.unwrap();
+    let Some(resp) = resp else {
+        // The retry loop above always sets `resp` or returns early; this guard
+        // just ensures a future refactor can't turn that into a panic.
+        return DownloadOutcome::Failed("Download failed after multiple attempts.".to_string());
+    };
 
     let content_type = resp
         .headers()
@@ -211,15 +285,15 @@ where
 
     let mut file = match File::create(&out).await {
         Ok(f) => f,
-        Err(e) => return DownloadOutcome::Failed(e.to_string()),
+        Err(e) => return DownloadOutcome::Failed(format!("Couldn't create the file on disk: {e}")),
     };
 
     // Pre-reject oversized files declared in Content-Length before writing
     // anything. (`total == 0` means "unknown length" and is never > the cap.)
     if total > MAX_FILE_BYTES {
         return DownloadOutcome::Failed(format!(
-            "file too large ({} bytes declared in Content-Length)",
-            total
+            "This file is too large to download (over {} MB).",
+            MAX_FILE_BYTES / 1024 / 1024
         ));
     }
 
@@ -240,7 +314,7 @@ where
             Err(e) => {
                 drop(file);
                 let _ = tokio::fs::remove_file(&out).await;
-                return DownloadOutcome::Failed(e.to_string());
+                return DownloadOutcome::Failed(network_error_message(&e));
             }
         };
         if chunk.is_empty() {
@@ -249,14 +323,14 @@ where
         if let Err(e) = file.write_all(&chunk).await {
             drop(file);
             let _ = tokio::fs::remove_file(&out).await;
-            return DownloadOutcome::Failed(e.to_string());
+            return DownloadOutcome::Failed(format!("Couldn't save the file to disk: {e}"));
         }
         downloaded += chunk.len() as u64;
         if downloaded > MAX_FILE_BYTES {
             drop(file);
             let _ = tokio::fs::remove_file(&out).await;
             return DownloadOutcome::Failed(format!(
-                "file too large (exceeded {} MB limit)",
+                "This file is too large to download (over {} MB).",
                 MAX_FILE_BYTES / 1024 / 1024
             ));
         }
@@ -264,22 +338,22 @@ where
     }
 
     if let Err(e) = file.flush().await {
-        return DownloadOutcome::Failed(e.to_string());
+        return DownloadOutcome::Failed(format!("Couldn't finish saving the file to disk: {e}"));
     }
     drop(file);
 
     let size = match tokio::fs::metadata(&out).await {
         Ok(m) => m.len(),
-        Err(e) => return DownloadOutcome::Failed(e.to_string()),
+        Err(e) => return DownloadOutcome::Failed(format!("Couldn't read the saved file: {e}")),
     };
     if size == 0 {
         let _ = tokio::fs::remove_file(&out).await;
-        return DownloadOutcome::Failed("empty response".to_string());
+        return DownloadOutcome::Failed("The server returned no data.".to_string());
     }
     if size < MIN_DOC_BYTES {
         let _ = tokio::fs::remove_file(&out).await;
         return DownloadOutcome::Failed(format!(
-            "response too small ({size} bytes) — likely an error page"
+            "The server returned only {size} bytes — likely an error page, not the document."
         ));
     }
 
