@@ -107,98 +107,359 @@ fn emit_stage(
     );
 }
 
-pub async fn run_pipeline(
-    app: AppHandle,
-    req: RunRequest,
-    cancel: CancellationToken,
-) -> anyhow::Result<()> {
-    let client = Arc::new(make_client());
-    // `mut` is only consumed by the LLM expansion block below — without
-    // ai-llm, sub_queries is read-only.
-    #[cfg_attr(not(feature = "ai-llm"), allow(unused_mut))]
-    let mut sub_queries = expand_query(&req.query);
+/// Fan out one discovery wave: spawn a task per (sub_query, source), drain them
+/// (bounded by `deadline`, racing a user cancel) into the shared `dedup`, and
+/// extend `all_keywords` for ranking. Emits EV_SUBQUERY_START / EV_SOURCE_START
+/// / EV_FOUND / EV_SOURCE_DONE as work happens. Returns true if it stopped early
+/// (cancel or deadline) instead of draining naturally.
+#[allow(clippy::too_many_arguments)]
+async fn discover_wave(
+    app: &AppHandle,
+    client: &Arc<reqwest::Client>,
+    cancel: &CancellationToken,
+    dedup: &Arc<AsyncMutex<Deduplicator>>,
+    all_keywords: &mut Vec<String>,
+    sub_queries: &[String],
+    effective_sources: &[String],
+    req: &RunRequest,
+    deadline: std::time::Duration,
+) -> bool {
+    let mut tasks: JoinSet<()> = JoinSet::new();
 
-    // Tier 3a: LLM query expansion (best-effort, gracefully no-op if model
-    // isn't loaded). Runs before discovery so the new sub-queries hit every
-    // source on the same parallel pass as the original.
-    #[cfg(feature = "ai-llm")]
-    {
-        if req.use_llm_expansion && !cancel.is_cancelled() {
-            emit_stage(&app, "llm_expand", "started", None, None, None);
-            if let Some(llm) = ensure_llm_loaded(&app).await {
+    for sub in sub_queries {
+        let keywords = parse_query(sub);
+        let keywords = if keywords.is_empty() {
+            sub.split_whitespace().map(String::from).collect::<Vec<_>>()
+        } else {
+            keywords
+        };
+        if keywords.is_empty() {
+            continue;
+        }
+        all_keywords.extend(keywords.iter().cloned());
+        let _ = app.emit(
+            EV_SUBQUERY_START,
+            SubQueryStartPayload {
+                sub_query: sub.clone(),
+                keywords: keywords.clone(),
+            },
+        );
+
+        for sname in effective_sources {
+            if !SOURCE_IDS.contains(&sname.as_str()) {
                 let _ = app.emit(
-                    crate::events::EV_MODEL_STATUS,
-                    crate::events::ModelStatusPayload {
-                        model_id: req.llm_model_id.clone().unwrap_or_else(|| "llm".into()),
-                        status: "llm_expanding".to_string(),
-                        detail: None,
+                    EV_SOURCE_ERROR,
+                    SourceErrorPayload {
+                        source: sname.clone(),
+                        error: "unknown source".into(),
+                        kind: "other".into(),
                     },
                 );
-                let prompt = crate::ai::llm::expansion_prompt(&req.query);
-                let original = req.query.clone();
-                let llm_for_task = llm.clone();
-                let raw = tokio::task::spawn_blocking(move || {
-                    // Async mutex inside a blocking thread — use blocking_lock.
-                    let guard = llm_for_task.blocking_lock();
-                    guard.generate(&prompt, 200)
-                })
-                .await;
-                if let Ok(Ok(text)) = raw {
-                    let extras = crate::ai::llm::parse_expansion(&text, &original);
-                    let n = extras.len() as u64;
-                    if n > 0 {
-                        tracing::info!("LLM expanded query into {} extras", n);
-                        sub_queries.extend(extras);
-                    }
-                    emit_stage(
-                        &app,
-                        "llm_expand",
-                        "done",
-                        Some(n),
-                        None,
-                        if n > 0 {
-                            Some(format!("+{} sub-queries", n))
-                        } else {
-                            None
-                        },
-                    );
-                } else {
-                    emit_stage(&app, "llm_expand", "done", None, None, None);
-                }
-            } else {
-                emit_stage(
-                    &app,
-                    "llm_expand",
-                    "skipped",
-                    None,
-                    None,
-                    Some("LLM model not downloaded".into()),
-                );
+                continue;
             }
-        } else {
-            emit_stage(&app, "llm_expand", "skipped", None, None, None);
+            let opts = req.source_options.get(sname).cloned().unwrap_or_default();
+            let Some(src) = build_source(sname, opts, Arc::clone(client), Some(app.clone())) else {
+                continue;
+            };
+
+            let app_t = app.clone();
+            let cancel_t = cancel.clone();
+            let dedup_t = Arc::clone(dedup);
+            let sub_t = sub.clone();
+            let sname_t = sname.clone();
+            let keywords_t = keywords.clone();
+            let per_source = req.per_source;
+            let max_total = req.max_total;
+
+            tasks.spawn(async move {
+                let _ = app_t.emit(
+                    EV_SOURCE_START,
+                    SourceStartPayload {
+                        source: sname_t.clone(),
+                        sub_query: sub_t.clone(),
+                    },
+                );
+
+                let mut count = 0usize;
+                let mut rank_in_source = 0usize;
+                // Per-task dedup so a source spamming one error class (e.g. 8×
+                // "429" from Brave during a multi-page scrape) collapses into a
+                // single UI surface.
+                let mut seen_kinds: std::collections::HashSet<&'static str> =
+                    std::collections::HashSet::new();
+                let mut stream = src.search(keywords_t.clone(), per_source).await;
+
+                while let Some(item) = stream.next().await {
+                    if cancel_t.is_cancelled() {
+                        break;
+                    }
+                    match item {
+                        Ok(doc) => {
+                            rank_in_source += 1;
+                            // Hard cap (cumulative across waves via the shared
+                            // dedup) so a slow source can't push past max_total.
+                            let total_now = {
+                                let mut d = dedup_t.lock().await;
+                                if d.len() >= max_total {
+                                    break;
+                                }
+                                let title_for_evt = doc.title.clone();
+                                let url_for_evt = doc.url.clone();
+                                let source_for_evt = doc.source.clone();
+                                d.add(doc, &sname_t, rank_in_source);
+                                count += 1;
+                                let total = d.len();
+                                drop(d);
+                                let _ = app_t.emit(
+                                    EV_FOUND,
+                                    FoundPayload {
+                                        title: title_for_evt,
+                                        source: source_for_evt,
+                                        url: url_for_evt,
+                                        total,
+                                    },
+                                );
+                                total
+                            };
+                            if total_now >= max_total {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let err_str = e.to_string();
+                            runlog::log(runlog::Event::SourceError {
+                                source: &sname_t,
+                                error: &err_str,
+                                sub_query: Some(&sub_t),
+                            });
+                            let kind = crate::events::classify_source_error(&err_str);
+                            // Parse-class errors mean HTML markup drift — users
+                            // can't act on them. Silent.
+                            if kind == "parse_error" {
+                                continue;
+                            }
+                            if !seen_kinds.insert(kind) {
+                                continue;
+                            }
+                            let _ = app_t.emit(
+                                EV_SOURCE_ERROR,
+                                SourceErrorPayload {
+                                    source: sname_t.clone(),
+                                    error: err_str,
+                                    kind: kind.into(),
+                                },
+                            );
+                        }
+                    }
+                }
+                let _ = app_t.emit(
+                    EV_SOURCE_DONE,
+                    SourceDonePayload {
+                        source: sname_t.clone(),
+                        count,
+                    },
+                );
+            });
         }
     }
-    #[cfg(not(feature = "ai-llm"))]
+
+    // Drain the spawned tasks, but cap total wave time so one slow / rate-
+    // limited source can't stall the run, and react to a user cancel promptly.
+    // Each task only checks the cancel token *between* stream items, so racing
+    // the drain against `cancel.cancelled()` makes Stop take effect within ~1s.
+    let stop_early = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => true,
+        _ = tokio::time::sleep(deadline) => true,
+        _ = async {
+            while let Some(res) = tasks.join_next().await {
+                if let Err(e) = res {
+                    tracing::warn!("discovery task join error: {e}");
+                }
+            }
+        } => false,
+    };
+    if stop_early {
+        if cancel.is_cancelled() {
+            tracing::info!("discovery cancelled by user — aborting in-flight tasks");
+        } else {
+            tracing::warn!("discovery deadline reached — proceeding with partial results");
+        }
+        tasks.shutdown().await;
+    }
+    stop_early
+}
+
+/// Run the optional LLM query-expansion (Thorough) or spell-fix (Balanced) and
+/// return any extra sub-queries it produced. Built to run CONCURRENTLY with the
+/// first discovery wave so a cold model load never blocks first results. No-op
+/// (and a "skipped" stage) when the LLM feature is off or no model is on disk.
+#[cfg(not(feature = "ai-llm"))]
+async fn compute_llm_extras(
+    app: &AppHandle,
+    req: &RunRequest,
+    cancel: &CancellationToken,
+) -> Vec<String> {
+    let _ = (req, cancel);
     emit_stage(
-        &app,
+        app,
         "llm_expand",
         "skipped",
         None,
         None,
         Some("LLM feature disabled at build time".into()),
     );
+    Vec::new()
+}
+
+#[cfg(feature = "ai-llm")]
+async fn compute_llm_extras(
+    app: &AppHandle,
+    req: &RunRequest,
+    cancel: &CancellationToken,
+) -> Vec<String> {
+    if cancel.is_cancelled() {
+        emit_stage(app, "llm_expand", "skipped", None, None, None);
+        return Vec::new();
+    }
+
+    if req.use_llm_expansion {
+        // Tier 3a: LLM query expansion.
+        emit_stage(app, "llm_expand", "started", None, None, None);
+        let Some(llm) = ensure_llm_loaded(app).await else {
+            emit_stage(
+                app,
+                "llm_expand",
+                "skipped",
+                None,
+                None,
+                Some("LLM model not downloaded".into()),
+            );
+            return Vec::new();
+        };
+        let _ = app.emit(
+            crate::events::EV_MODEL_STATUS,
+            crate::events::ModelStatusPayload {
+                model_id: req.llm_model_id.clone().unwrap_or_else(|| "llm".into()),
+                status: "llm_expanding".to_string(),
+                detail: None,
+            },
+        );
+        let prompt = crate::ai::llm::expansion_prompt(&req.query);
+        let original = req.query.clone();
+        // Race the (blocking) generation against cancel + a hard timeout so Stop
+        // stays responsive and a wedged model can't hang the run.
+        let handle =
+            tokio::task::spawn_blocking(move || llm.blocking_lock().generate(&prompt, 200));
+        let text = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                emit_stage(app, "llm_expand", "skipped", None, None, None);
+                return Vec::new();
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(90)) => {
+                emit_stage(app, "llm_expand", "done", None, None, Some("expansion timed out".into()));
+                return Vec::new();
+            }
+            r = handle => match r {
+                Ok(Ok(t)) => t,
+                _ => {
+                    emit_stage(app, "llm_expand", "done", None, None, None);
+                    return Vec::new();
+                }
+            }
+        };
+        let extras = crate::ai::llm::parse_expansion(&text, &original);
+        let n = extras.len() as u64;
+        if n > 0 {
+            tracing::info!("LLM expanded query into {} extras", n);
+        }
+        emit_stage(
+            app,
+            "llm_expand",
+            "done",
+            Some(n),
+            None,
+            if n > 0 {
+                Some(format!("+{} sub-queries", n))
+            } else {
+                None
+            },
+        );
+        extras
+    } else if req.use_semantic_rerank {
+        // Balanced: lightweight spell correction (Thorough's expansion prompt
+        // already corrects spelling). Previously fully silent — now a visible
+        // stage. Loads the model on demand; no-op when none is on disk.
+        emit_stage(
+            app,
+            "llm_expand",
+            "started",
+            None,
+            None,
+            Some("spell-check".into()),
+        );
+        let Some(llm) = ensure_llm_loaded(app).await else {
+            emit_stage(app, "llm_expand", "skipped", None, None, None);
+            return Vec::new();
+        };
+        let prompt = crate::ai::llm::spellfix_prompt(&req.query);
+        let handle = tokio::task::spawn_blocking(move || llm.blocking_lock().generate(&prompt, 32));
+        let text = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                emit_stage(app, "llm_expand", "skipped", None, None, None);
+                return Vec::new();
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(45)) => {
+                emit_stage(app, "llm_expand", "done", None, None, None);
+                return Vec::new();
+            }
+            r = handle => match r {
+                Ok(Ok(t)) => t,
+                _ => {
+                    emit_stage(app, "llm_expand", "done", None, None, None);
+                    return Vec::new();
+                }
+            }
+        };
+        emit_stage(app, "llm_expand", "done", None, None, None);
+        if let Some(fixed) = crate::ai::llm::parse_spellfix(&text, &req.query) {
+            tracing::info!("spell-fix: {:?} -> {:?}", req.query, fixed);
+            return vec![fixed];
+        }
+        Vec::new()
+    } else {
+        emit_stage(app, "llm_expand", "skipped", None, None, None);
+        Vec::new()
+    }
+}
+
+pub async fn run_pipeline(
+    app: AppHandle,
+    req: RunRequest,
+    cancel: CancellationToken,
+) -> anyhow::Result<()> {
+    let client = Arc::new(make_client());
+    // Fast, regex-based sub-queries. Discovery runs on these IMMEDIATELY (wave
+    // 1) so results stream within ~1s; the optional — and possibly slow, cold-
+    // loading — LLM expansion runs concurrently and folds its extra sub-queries
+    // in as wave 2. (Previously the LLM ran *before* discovery, so the whole run
+    // sat at 0 found / 0 saved until the model finished loading + generating.)
+    let base = expand_query(&req.query);
 
     runlog::log(runlog::Event::RunStart {
         query: &req.query,
-        sub_queries: &sub_queries,
+        sub_queries: &base,
         sources: &req.sources,
     });
+    // Emit keywords up front so the Sub-queries panel populates at t≈0 instead
+    // of waiting on the LLM. Re-emitted with the LLM extras before wave 2.
     app.emit(
         EV_KEYWORDS,
         KeywordsPayload {
             query: req.query.clone(),
-            sub_queries: sub_queries.clone(),
+            sub_queries: base.clone(),
         },
     )?;
 
@@ -229,6 +490,29 @@ pub async fn run_pipeline(
     // the new EV_CANDIDATE event fires once per merged candidate after
     // ranking, with rejection reasons attached.
 
+    // The meta-search aggregator already fans out to the six web engines (and
+    // falls back to SearXNG), so when it's enabled we drop those redundant
+    // standalone web sources. Running both double-scrapes the same sites and
+    // trips rate limits (403/429) without adding any coverage.
+    const META_COVERED: &[&str] = &[
+        "web",
+        "brave",
+        "bing",
+        "mojeek",
+        "marginalia",
+        "startpage",
+        "searxng",
+    ];
+    let effective_sources: Vec<String> = if req.sources.iter().any(|s| s == "meta_search") {
+        req.sources
+            .iter()
+            .filter(|s| !META_COVERED.contains(&s.as_str()))
+            .cloned()
+            .collect()
+    } else {
+        req.sources.clone()
+    };
+
     emit_stage(
         &app,
         "discovery",
@@ -237,165 +521,64 @@ pub async fn run_pipeline(
         None,
         Some(format!(
             "{} sources × {} sub-queries",
-            req.sources.len(),
-            sub_queries.len()
+            effective_sources.len(),
+            base.len()
         )),
     );
 
     let dedup: Arc<AsyncMutex<Deduplicator>> = Arc::new(AsyncMutex::new(Deduplicator::new()));
-    // Aggregate per-(sub_query) keyword set for ranking later.
+    // Aggregate keyword set for ranking later — accumulated across both waves.
     let mut all_keywords: Vec<String> = Vec::new();
-    let mut tasks: JoinSet<()> = JoinSet::new();
 
-    for sub in &sub_queries {
-        let keywords = parse_query(sub);
-        let keywords = if keywords.is_empty() {
-            sub.split_whitespace().map(String::from).collect::<Vec<_>>()
-        } else {
-            keywords
-        };
-        if keywords.is_empty() {
-            continue;
-        }
-        all_keywords.extend(keywords.iter().cloned());
-        let _ = app.emit(
-            EV_SUBQUERY_START,
-            SubQueryStartPayload {
-                sub_query: sub.clone(),
-                keywords: keywords.clone(),
-            },
-        );
+    // Wave 1 (base sub-queries) and the LLM expansion run CONCURRENTLY: the
+    // expansion's cold model load / generation happens on the blocking pool
+    // while discovery streams over the network, so the user sees `found` climb
+    // immediately instead of staring at a frozen 0/0 card during the load.
+    let (stop_early, llm_extras) = tokio::join!(
+        discover_wave(
+            &app,
+            &client,
+            &cancel,
+            &dedup,
+            &mut all_keywords,
+            &base,
+            &effective_sources,
+            &req,
+            std::time::Duration::from_secs(60),
+        ),
+        compute_llm_extras(&app, &req, &cancel),
+    );
 
-        for sname in &req.sources {
-            if !SOURCE_IDS.contains(&sname.as_str()) {
-                let _ = app.emit(
-                    EV_SOURCE_ERROR,
-                    SourceErrorPayload {
-                        source: sname.clone(),
-                        error: "unknown source".into(),
-                        kind: "other".into(),
-                    },
-                );
-                continue;
-            }
-            let opts = req.source_options.get(sname).cloned().unwrap_or_default();
-            let Some(src) = build_source(sname, opts, client.clone(), Some(app.clone())) else {
-                continue;
-            };
-
-            let app_t = app.clone();
-            let cancel_t = cancel.clone();
-            let dedup_t = dedup.clone();
-            let sub_t = sub.clone();
-            let sname_t = sname.clone();
-            let keywords_t = keywords.clone();
-            let per_source = req.per_source;
-            let max_total = req.max_total;
-
-            tasks.spawn(async move {
-                let _ = app_t.emit(
-                    EV_SOURCE_START,
-                    SourceStartPayload {
-                        source: sname_t.clone(),
-                        sub_query: sub_t.clone(),
-                    },
-                );
-
-                let mut count = 0usize;
-                let mut rank_in_source = 0usize;
-                // Per-task dedup so a source spamming the same error class
-                // (typical: 8× "429 rate limit" from Brave during a multi-page
-                // scrape) collapses into a single UI surface instead of
-                // hammering the issues panel.
-                let mut seen_kinds: std::collections::HashSet<&'static str> =
-                    std::collections::HashSet::new();
-                let mut stream = src.search(keywords_t.clone(), per_source).await;
-
-                while let Some(item) = stream.next().await {
-                    if cancel_t.is_cancelled() {
-                        break;
-                    }
-                    match item {
-                        Ok(doc) => {
-                            rank_in_source += 1;
-                            // Hard cap so a slow source can't push us past max_total.
-                            // Cheaply checked under the lock below.
-                            let total_now = {
-                                let mut d = dedup_t.lock().await;
-                                if d.len() >= max_total {
-                                    break;
-                                }
-                                let title_for_evt = doc.title.clone();
-                                let url_for_evt = doc.url.clone();
-                                let source_for_evt = doc.source.clone();
-                                d.add(doc, &sname_t, rank_in_source);
-                                count += 1;
-                                let total = d.len();
-                                drop(d);
-                                let _ = app_t.emit(
-                                    EV_FOUND,
-                                    FoundPayload {
-                                        title: title_for_evt,
-                                        source: source_for_evt,
-                                        url: url_for_evt,
-                                        total,
-                                    },
-                                );
-                                total
-                            };
-                            if total_now >= max_total {
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            let err_str = e.to_string();
-                            // Always log to the runlog file so post-mortem
-                            // analysis stays complete.
-                            runlog::log(runlog::Event::SourceError {
-                                source: &sname_t,
-                                error: &err_str,
-                                sub_query: Some(&sub_t),
-                            });
-                            let kind = crate::events::classify_source_error(&err_str);
-                            // Parse-class errors mean HTML markup drift —
-                            // users can't act on them. Silent.
-                            if kind == "parse_error" {
-                                continue;
-                            }
-                            // Don't re-emit the same class within this task —
-                            // the frontend dedups by (source, kind) too, but
-                            // suppressing here keeps the event stream lean.
-                            if !seen_kinds.insert(kind) {
-                                continue;
-                            }
-                            let _ = app_t.emit(
-                                EV_SOURCE_ERROR,
-                                SourceErrorPayload {
-                                    source: sname_t.clone(),
-                                    error: err_str,
-                                    kind: kind.into(),
-                                },
-                            );
-                        }
-                    }
-                }
-                let _ = app_t.emit(
-                    EV_SOURCE_DONE,
-                    SourceDonePayload {
-                        source: sname_t.clone(),
-                        count,
-                    },
-                );
-            });
-        }
-    }
-
-    // Drain all spawned discovery tasks. Errors here are panics from the
-    // task body — they shouldn't happen since each task only emits events
-    // and pushes into the mutex.
-    while let Some(res) = tasks.join_next().await {
-        if let Err(e) = res {
-            tracing::warn!("discovery task join error: {e}");
+    // Wave 2: fold in any LLM-derived sub-queries we don't already have, merging
+    // into the same dedup. Skipped if wave 1 was cancelled or hit its deadline.
+    if !stop_early && !cancel.is_cancelled() {
+        let extras: Vec<String> = llm_extras
+            .into_iter()
+            .filter(|q| !base.iter().any(|b| b.eq_ignore_ascii_case(q)))
+            .collect();
+        if !extras.is_empty() {
+            tracing::info!("discovery wave 2: {} LLM sub-queries", extras.len());
+            let mut combined = base.clone();
+            combined.extend(extras.iter().cloned());
+            let _ = app.emit(
+                EV_KEYWORDS,
+                KeywordsPayload {
+                    query: req.query.clone(),
+                    sub_queries: combined,
+                },
+            );
+            let _ = discover_wave(
+                &app,
+                &client,
+                &cancel,
+                &dedup,
+                &mut all_keywords,
+                &extras,
+                &effective_sources,
+                &req,
+                std::time::Duration::from_secs(30),
+            )
+            .await;
         }
     }
 
@@ -418,6 +601,26 @@ pub async fn run_pipeline(
             count: merged.len(),
         },
     );
+
+    // If the user cancelled during discovery, stop here: skip ranking, rerank,
+    // LLM filter, candidate emission and downloads entirely so the UI flips to
+    // "cancelled" immediately instead of grinding through the rest of the
+    // pipeline. (Ranking and the EV_CANDIDATE loop below don't check the token,
+    // so without this a cancelled run keeps streaming candidates and the found
+    // partial set still gets download-skipped — looking like "nothing happens".)
+    if cancel.is_cancelled() {
+        let _ = app.emit(
+            EV_CANCELLED,
+            CompletePayload {
+                done: 0,
+                failed: 0,
+                total: 0,
+                folder: folder.to_string_lossy().to_string(),
+                manifest: db_path.to_string_lossy().to_string(),
+            },
+        );
+        return Ok(());
+    }
 
     if merged.is_empty() {
         let payload = CompletePayload {
@@ -461,7 +664,7 @@ pub async fn run_pipeline(
     // Falls back silently to Tier 1 if the model isn't available — the
     // user gets no error, just lexical-only ranking.
     #[cfg(feature = "ai-embeddings")]
-    if req.use_semantic_rerank && !cancel.is_cancelled() {
+    if req.use_semantic_rerank && !cancel.is_cancelled() && crate::ai::embeddings::is_loaded() {
         let to_rerank = ranked.len().min(100) as u64;
         emit_stage(
             &app,
@@ -543,6 +746,22 @@ pub async fn run_pipeline(
     #[cfg(feature = "ai-embeddings")]
     if !req.use_semantic_rerank {
         emit_stage(&app, "semantic_rerank", "skipped", None, None, None);
+    } else if !cancel.is_cancelled() && !crate::ai::embeddings::is_loaded() {
+        // First use of semantic rerank: load/download the model in the
+        // background so this run doesn't stall on a cold ~60 MB download.
+        // Semantic rerank engages automatically on the next search once ready.
+        crate::ai::embeddings::warm_in_background(app.clone());
+        emit_stage(
+            &app,
+            "semantic_rerank",
+            "skipped",
+            None,
+            None,
+            Some(
+                "downloading semantic model in the background — used lexical ranking this run"
+                    .into(),
+            ),
+        );
     }
 
     // Tier 3b: LLM borderline filter. Asks the LLM yes/no whether each

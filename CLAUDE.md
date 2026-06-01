@@ -1,9 +1,9 @@
 # Document Finder — developer & agent guide
 
 The single source of developer truth for this repo. User-facing docs live in
-[`README.md`](README.md); this file is everything else (architecture, build
-internals, verification, release, icon regen, conventions). Written to double as
-context for coding agents.
+[`README.md`](README.md); this file is everything else — architecture, build
+internals, verification, release, conventions, third-party licenses, icon regen.
+Written to double as context for coding agents.
 
 Document Finder is a Tauri 2 desktop app: a **Rust** backend (`src-tauri/`) and a
 **Solid.js + Vite + TypeScript** frontend (`src/`). It searches open-access
@@ -13,20 +13,31 @@ per-query SQLite libraries on disk.
 ## Architecture
 
 ### Frontend (`src/`)
-- `App.tsx` / `main.tsx` — shell and entry; `main.tsx` registers the global Tauri
-  event listeners (kept in `window._dfUnlisten` for cleanup).
-- `components/` — `FindTab`, `LiveResultsView`, `LibraryView`, `SettingsView`,
-  `Sidebar`, `PipelineStrip`, `MetaSearchHealthBar`, `ModelStatusBadge`,
-  `ModelDownloadCard`, `ThemePicker`, `WelcomeDialog`.
-- `stores/` — Solid signals: `ui` (routing), `theme`, `settings`, `models`,
-  `pipeline`, `run` (active search state).
+- `App.tsx` / `main.tsx` — shell and entry; `main.tsx` imports `stores/theme`
+  (applies `data-*` before first paint) and registers the global Tauri event
+  listeners (kept in `window.__dfUnlisten` for cleanup).
+- `components/` — `Sidebar`, `FindTab` (Discover: hero query + rich Sources panel
+  + live run card), `LibraryView`, `SettingsView`, `WelcomeDialog`, plus the
+  shared editorial pieces `DocRow`, `SourcePanel`, `Sparkline`, `Banner`,
+  `ProgressBar`, `Logo`, `ThemePicker`, and the AI/health widgets
+  `ModelDownloadCard`, `ModelStatusBadge`, `MetaSearchHealthBar`. The live
+  download stream + pipeline rail live inside `FindTab` (no separate
+  `LiveResultsView`/`PipelineStrip`).
+- `stores/` — Solid signals: `ui` (routing + known libraries), `theme`
+  (`theme`/`accent`/`density`/`streamLayout`), `settings`, `models`, `pipeline`,
+  `run` (active search state, incl. per-source live stats + cumulative bytes).
 - `lib/` — `tauri.ts` (typed `invoke` bindings + `RunRequest`/`Document` types),
   `events.ts` (event names + payloads, mirror of `src-tauri/src/events.rs`),
-  `utils.ts` (`SOURCE_LABELS`, `sourceColor`, formatters).
-- `styles/globals.css` — Tailwind v4 (`@import "tailwindcss"`) plus the design
-  tokens. Themes are driven by `data-theme` on `<html>`: `warm-light`,
-  `warm-dark`, `apple-light`, `apple-dark`. Per-source colors are
-  `--color-source-<id>` tokens.
+  `utils.ts` (`SOURCE_LABELS`, `sourceColor`, `sourceDesc`, `ftypeFromPath`,
+  formatters), `errors.ts` (plain-language error humanizers for the UI).
+- `styles/globals.css` — Tailwind v4 (`@import "tailwindcss"`) plus the editorial
+  design system (`df-*` classes). Themes are driven by **`data-theme`** on
+  `<html>` (`paper` | `slate` | `midnight`), accents by **`data-accent`** (9), and
+  density by **`data-density`** (`compact` | `regular`); defaults are
+  `slate` + `sky`. Per-source colors are `--color-source-<id>` tokens. Legacy
+  `--color-*` names are aliased to the editorial tokens, and a small compatibility
+  shim maps a few old skeuomorphic class names for the not-fully-rewritten
+  AI/welcome widgets.
 
 ### Backend (`src-tauri/src/`)
 - `lib.rs` — Tauri builder, `invoke_handler!` (the command allowlist), and the
@@ -34,25 +45,25 @@ per-query SQLite libraries on disk.
   hook that logs `tokio::spawn` task panics.
 - `commands.rs` — every `#[tauri::command]`. Must stay in sync with
   `permissions/app.toml` (enforced by the `permissions_in_sync` test).
-- `events.rs` — event-name constants and payload structs emitted to the UI.
+- `events.rs` — event-name constants, payload structs, and `classify_source_error`.
 - `sources/` — `trait Source` (`mod.rs`) with one module per backend:
   `arxiv`, `openalex`, `semantic_scholar`, `internet_archive`, `doaj`,
   `gutenberg`, and the web layer: `meta_search` (aggregator) over six HTML
   scrapers (`duckduckgo`, `bing_html`, `brave_html`, `mojeek_html`,
   `marginalia_html`, `startpage_html`) with `searxng_pool` and `local_searxng`
   as fallbacks. `web_common` holds shared scraping helpers. `mod.rs` also has
-  `build_source`, `SOURCE_IDS`, the `Document` struct, `make_client`, and
-  `get_with_retry` (exponential backoff on 429/5xx).
+  `build_source`, `SOURCE_IDS`, the `Document` struct, `make_client`, the browser
+  `USER_AGENT`, and `get_with_retry` (exponential backoff on 429/5xx).
 - `engine/` — `orchestrator` (the search→download→extract→rank pipeline),
   `query` (sub-query expansion + slugging), `db` (SQLite, `CREATE TABLE IF NOT
   EXISTS`, no migrations yet), `downloader` (concurrent download with a
-  `Content-Length` size cap and `tokio::select!` cancellation), `extract`
-  (PDF/EPUB text, panic-guarded), `ranking` (TF-IDF + optional semantic
-  rerank), `dedup`, `authority`, `citation_graph`, `manifest` (legacy
-  `manifest.json` read path only), `runlog` (JSONL run log; `read_tail` reads a
-  bounded window).
-- `ai/` — optional, feature-gated. `embeddings` (bge-small via `fastembed`/ort,
-  `ai-embeddings`), `llm` (Qwen 2.5 3B via `llama-cpp-2`, `ai-llm`), plus
+  `Content-Length` size cap and `tokio::select!` cancellation; sends document-
+  biased `Accept`/`Accept-Language`/`Referer` headers to cut 4xx rejections, and
+  emits plain-language failure strings), `extract` (PDF/EPUB text, panic-guarded),
+  `ranking` (TF-IDF + optional semantic rerank), `dedup`, `authority`,
+  `citation_graph`, `manifest` (legacy read path only), `runlog` (JSONL run log).
+- `ai/` — optional, feature-gated. `embeddings` (BGE-Small via `fastembed`/ort,
+  `ai-embeddings`), `llm` (Qwen 2.5 1.5B via `llama-cpp-2`, `ai-llm`), plus
   `registry`, `downloader` (model fetch + SHA256), `storage`, `state`. Models
   live behind resettable `RwLock<Option<…>>` singletons so a poisoned/failed
   model can be reset without restarting the app.
@@ -66,11 +77,13 @@ every circuit is open it falls back to `SearxngPoolSource`, which **prefers the
 in-process local server** (`http://127.0.0.1:<port>`, SSRF-exempt) before a
 public `searx.space` instance.
 
-The in-process server (`local_searxng.rs`) is started at app launch and is backed
-by `MetaSearchSource::new_without_pool_fallback` — **not** the pool-backed one —
+The in-process server (`local_searxng.rs`) is started at app launch, backed by
+`MetaSearchSource::new_without_pool_fallback` — **not** the pool-backed one —
 because the pool prefers the local server, so a pool-backed aggregator there would
-recurse local → pool → local forever. Every public instance URL is SSRF-validated
-before use. No Docker, no Python, no setup.
+recurse local → pool → local forever. The server registers its port **only once
+`/healthz` answers** (with a background re-probe for slow starts) so a not-yet-
+ready server never stalls the first query before pool fallback. Every public
+instance URL is SSRF-validated. No Docker, no Python, no setup.
 
 ## Build & run
 
@@ -79,22 +92,36 @@ before use. No Docker, no Python, no setup.
 ./run.sh      # macOS / Linux  (installs pnpm if missing)
 ```
 
+**Clean rebuild — one command, every OS** (Windows / macOS / Linux):
+
+```bash
+pnpm clean-build         # clean app crate + caches, release-fast build
+pnpm clean-build:full    # also rebuild llama.cpp + ONNX from scratch (15-25 min)
+pnpm clean-build:dev     # debug build + hot reload (tauri dev)
+```
+
+`scripts/rebuild.mjs` cleans the Rust build + Vite/dist caches, reinstalls JS
+deps, and runs the full Tauri build. Named `clean-build`, not `rebuild`, so it
+doesn't collide with pnpm's built-in `rebuild` command.
+
 Manual:
 
 ```bash
-pnpm install --frozen-lockfile --ignore-scripts   # see "esbuild" note below
+pnpm install --frozen-lockfile --ignore-scripts
 pnpm tauri dev
 pnpm tauri build                                   # native installers
 ```
 
 - **Feature flags** (`src-tauri/Cargo.toml`): `default = custom-protocol +
   ai-embeddings + ai-llm`. The AI features build llama.cpp + ONNX Runtime from
-  source (needs `cmake` + `clang`/LLVM; first build is 10–25 min). For fast dev
-  rebuilds without AI:
+  source (needs `cmake` + `clang`/LLVM with `libclang` on `PATH`; first build is
+  10–25 min). For fast dev rebuilds without AI:
   `cargo build --no-default-features --features=custom-protocol`.
-- **esbuild / pnpm 11**: pnpm 11 hard-errors on unapproved build scripts.
-  esbuild's binary ships in its platform package, so its postinstall isn't
-  needed — install with `--ignore-scripts` (CI does this on every platform).
+- **pnpm 11 / esbuild**: pnpm 11 refuses to silently skip esbuild's (unneeded)
+  build script and hard-errors before every `pnpm <script>`. Resolved by
+  answering its prompt in `pnpm-workspace.yaml`: `allowBuilds: { esbuild: false }`.
+  Installs still pass `--ignore-scripts` (esbuild's binary ships in its platform
+  package).
 
 ## Verify (mirrors CI)
 
@@ -123,15 +150,18 @@ needs glibc 2.39+ C23 symbols).
 
 - **Adding a source**: create `src-tauri/src/sources/<name>.rs` implementing
   `Source` (`name()` + `search() -> BoxStream<Result<Document>>`), register it in
-  `mod.rs` (`pub mod`, `SOURCE_IDS`, `build_source`), add a `SOURCE_LABELS` entry
-  and a `--color-source-<id>` token on the frontend, and enable it by default in
-  `DEFAULT_ENABLED_SOURCES` if appropriate.
+  `mod.rs` (`pub mod`, `SOURCE_IDS`, `build_source`), add `SOURCE_LABELS` +
+  `sourceDesc` entries and a `--color-source-<id>` token on the frontend, and
+  enable it by default in `DEFAULT_ENABLED_SOURCES` if appropriate.
 - **Adding/removing a command**: edit `commands.rs` and the `invoke_handler!` in
   `lib.rs`, then mirror it in `permissions/app.toml` — the `permissions_in_sync`
   test fails otherwise.
 - **Events**: keep `src-tauri/src/events.rs` and `src/lib/events.ts` in sync.
 - **External URLs**: anything user- or network-supplied must pass
   `util::url_safety::validate_url` before a request.
+- **Conditional CSS classes**: use Solid's `classList={{ ... }}`, not
+  template-literal ternaries — `prettier-plugin-tailwindcss` strips the leading
+  space inside a ternary string (`` `df-doc${c?" x":""}` `` → `"x"` → glued class).
 - `unsafe` is forbidden (`[lints.rust] unsafe_code = "forbid"`); clippy runs at
   `-D warnings` in CI.
 
@@ -151,16 +181,16 @@ needs glibc 2.39+ C23 symbols).
 
 The builds are unsigned, so first launch needs a manual allow:
 - **macOS** — System Settings → Privacy & Security → **Open Anyway**, or
-  `xattr -dr com.apple.quarantine "/Applications/Document Finder.app"`. Verify
-  with `codesign -dvvv "/Applications/Document Finder.app"` (expect "not signed").
+  `xattr -dr com.apple.quarantine "/Applications/Document Finder.app"`.
 - **Windows** — SmartScreen → **More info** → **Run anyway**.
 
 ## Icon regeneration
 
 Master artwork lives in `icons/` (not shipped at runtime):
-`Document Finder Icon.svg` is the vector master; `Document Finder MacOS.png`
-(1024×1024) is the raster master. After editing a master, regenerate every
-runtime size into `src-tauri/icons/`:
+`Document Finder Icon.svg` is the vector master (also used as the in-app logo via
+`src/components/Logo.tsx`); `Document Finder MacOS.png` (1024×1024) is the raster
+master. After editing a master, regenerate every runtime size into
+`src-tauri/icons/`:
 
 ```bash
 pnpm tauri icon "icons/Document Finder MacOS.png"
@@ -172,3 +202,43 @@ pnpm tauri icon "icons/Document Finder MacOS.png"
 `.github/workflows/pages.yml` on push to `main`. One-time setup: repo
 **Settings → Pages → Source: GitHub Actions**. It reuses the app's palette with a
 blue-green accent sampled from the logo and the logo SVG itself (`site/logo.svg`).
+
+## Third-party licenses
+
+Document Finder is licensed under **GNU AGPL-3.0-or-later** (see [`LICENSE`](LICENSE)),
+copyright Web World Wide. The third-party components below are informational and do
+not modify any component's terms. License inventory last audited **2026-05-30**.
+
+**AI model weights (downloaded at runtime, never bundled or redistributed).** The
+optional local-LLM feature downloads weights on demand from Hugging Face to the
+user's machine, under the publisher's license. The catalog lists only permissively
+licensed models compatible with AGPL; each download is verified against a pinned
+SHA-256 (`src-tauri/src/ai/registry.rs`):
+
+| Model | Publisher | License | Source |
+|---|---|---|---|
+| Qwen 2.5 1.5B Instruct (GGUF, Q4_K_M) — *default* | Alibaba Cloud (Qwen) | Apache-2.0 | `Qwen/Qwen2.5-1.5B-Instruct-GGUF` |
+| Qwen 2.5 0.5B Instruct (GGUF, Q4_K_M) | Alibaba Cloud (Qwen) | Apache-2.0 | `Qwen/Qwen2.5-0.5B-Instruct-GGUF` |
+
+The text-embedding model (BGE-Small-EN-v1.5, MIT) is fetched and cached by the
+`fastembed` library at runtime. Models with non-commercial/custom-restricted terms
+(Qwen2.5-3B "qwen-research", Llama Community License, Mistral Research License) are
+deliberately **excluded** so the defaults add no restrictions beyond ours.
+
+**Rust dependencies** are all permissive / AGPL-compatible — predominantly
+`MIT OR Apache-2.0`, with assorted MIT/BSD/Zlib/ISC/Unicode-3.0 and a few MPL-2.0
+(file-level). No GPL-2.0-only/AGPL/SSPL/BUSL/CC-BY-NC/proprietary deps. Notable
+native libs (all permissive): `llama-cpp-2`/`llama.cpp` (MIT), ONNX Runtime via
+`ort` (MIT), `fastembed` (Apache-2.0), `rusqlite`/bundled SQLite (public domain /
+MIT), `reqwest` + `rustls` (MIT / Apache-2.0).
+
+**JavaScript / npm dependencies** are all permissive — mostly MIT, with ISC,
+Apache-2.0, BSD, and a couple MPL-2.0 (`lightningcss`, file-level). Build-time-only
+attributions: `caniuse-lite` (CC-BY-4.0), `argparse` (Python-2.0).
+
+Reproduce the inventories:
+```bash
+cargo metadata --format-version 1 --manifest-path src-tauri/Cargo.toml \
+  | python -c "import sys,json;[print(p['name'],p['version'],p.get('license')) for p in json.load(sys.stdin)['packages']]"
+pnpm licenses list
+```

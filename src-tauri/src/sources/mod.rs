@@ -39,6 +39,7 @@ pub const SOURCE_IDS: &[&str] = &[
     "doaj",
     "gutenberg",
     "meta_search",
+    "searxng",
     "web",
     "brave",
     "bing",
@@ -127,6 +128,9 @@ pub fn build_source(
         "marginalia" => Some(Box::new(marginalia_html::MarginaliaHtmlSource::new(client))),
         "startpage" => Some(Box::new(startpage_html::StartpageHtmlSource::new(client))),
         "meta_search" => Some(Box::new(meta_search::MetaSearchSource::new(client, app))),
+        // In-process SearXNG (prefers the local server, public pool fallback) —
+        // a user-selectable, zero-setup source. No Docker or external instance.
+        "searxng" => Some(Box::new(searxng_pool::SearxngPoolSource::new(client))),
         _ => None,
     }
 }
@@ -135,8 +139,44 @@ pub fn make_client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(std::time::Duration::from_secs(60))
+        .redirect(safe_redirect_policy())
         .build()
         .expect("http client")
+}
+
+/// Redirect policy that follows normal cross-host redirects but refuses to hop
+/// to a non-http(s) scheme or to an IP-literal host in a private/reserved
+/// range. This blocks the common SSRF-via-redirect cases (a public URL 302-ing
+/// to `http://127.0.0.1` or the cloud-metadata `169.254.169.254`).
+///
+/// A redirect to a *hostname* that DNS-resolves to a private IP isn't caught
+/// here — the policy closure is synchronous and can't resolve names. The
+/// initial-hop `util::url_safety::validate_download_url` async check covers that
+/// case for document downloads.
+fn safe_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 {
+            return attempt.error("too many redirects");
+        }
+        let url = attempt.url();
+        let scheme = url.scheme();
+        if scheme != "http" && scheme != "https" {
+            return attempt.error("redirect to non-http(s) scheme blocked");
+        }
+        let private = match url.host() {
+            Some(url::Host::Ipv4(ip)) => {
+                crate::util::url_safety::is_private_ip(&std::net::IpAddr::V4(ip))
+            }
+            Some(url::Host::Ipv6(ip)) => {
+                crate::util::url_safety::is_private_ip(&std::net::IpAddr::V6(ip))
+            }
+            _ => false,
+        };
+        if private {
+            return attempt.error("redirect to a private/internal IP blocked");
+        }
+        attempt.follow()
+    })
 }
 
 /// Helper: GET with exponential backoff on 429/5xx. Uses longer waits for

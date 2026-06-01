@@ -1,69 +1,113 @@
 import { For } from "solid-js";
-import { theme, applyTheme, THEME_META, type Theme } from "@/stores/theme";
+import {
+  theme,
+  accent,
+  density,
+  streamLayout,
+  setTheme,
+  setAccent,
+  setDensity,
+  setStreamLayout,
+  THEME_META,
+  ACCENT_META,
+} from "@/stores/theme";
 
-const THEMES: Theme[] = ["warm-light", "warm-dark", "apple-light", "apple-dark"];
-
-const SWATCHES: Record<Theme, { bg: string; surface: string; text: string; accent: string }> = {
-  "warm-light": { bg: "#ede9e4", surface: "#e8e3de", text: "#2a2520", accent: "#3b5fd6" },
-  "warm-dark": { bg: "#2a2520", surface: "#332e28", text: "#ece7e1", accent: "#7a96f0" },
-  "apple-light": { bg: "#f2f2f7", surface: "#ffffff", text: "#1c1c1e", accent: "#007aff" },
-  "apple-dark": { bg: "#1c1c1e", surface: "#2c2c2e", text: "#f2f2f7", accent: "#0a84ff" },
-};
-
+/** Editorial theming controls: base theme, accent, density, and stream layout. */
 export default function ThemePicker() {
   return (
-    <div class="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Color theme">
-      <For each={THEMES}>
-        {(t) => {
-          const meta = THEME_META[t];
-          const sw = SWATCHES[t];
-          const active = () => theme() === t;
-          return (
-            <button
-              role="radio"
-              aria-checked={active()}
-              aria-label={`${meta.label} ${meta.palette}`}
-              onClick={() => applyTheme(t)}
-              class="relative flex flex-col items-start gap-1.5 rounded-lg border p-2.5 text-left transition-colors"
-              style={{
-                background: sw.bg,
-                "border-color": active() ? sw.accent : "transparent",
-                "box-shadow": active()
-                  ? `0 0 0 2px ${sw.accent}`
-                  : "0 1px 3px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.06)",
-              }}
-            >
-              {/* Mini preview card */}
-              <div
-                class="w-full rounded"
+    <div style={{ display: "flex", "flex-direction": "column", gap: "16px" }}>
+      <div class="df-field" style={{ gap: "8px" }}>
+        <label>Theme</label>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <For each={THEME_META}>
+            {(t) => (
+              <button
+                class="df-btn sm"
+                aria-pressed={theme() === t.id}
+                onClick={() => setTheme(t.id)}
                 style={{
-                  background: sw.surface,
-                  height: "28px",
-                  "box-shadow": "0 1px 2px rgba(0,0,0,0.10)",
+                  flex: 1,
+                  "flex-direction": "column",
+                  "align-items": "stretch",
+                  gap: "6px",
+                  padding: "8px",
+                  ...(theme() === t.id
+                    ? { "border-color": "var(--accent)", color: "var(--accent)" }
+                    : {}),
                 }}
               >
-                <div
-                  class="m-1.5 rounded"
+                <span
                   style={{
-                    background: sw.accent,
-                    height: "6px",
-                    width: "40%",
-                    opacity: "0.85",
+                    display: "block",
+                    width: "100%",
+                    height: "22px",
+                    "border-radius": "4px",
+                    background: t.swatch,
+                    "box-shadow": "inset 0 0 0 0.5px var(--line-2)",
                   }}
                 />
-              </div>
-              <div>
-                <div class="text-[11px] leading-tight font-semibold" style={{ color: sw.text }}>
-                  {meta.label}
-                </div>
-                <div class="text-[10px] leading-tight opacity-70" style={{ color: sw.text }}>
-                  {meta.palette}
-                </div>
-              </div>
+                {t.label}
+              </button>
+            )}
+          </For>
+        </div>
+      </div>
+
+      <div class="df-field" style={{ gap: "8px" }}>
+        <label>Accent</label>
+        <div class="df-swatches" role="radiogroup" aria-label="Accent color">
+          <For each={ACCENT_META}>
+            {(a) => (
+              <button
+                class="df-swatch"
+                role="radio"
+                aria-checked={accent() === a.id}
+                aria-label={a.id}
+                title={a.id}
+                style={{ background: a.color }}
+                onClick={() => setAccent(a.id)}
+              />
+            )}
+          </For>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: "24px", "flex-wrap": "wrap" }}>
+        <div class="df-field" style={{ gap: "8px" }}>
+          <label>Density</label>
+          <div class="df-seg">
+            <button
+              class={density() === "compact" ? "on" : ""}
+              onClick={() => setDensity("compact")}
+            >
+              Compact
             </button>
-          );
-        }}
-      </For>
+            <button
+              class={density() === "regular" ? "on" : ""}
+              onClick={() => setDensity("regular")}
+            >
+              Regular
+            </button>
+          </div>
+        </div>
+        <div class="df-field" style={{ gap: "8px" }}>
+          <label>Stream layout</label>
+          <div class="df-seg">
+            <button
+              class={streamLayout() === "stacked" ? "on" : ""}
+              onClick={() => setStreamLayout("stacked")}
+            >
+              Stacked
+            </button>
+            <button
+              class={streamLayout() === "split" ? "on" : ""}
+              onClick={() => setStreamLayout("split")}
+            >
+              Split
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

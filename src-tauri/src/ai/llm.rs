@@ -4,8 +4,7 @@
 //! downloaded by the E1 model manager — and exposes two task-shaped methods:
 //!
 //!   * `generate` — free-form completion with a token cap.
-//!   * `yes_no`   — bounded 1-2 token classification used by Tier 3's
-//!                  borderline-candidate filter.
+//!   * `yes_no` — bounded 1-2 token classification used by Tier 3's borderline-candidate filter.
 //!
 //! Inference is single-threaded per context (llama.cpp limitation) so the
 //! singleton wraps the model in `tokio::sync::Mutex`. Loading runs on a
@@ -99,6 +98,10 @@ impl LlmModel {
         // assemble correctly.
         let mut decoder = encoding_rs::UTF_8.new_decoder();
 
+        // `cur_pos` is the absolute KV-cache position (prompt length + tokens
+        // generated so far), fed to `batch.add`; the loop index isn't a drop-in
+        // substitute, so the explicit counter is intentional.
+        #[allow(clippy::explicit_counter_loop)]
         for _ in 0..max_tokens {
             let next = sampler.sample(&ctx, last_logits_idx);
             sampler.accept(next);
@@ -211,12 +214,13 @@ pub fn expansion_prompt(query: &str) -> String {
     format!(
         "You are an expert research librarian. The user is searching for documents about: \"{}\"\n\
         \n\
-        Generate 5 alternative search queries that would surface documents about this topic from \
-        different angles. Include domain synonyms, formal/informal terms, and historical or \
-        contemporary phrasings. Output each query on its own line. No numbering, no preamble, \
-        no quotes.\n\
+        First, silently correct any spelling mistakes or typos in the query. Then generate 5 \
+        alternative search queries — using the corrected spelling — that would surface documents \
+        about this topic from different angles. Include domain synonyms, formal/informal terms, \
+        and historical or contemporary phrasings. Put the spelling-corrected query first, then the \
+        alternatives. Output each query on its own line. No numbering, no preamble, no quotes.\n\
         \n\
-        Alternative queries:\n",
+        Queries:\n",
         query
     )
 }
@@ -268,6 +272,50 @@ pub fn parse_expansion(raw: &str, original: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Prompt for a one-line spelling correction of a search query.
+pub fn spellfix_prompt(query: &str) -> String {
+    format!(
+        "Correct any spelling mistakes or typos in this search query. Keep the meaning and all \
+        correctly-spelled words unchanged — only fix misspellings. Reply with ONLY the corrected \
+        query on a single line, nothing else.\n\
+        \n\
+        Query: {}\n\
+        Corrected:",
+        query
+    )
+}
+
+/// Extract a spelling-corrected query from the LLM reply. Returns `Some` only
+/// for a sane, single-line correction that actually differs from the original
+/// and isn't suspiciously long (a hallucination or echoed prompt/prose).
+pub fn parse_spellfix(raw: &str, original: &str) -> Option<String> {
+    let line = raw
+        .lines()
+        .map(|l| l.trim().trim_matches('"').trim_matches('\'').trim())
+        .find(|l| !l.is_empty())?;
+    if line.is_empty() || line.len() > original.trim().len() + 24 {
+        return None;
+    }
+    if line.eq_ignore_ascii_case(original.trim()) {
+        return None; // no change
+    }
+    let lc = line.to_lowercase();
+    if [
+        "query",
+        "corrected",
+        "sorry",
+        "cannot",
+        "i ",
+        "the corrected",
+    ]
+    .iter()
+    .any(|bad| lc.contains(bad))
+    {
+        return None; // echoed prompt or prose, not a bare query
+    }
+    Some(line.to_string())
 }
 
 #[cfg(test)]

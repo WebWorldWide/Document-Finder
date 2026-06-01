@@ -43,11 +43,12 @@ if [ ! -d "node_modules" ]; then
 fi
 
 # Build --------------------------------------------------------------------
-# `-- --profile release-fast` passes through to cargo. The custom profile
-# parallelizes codegen so this finishes in ~30–40s on a warm cache instead
-# of the ~2 min the strict `release` profile takes.
+# Invoke the Tauri CLI's Node entry directly rather than `pnpm tauri` so the
+# single `--` separator reaches cargo intact (pnpm eats one `--`, and how many
+# survive is shell-dependent). The `release-fast` profile parallelizes codegen
+# so this finishes in ~30–40s on a warm cache vs ~2 min for strict `release`.
 echo -e "${BLUE}→ Building app (parallel codegen — should pin all CPU cores)...${NC}"
-pnpm tauri build -- --profile release-fast
+node node_modules/@tauri-apps/cli/tauri.js build -- --profile release-fast
 
 APP_PATH="src-tauri/target/release-fast/bundle/macos/Document Finder.app"
 if [ ! -d "$APP_PATH" ]; then

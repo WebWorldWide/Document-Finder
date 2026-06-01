@@ -16,11 +16,12 @@ Document Finder started as a way to **find and compress documents into context f
 ## Features
 
 - **Unified discovery** across seven open-access sources, with natural-language query expansion into sub-queries.
-- **Live download stream** — watch documents arrive as the async Rust backend fetches, retries, and extracts text.
+- **Live download stream** — watch documents arrive in real time with throughput, ETA, file-type breakdown, and a per-source lane chart as the async Rust backend fetches, retries, and extracts text.
+- **Plain-language results** — every skipped or failed download explains itself in one sentence ("This source blocked the download — it may need a sign-in"), not an HTTP code.
 - **AI-ready exports** — bundle any library (PDFs, EPUBs, extracted text) into a `.zip` for a context window.
 - **Built-in web meta-search** — DuckDuckGo, Bing, Brave, Mojeek, Marginalia, and Startpage behind a per-engine circuit breaker, with an in-process SearXNG-compatible server and a public SearXNG pool as fallbacks. No Docker, no setup, no API keys.
-- **Optional on-device AI** — `bge-small` reranks results and a bundled `Qwen 2.5 3B` expands queries; downloaded on first use, run fully offline.
-- **Warm and Apple-HIG themes**, light and dark, with reduced-motion support.
+- **Optional on-device AI** — `bge-small` reranks results and a bundled `Qwen 2.5 1.5B` expands queries and filters borderline hits; downloaded on first use, run fully offline.
+- **Editorial workstation UI** — three themes (Paper / Slate / Midnight), nine accent colors, compact/regular density, and a stacked-or-split download stream, with reduced-motion support. Defaults to Slate + Sky blue.
 
 ## Sources
 
@@ -38,7 +39,7 @@ _All open-access. No API keys._
 
 ## Build and run
 
-Prerequisites: [Rust](https://rustup.rs/), [Node.js](https://nodejs.org/) 22+, and a C++ toolchain with **cmake** + **clang/LLVM** (for the bundled llama.cpp). On Windows, use Visual Studio Build Tools with the C++ workload.
+Prerequisites: [Rust](https://rustup.rs/), [Node.js](https://nodejs.org/) 22+, and a C++ toolchain with **cmake** + **clang/LLVM** (for the bundled llama.cpp). On Windows, install [LLVM](https://github.com/llvm/llvm-project/releases) (or use Visual Studio Build Tools with the C++ and Clang components) so `libclang` is on your `PATH`.
 
 ```bash
 ./run.ps1         # Windows  (./run.sh on macOS/Linux — installs pnpm if needed)
@@ -49,6 +50,13 @@ The first build compiles llama.cpp + ONNX Runtime from source (10–25 min). For
 
 ```bash
 pnpm tauri build --no-default-features --features custom-protocol
+```
+
+To rebuild cleanly later — one command on any OS (Windows, macOS, Linux):
+
+```bash
+pnpm clean-build         # clean caches + release-fast build
+pnpm clean-build:dev     # clean + hot-reload dev build
 ```
 
 ## Data
@@ -66,6 +74,6 @@ your-query-slug/
 
 ## Contributing and license
 
-See [`CLAUDE.md`](CLAUDE.md) for the architecture map, build internals, release process, and icon regeneration. New sources live in `src-tauri/src/sources/` as modules implementing the `Source` trait.
+See [`CLAUDE.md`](CLAUDE.md) for the architecture map, build internals, release process, third-party license notices, and icon regeneration. New sources live in `src-tauri/src/sources/` as modules implementing the `Source` trait.
 
 Licensed under the [GNU Affero General Public License v3.0](LICENSE). Copyright © 2026 Web World Wide.

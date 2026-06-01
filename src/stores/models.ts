@@ -13,6 +13,10 @@ interface ModelsState {
   /// `is_embedding_loaded` Tauri command. Used by the AI Models UI to show
   /// "Auto-managed — ready" vs "Auto-managed — downloads on first search".
   embeddingLoaded: boolean;
+  /// True if the embedding model is cached on disk (loads without a network
+  /// fetch). Polled from the `embedding_downloaded` command. Distinct from
+  /// `embeddingLoaded`, which is in-memory readiness for this session.
+  embeddingDownloaded: boolean;
   // Per-model bytes/sec for the UI ETA, keyed by model_id.
   bytesPerSec: Record<string, number>;
   // Last activity status for the model (e.g. "embedding 23/100", "llm_warming").
@@ -27,6 +31,7 @@ const [state, setState] = createStore<ModelsState>({
   loading: false,
   error: null,
   embeddingLoaded: false,
+  embeddingDownloaded: false,
   bytesPerSec: {},
   activity: {},
 });
@@ -47,6 +52,10 @@ async function refresh() {
     api
       .isEmbeddingLoaded()
       .then((loaded) => setState("embeddingLoaded", loaded))
+      .catch(() => {});
+    api
+      .embeddingDownloaded()
+      .then((dl) => setState("embeddingDownloaded", dl))
       .catch(() => {});
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -90,6 +99,8 @@ async function ensureSubscribed() {
       // The first "embedding" event implies fastembed has finished loading.
       if (status === "embedding") {
         setState("embeddingLoaded", true);
+        // Loaded into memory implies it's also cached on disk now.
+        setState("embeddingDownloaded", true);
       }
       setState("activity", model_id, { status, detail });
       // Auto-clear activity after 5s of silence.
@@ -164,6 +175,14 @@ async function remove(modelId: string) {
   }
 }
 
+/// Kick off a background download + load of the embedding model (used by the
+/// Settings "Download now" button). The df:model_status "embedding" event flips
+/// embeddingLoaded when ready. Returns the invoke promise so the caller can
+/// show a spinner and surface errors.
+function warmEmbedding() {
+  return api.warmEmbedding();
+}
+
 export const modelsStore = {
   get state() {
     return state;
@@ -173,10 +192,22 @@ export const modelsStore = {
   download,
   cancel,
   remove,
-  /// True once the embedding model (managed by fastembed) has loaded into
-  /// process memory. The first semantic-rerank kicks the download/load.
+  warmEmbedding,
+  /// Selectable for "Balanced": ready if loaded in memory or already cached on
+  /// disk (it loads lazily on first use, and also auto-downloads on first
+  /// search). The Settings row lets the user warm it explicitly.
   get embeddingReady() {
-    return state.embeddingLoaded;
+    return state.embeddingLoaded || state.embeddingDownloaded;
+  },
+  /// True if the embedding model is cached on disk.
+  get embeddingDownloaded() {
+    return state.embeddingDownloaded;
+  },
+  /// Coarse state for the Settings row: in-memory > on-disk > absent.
+  get embeddingState(): "loaded" | "downloaded" | "absent" {
+    if (state.embeddingLoaded) return "loaded";
+    if (state.embeddingDownloaded) return "downloaded";
+    return "absent";
   },
   /// Convenience: any LLM model in Ready status?
   get llmReady() {

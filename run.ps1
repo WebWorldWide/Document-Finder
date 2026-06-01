@@ -45,7 +45,12 @@ if (-not (Test-Path "node_modules")) {
 
 # Build --------------------------------------------------------------------
 Write-Info "Building app (parallel codegen - should pin all CPU cores)..."
-& pnpm tauri build -- --profile release-fast
+# Invoke the Tauri CLI's Node entry directly instead of via `pnpm exec`. pnpm
+# eats one `--`, and how many survive depends on the shell — that mismatch made
+# `--profile` reach cargo wrong and the build fail. Calling node directly means
+# the single `--` separator reaches cargo intact. (PowerShell preserves `--`
+# when calling a native exe; only pnpm consumed it.)
+& node "node_modules\@tauri-apps\cli\tauri.js" build -- --profile release-fast
 if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
 
 $exeCandidates = @(

@@ -415,7 +415,16 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
     if path.contains("://") {
         return Err("path must not be a URI".to_string());
     }
-    let p = safe_within_library(&raw)?;
+    // Reveal is a benign "show in the OS file manager" action, and its targets
+    // are legitimately OUTSIDE the library root — most importantly an exported
+    // ZIP the user just saved via the native save dialog (e.g. ~/Documents/foo.zip,
+    // Desktop, Downloads, another drive). Confining it to the library root made
+    // every Library/Discover export fail with "… is outside the allowed root"
+    // *after* the ZIP was already written. We still canonicalize to reject
+    // nonexistent/garbage paths and normalize before handing it to the OS.
+    let p = raw
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve path '{}': {e}", raw.display()))?;
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
@@ -464,6 +473,33 @@ pub fn is_embedding_loaded() -> bool {
     #[cfg(not(feature = "ai-embeddings"))]
     {
         false
+    }
+}
+
+/// Whether the embedding model is already cached on disk (so it loads without a
+/// network fetch). Best-effort; lets Settings show a clear status separate from
+/// `is_embedding_loaded` (which reports in-memory readiness this session).
+#[tauri::command]
+pub fn embedding_downloaded(_app: AppHandle) -> bool {
+    #[cfg(feature = "ai-embeddings")]
+    {
+        crate::ai::embeddings::is_downloaded(&_app)
+    }
+    #[cfg(not(feature = "ai-embeddings"))]
+    {
+        false
+    }
+}
+
+/// Start a one-time background download + load of the embedding model so the
+/// user can warm it from Settings instead of waiting for the first semantic
+/// search. No-op if already loaded/warming; the UI learns it's ready via the
+/// `df:model_status` event.
+#[tauri::command]
+pub fn warm_embedding(_app: AppHandle) {
+    #[cfg(feature = "ai-embeddings")]
+    {
+        crate::ai::embeddings::warm_in_background(_app);
     }
 }
 
@@ -595,22 +631,45 @@ pub async fn delete_model(
 /// On success, returns the stage name that succeeded so the caller can log
 /// it. On failure, returns the chain of error messages.
 async fn force_remove_dir(path: &Path) -> Result<&'static str, String> {
-    // Stage 1: the easy path.
-    if let Err(e) = tokio::fs::remove_dir_all(path).await {
-        let stage1_msg = format!("remove_dir_all: {} ({:?})", e, e.kind());
-        tracing::info!(
-            "force_remove_dir stage 1 failed for {}: {}",
-            path.display(),
-            stage1_msg
-        );
-
-        // If the directory is already gone, treat as success — this can
-        // happen if a previous attempt half-succeeded.
-        if e.kind() == std::io::ErrorKind::NotFound {
-            return Ok("already gone");
+    // Stage 1: `remove_dir_all` with a short retry/backoff loop.
+    //
+    // On Windows a library we just listed or opened can still have transient
+    // handles open on its SQLite files (`-wal`/`-shm` from WAL mode), or be
+    // held for a beat by the search indexer / antivirus, so the first
+    // `remove_dir_all` fails with a sharing violation (PermissionDenied,
+    // os error 32). Those clear within a few hundred milliseconds, so retry a
+    // few times before falling back. Harmless on every platform.
+    let mut stage1_msg = String::new();
+    for attempt in 0..6u32 {
+        match tokio::fs::remove_dir_all(path).await {
+            Ok(()) => return Ok("remove_dir_all"),
+            // Already gone — a previous attempt may have half-succeeded.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok("already gone");
+            }
+            Err(e) => {
+                stage1_msg = format!("remove_dir_all: {} ({:?})", e, e.kind());
+                tracing::info!(
+                    "force_remove_dir stage 1 attempt {} failed for {}: {}",
+                    attempt + 1,
+                    path.display(),
+                    stage1_msg
+                );
+                // Growing backoff (120ms, 240ms, …); no sleep after the last try.
+                if attempt < 5 {
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        120 * u64::from(attempt + 1),
+                    ))
+                    .await;
+                }
+            }
         }
+    }
 
-        // Stage 2: strip macOS ACLs + xattrs, then retry.
+    {
+        // Stage 2: strip macOS ACLs + xattrs, then retry. (`chmod +a` ACLs or a
+        // `com.apple.quarantine` xattr can deny `delete` even with no open
+        // handle.)
         #[cfg(target_os = "macos")]
         {
             let chmod_status = tokio::process::Command::new("chmod")
@@ -675,16 +734,15 @@ async fn force_remove_dir(path: &Path) -> Result<&'static str, String> {
                 "force_remove_dir stage 2 (post chmod/xattr) succeeded for {}",
                 path.display()
             );
-            return Ok("chmod -RN + xattr -rc");
+            Ok("chmod -RN + xattr -rc")
         }
 
-        // Non-macOS: no ACL stripping toolchain assumed; just propagate.
+        // Non-macOS: retries exhausted; surface the last error.
         #[cfg(not(target_os = "macos"))]
         {
-            return Err(stage1_msg);
+            Err(stage1_msg)
         }
     }
-    Ok("remove_dir_all")
 }
 
 // =============================================================================
@@ -741,12 +799,24 @@ pub async fn delete_library(path: String) -> Result<(), String> {
         tracing::warn!("delete_library: {}", msg);
         return Err(msg);
     }
-    let docs = dirs::document_dir().ok_or_else(|| {
-        let msg =
-            "cannot resolve your Documents directory — delete refused for safety.".to_string();
-        tracing::warn!("delete_library: {}", msg);
-        msg
-    })?;
+    // Canonicalize Documents too: `p` came from `canonicalize()`, which on
+    // Windows yields a `\\?\`-prefixed verbatim path. A bare `dirs::document_dir()`
+    // has no such prefix, so `starts_with` would spuriously fail (the source of
+    // the "library must live inside Documents … is outside" error). Resolving
+    // both sides puts them in the same form.
+    let docs = dirs::document_dir()
+        .ok_or_else(|| {
+            let msg =
+                "cannot resolve your Documents directory — delete refused for safety.".to_string();
+            tracing::warn!("delete_library: {}", msg);
+            msg
+        })?
+        .canonicalize()
+        .map_err(|e| {
+            let msg = format!("cannot resolve your Documents directory: {e}");
+            tracing::warn!("delete_library: {}", msg);
+            msg
+        })?;
     if !p.starts_with(&docs) {
         let msg = format!(
             "library must live inside Documents ({}); '{}' is outside.",
