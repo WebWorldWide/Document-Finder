@@ -46,11 +46,18 @@ export default function FindTab() {
   const [query, setQuery] = createSignal("");
   const [exporting, setExporting] = createSignal(false);
   const [exportedTo, setExportedTo] = createSignal<string | null>(null);
+  const [exportError, setExportError] = createSignal<string | null>(null);
   const [speedHist, setSpeedHist] = createSignal<number[]>([]);
+  // How many real throughput samples have been pushed this run, so the average
+  // isn't diluted by the 32 seed zeros at the start (which made the early ETA
+  // wildly pessimistic).
+  const [samplesSeen, setSamplesSeen] = createSignal(0);
   const [stopping, setStopping] = createSignal(false);
 
   const rs = () => runStore.state;
-  const stats = uiStore.lifetimeStats;
+  // Accessor (not a one-time snapshot) so the header stats stay reactive as
+  // libraries load — `lifetimeStats` is a getter that recomputes from a signal.
+  const stats = () => uiStore.lifetimeStats;
 
   // Reset the local "Stopping…" latch once the backend confirms the run ended
   // (both EV_COMPLETE and EV_CANCELLED set running=false in the run store).
@@ -69,6 +76,7 @@ export default function FindTab() {
     let lastBytes = untrack(() => runStore.state.bytesDownloaded);
     let lastT = performance.now();
     setSpeedHist(new Array(32).fill(0));
+    setSamplesSeen(0);
     const timer = window.setInterval(() => {
       const now = performance.now();
       const dt = (now - lastT) / 1000;
@@ -77,6 +85,7 @@ export default function FindTab() {
       lastBytes = b;
       lastT = now;
       setSpeedHist((h) => [...h.slice(1), Math.max(0, mbps)]);
+      setSamplesSeen((n) => n + 1);
     }, 600);
     onCleanup(() => clearInterval(timer));
   });
@@ -85,15 +94,31 @@ export default function FindTab() {
     const h = speedHist();
     return h.length ? h[h.length - 1] : 0;
   };
+  // Average over only the REAL samples taken so far (the window is pre-seeded
+  // with zeros), so a half-full window doesn't report half the true rate.
   const avgMbps = () => {
     const h = speedHist();
-    return h.length ? h.reduce((a, b) => a + b, 0) / h.length : 0;
+    const n = Math.min(samplesSeen(), h.length);
+    if (n <= 0) return 0;
+    const recent = h.slice(h.length - n);
+    return recent.reduce((a, b) => a + b, 0) / n;
+  };
+  // Average observed file size this run (MB), used for ETA. Divides network
+  // bytes by the count of files that actually transferred (cached files add to
+  // `done` but contribute 0 bytes, which would bias the average low). Falls back
+  // to ~2 MB before anything has completed over the network.
+  const networkDone = () => rs().completed.filter((c) => c.status === "done" && !c.cached).length;
+  const avgDocMb = () => {
+    const n = networkDone();
+    return n > 0 ? Math.max(0.1, rs().bytesDownloaded / 1_000_000 / n) : 2;
   };
   const etaSec = createMemo(() => {
     const remaining = Math.max(0, rs().total - rs().done - rs().failed);
-    const mbps = currentMbps();
+    // Use the smoothed window average, not the volatile last 600ms sample, so a
+    // single zero/spike sample doesn't make the ETA vanish or collapse.
+    const mbps = avgMbps();
     if (remaining <= 0 || mbps <= 0) return null;
-    return Math.round((remaining * 2) / mbps); // ~2 MB/doc estimate
+    return Math.round((remaining * avgDocMb()) / mbps);
   });
   const fmtEta = (s: number | null) =>
     s == null ? "—" : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
@@ -234,11 +259,14 @@ export default function FindTab() {
   }
   async function handleExport() {
     setExporting(true);
+    setExportError(null);
     try {
       const result = await runStore.exportZip();
       if (result) setExportedTo(result.dest);
-    } catch {
-      /* surfaced via fatalError elsewhere */
+    } catch (e) {
+      // Was silently swallowed with a misleading "surfaced elsewhere" comment;
+      // export errors have no other surface, so show them here.
+      setExportError(humanizeDownloadError(String(e)));
     } finally {
       setExporting(false);
     }
@@ -264,15 +292,15 @@ export default function FindTab() {
         </div>
         <div class="df-headstats">
           <div class="df-headstat">
-            <span class="df-headstat-num">{stats.count}</span>
+            <span class="df-headstat-num">{stats().count}</span>
             <span class="df-headstat-label">libraries</span>
           </div>
           <div class="df-headstat">
-            <span class="df-headstat-num">{stats.totalDocs}</span>
+            <span class="df-headstat-num">{stats().totalDocs}</span>
             <span class="df-headstat-label">docs saved</span>
           </div>
           <div class="df-headstat">
-            <span class="df-headstat-num">{formatBytes(stats.totalBytes)}</span>
+            <span class="df-headstat-num">{formatBytes(stats().totalBytes)}</span>
             <span class="df-headstat-label">on disk</span>
           </div>
         </div>
@@ -416,6 +444,15 @@ export default function FindTab() {
           <div style={{ "margin-top": "16px" }}>
             <Banner kind="ok" onDismiss={() => setExportedTo(null)}>
               Exported to <code>{exportedTo()}</code>
+            </Banner>
+          </div>
+        </Show>
+
+        {/* EXPORT ERROR */}
+        <Show when={exportError()}>
+          <div style={{ "margin-top": "16px" }}>
+            <Banner kind="bad" onDismiss={() => setExportError(null)}>
+              <strong>Export failed.</strong> {exportError()}
             </Banner>
           </div>
         </Show>
@@ -588,13 +625,27 @@ export default function FindTab() {
                 </div>
                 <div class="df-speed-item" style={{ "align-items": "flex-end" }}>
                   <span class="df-speed-num">{avgMbps().toFixed(2)}</span>
-                  <span class="df-speed-label">avg 20s</span>
+                  <span class="df-speed-label">avg 19s</span>
                 </div>
                 <div class="df-speed-item" style={{ "align-items": "flex-end" }}>
                   <span class="df-speed-num">{fmtEta(etaSec())}</span>
                   <span class="df-speed-label">ETA</span>
                 </div>
               </div>
+            </Show>
+            {/* Make a flat 0 MB/s legible during the fetch phase: the graph isn't
+                broken, there just aren't any completed downloads yet. */}
+            <Show when={rs().running && downloadsStarted() && rs().done === 0}>
+              <p
+                style={{
+                  "font-size": "11px",
+                  color: "var(--ink-3)",
+                  margin: "4px 0 0",
+                  "text-align": "center",
+                }}
+              >
+                No completed downloads yet — resolving links to PDFs and fetching files…
+              </p>
             </Show>
 
             {/* TELEMETRY */}

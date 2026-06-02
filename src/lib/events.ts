@@ -70,6 +70,10 @@ export interface DownloadDonePayload {
   local_path: string;
   absolute_path: string;
   text_path?: string;
+  /** Authoritative on-disk size of the saved file (bytes). */
+  bytes: number;
+  /** True when reused from a previous run — excluded from network throughput. */
+  cached: boolean;
   done: number;
   failed: number;
   total: number;

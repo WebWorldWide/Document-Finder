@@ -50,7 +50,11 @@ impl Source for BraveHtmlSource {
         limit: usize,
     ) -> BoxStream<'static, anyhow::Result<Document>> {
         let client = self.client.clone();
-        let q = format!("{} filetype:pdf OR filetype:epub", keywords.join(" "));
+        // Brave doesn't reliably honor Google/Bing-style `filetype:` operators —
+        // the literal tokens leak in as search terms and skew/empty results.
+        // Query plain keywords; looks_like_doc + the downloader's landing-page→PDF
+        // resolution filter for documents instead.
+        let q = keywords.join(" ");
 
         stream::unfold((0usize, 0usize, false), move |(page, yielded, done)| {
             let client = client.clone();

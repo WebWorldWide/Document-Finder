@@ -23,6 +23,10 @@ export interface CompletedItem {
   local_path?: string;
   absolute_path?: string;
   text_path?: string;
+  /** On-disk size of the saved file (bytes); undefined for failures. */
+  bytes?: number;
+  /** True when the file was reused from a previous run (no network transfer). */
+  cached?: boolean;
 }
 
 export interface SourceIssue {
@@ -231,6 +235,14 @@ function apply(ev: DfEvent) {
       break;
 
     case "download_done": {
+      // Capture the provisional bytes already counted for this url from throttled
+      // progress events BEFORE deleting the in-flight entry, then reconcile the
+      // cumulative network total to the authoritative on-disk size. Cached files
+      // were reused from a prior run (no network transfer), so they contribute 0
+      // to throughput. This makes the throughput graph exact at every completion
+      // and self-heals any progress-throttle gaps.
+      const prev = state.inFlight[ev.payload.url]?.downloaded ?? 0;
+      const contribution = ev.payload.cached ? 0 : ev.payload.bytes;
       const item: CompletedItem = {
         url: ev.payload.url,
         title: ev.payload.title,
@@ -239,9 +251,12 @@ function apply(ev: DfEvent) {
         local_path: ev.payload.local_path,
         absolute_path: ev.payload.absolute_path,
         text_path: ev.payload.text_path,
+        bytes: ev.payload.bytes,
+        cached: ev.payload.cached,
       };
       setState(
         produce((s) => {
+          s.bytesDownloaded = Math.max(0, s.bytesDownloaded + contribution - prev);
           delete s.inFlight[ev.payload.url];
           s.active = Object.keys(s.inFlight).length;
           s.done = ev.payload.done;
@@ -254,6 +269,10 @@ function apply(ev: DfEvent) {
     }
 
     case "download_failed": {
+      // Roll back any provisional bytes counted for this url: the partial file is
+      // deleted on disk, so its streamed bytes must not linger in the throughput
+      // total (which would inflate avg MB/s for content that no longer exists).
+      const prev = state.inFlight[ev.payload.url]?.downloaded ?? 0;
       const item: CompletedItem = {
         url: ev.payload.url,
         title: ev.payload.title,
@@ -263,6 +282,7 @@ function apply(ev: DfEvent) {
       };
       setState(
         produce((s) => {
+          s.bytesDownloaded = Math.max(0, s.bytesDownloaded - prev);
           delete s.inFlight[ev.payload.url];
           s.active = Object.keys(s.inFlight).length;
           s.done = ev.payload.done;
@@ -349,6 +369,9 @@ async function startSearch(query: string) {
       out_dir: settings.libraryRoot,
       per_source: settings.perSource,
       max_total: settings.maxTotal,
+      // Was silently dropped before, so the backend always used its default of
+      // 8 and the user's "Parallel downloads" / intensity setting did nothing.
+      concurrency: settings.concurrency,
       extract: true,
       use_citation_graph: settings.useCitationGraph,
       ...flags,
@@ -363,7 +386,10 @@ async function startSearch(query: string) {
 async function exportZip(): Promise<ExportResult | null> {
   if (!state.folder) return null;
 
-  const slug = state.folder.split("/").pop() ?? "library";
+  // Split on BOTH separators: state.folder is an OS-native path, so on Windows
+  // it is backslash-separated and split("/") would return the whole path as the
+  // "slug", producing an invalid pre-filled ZIP name.
+  const slug = state.folder.split(/[\\/]/).pop() || "library";
   const dest = await saveDialog({
     defaultPath: `${slug}.zip`,
     filters: [{ name: "ZIP archive", extensions: ["zip"] }],

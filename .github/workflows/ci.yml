@@ -143,6 +143,55 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --features=custom-protocol
 
   # --------------------------------------------------------------------------
+  # BACKEND (AI lane): clippy + tests WITH default features (ai-embeddings +
+  # ai-llm) — the code the fast lane never compiles. Without this, clippy
+  # violations or broken tests inside `#[cfg(feature = "ai-*")]` blocks reach
+  # shipped installers undetected. Gated to push-to-main / `full-build`-labelled
+  # PRs (like the build matrix) so quick PRs don't pay the 10–25 min native
+  # build (llama.cpp + ONNX). The rust-cache makes repeat runs incremental.
+  # --------------------------------------------------------------------------
+  backend-ai:
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'full-build')
+    runs-on: ubuntu-24.04
+    needs: [frontend]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ai-features
+
+      - name: Install Linux system deps for Tauri (incl. cmake + clang for llama.cpp)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libgdk-pixbuf-2.0-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            cmake \
+            clang
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+
+      - name: cargo clippy (default features incl. AI)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: cargo test (default features incl. AI)
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  # --------------------------------------------------------------------------
   # TAURI BUILD MATRIX (slow lane): default features (includes ai-embeddings
   # via fastembed + ai-llm via llama-cpp). Runs on push-to-main and on PRs
   # carrying the `full-build` label so quick CI tweaks don't pay the

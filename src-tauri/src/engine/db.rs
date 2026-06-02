@@ -4,8 +4,15 @@ use std::path::Path;
 pub fn init_db(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
 
+    // Order matters: set busy_timeout FIRST so the journal-mode switch below
+    // (which briefly locks the db/-wal header) waits-and-retries under
+    // contention instead of returning SQLITE_BUSY immediately. With many
+    // concurrent download tasks opening connections, the reverse order races.
+    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "busy_timeout", 5000)?;
+    // synchronous=NORMAL is durable+safe under WAL and cuts fsync churn across
+    // the many short-lived per-document write connections.
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS runs (
@@ -63,6 +70,23 @@ pub struct DbManager {
 impl DbManager {
     pub fn new(path: &Path) -> Result<Self> {
         let conn = init_db(path)?;
+        Ok(Self { conn })
+    }
+
+    /// Open a connection to an already-initialized library DB without re-running
+    /// the journal-mode switch or the CREATE TABLE/INDEX statements. Used by the
+    /// per-document write tasks: the schema + WAL are established once at run
+    /// start (via `new`), so each task only needs a busy_timeout so concurrent
+    /// writers wait rather than failing with SQLITE_BUSY. Falls back implicitly
+    /// to creating the file if it somehow doesn't exist (open is permissive),
+    /// but the schema is expected to be present.
+    pub fn open_existing(path: &Path) -> Result<Self> {
+        let conn = Connection::open(path)?;
+        conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+        // synchronous=NORMAL (durable under the already-established WAL) cuts
+        // fsync churn on these many short-lived per-document write connections —
+        // this is the path the init_db comment's NORMAL note is really about.
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
         Ok(Self { conn })
     }
 

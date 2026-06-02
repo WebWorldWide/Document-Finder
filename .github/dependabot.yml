@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # Keep GitHub Actions current (and surface breaking changes via PRs) instead
+  # of silently floating on mutable major tags like `tauri-action@v0`.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"

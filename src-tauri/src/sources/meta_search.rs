@@ -187,6 +187,7 @@ impl Source for MetaSearchSource {
             tokio::spawn(async move {
                 let started = Instant::now();
                 let mut count = 0usize;
+                let mut saw_error = false;
                 let mut timed_out = false;
 
                 let stream = stream.take(per_engine_limit);
@@ -195,6 +196,8 @@ impl Source for MetaSearchSource {
                     while let Some(item) = stream.next().await {
                         if item.is_ok() {
                             count += 1;
+                        } else {
+                            saw_error = true;
                         }
                         if tx.send(item).await.is_err() {
                             break;
@@ -210,22 +213,32 @@ impl Source for MetaSearchSource {
 
                 let latency_ms = started.elapsed().as_millis() as u64;
 
-                // Update circuit breaker.
-                let (status_str, failed) = if timed_out {
-                    ("timeout", true)
+                // Update circuit breaker. Crucially, a healthy engine that simply
+                // found nothing (HTTP 200, zero results) must NOT be treated as a
+                // failure — otherwise three niche/empty queries open the circuit
+                // and silently shrink web coverage for 5 minutes. Outcome:
+                //   Some(true)  -> record_success (reset)
+                //   Some(false) -> record_failure (toward circuit-open)
+                //   None        -> neutral: leave failure count untouched
+                let (status_str, outcome): (&str, Option<bool>) = if timed_out && count == 0 {
+                    ("timeout", Some(false)) // slow AND produced nothing -> fault
+                } else if timed_out {
+                    ("partial", None) // slow but returned results -> don't penalize
+                } else if count == 0 && saw_error {
+                    ("error", Some(false)) // a real transport/HTTP error
                 } else if count == 0 {
-                    ("error", true)
+                    ("empty", None) // legitimate zero-result query -> not a fault
                 } else {
-                    ("ok", false)
+                    ("ok", Some(true))
                 };
 
                 {
                     let mut health = HEALTH.lock();
                     let entry = health.entry(name).or_default();
-                    if failed {
-                        entry.record_failure();
-                    } else {
-                        entry.record_success();
+                    match outcome {
+                        Some(true) => entry.record_success(),
+                        Some(false) => entry.record_failure(),
+                        None => {}
                     }
                 }
 

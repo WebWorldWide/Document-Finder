@@ -17,6 +17,7 @@ export interface RunRequest {
   out_dir: string;
   per_source?: number;
   max_total?: number;
+  concurrency?: number;
   extract?: boolean;
   use_citation_graph?: boolean;
   use_semantic_rerank?: boolean;
@@ -67,6 +68,8 @@ export interface LogInfo {
 
 export const api = {
   defaultLibraryDir: () => invoke<{ library_root: string }>("default_library_dir"),
+  /** Persist + validate the library root so open/export/delete confine to it. */
+  setLibraryRoot: (path: string) => invoke<string>("set_library_root", { path }),
   startRun: (req: RunRequest) => invoke<void>("start_run", { req }),
   cancelRun: () => invoke<void>("cancel_run"),
   listLibraries: (root: string) => invoke<LibraryInfo[]>("list_libraries", { root }),
