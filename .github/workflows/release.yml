@@ -46,12 +46,10 @@ jobs:
             os: macos-14
             args: --target aarch64-apple-darwin
             rust_target: aarch64-apple-darwin
-          # Separate Intel build so x86_64 Macs (still a large installed base)
-          # get a native .dmg instead of being unable to run an arm64-only build.
-          - label: macOS (Intel)
-            os: macos-13
-            args: --target x86_64-apple-darwin
-            rust_target: x86_64-apple-darwin
+          # NOTE: no Intel (x86_64-apple-darwin) leg — GitHub's macos-13 Intel
+          # runners queue unpredictably and were stalling the whole release
+          # (and gating the Flatpak job). Apple Silicon is the default Mac target;
+          # Intel users can run the arm64 build under Rosetta 2 if needed.
           # ubuntu-24.04 (glibc 2.39) is required: the `ort` crate's prebuilt
           # ONNX Runtime binary references glibc 2.38+ C23 symbols, so linking
           # on 22.04's glibc 2.35 fails. The .deb/.AppImage need glibc 2.39+.
@@ -117,7 +115,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Document Finder ${{ github.ref_name }}"
           releaseBody: |
-            Native installers for **macOS** (Apple Silicon + Intel), **Windows** (`.exe`, `.msi`), and **Linux** (Flatpak, `.deb`, `.AppImage`).
+            Native installers for **macOS** (Apple Silicon), **Windows** (`.exe`, `.msi`), and **Linux** (Flatpak, `.deb`, `.AppImage`).
 
             Builds are **unsigned** — on first launch, allow the app via your OS:
             macOS → System Settings → Privacy & Security → **Open Anyway**;
