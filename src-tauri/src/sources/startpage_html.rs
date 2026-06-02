@@ -51,7 +51,10 @@ impl Source for StartpageHtmlSource {
         limit: usize,
     ) -> BoxStream<'static, anyhow::Result<Document>> {
         let client = self.client.clone();
-        let q = format!("{} filetype:pdf OR filetype:epub", keywords.join(" "));
+        // Startpage's `filetype:` handling is inconsistent; the literal operator
+        // tokens skew results. Query plain keywords and rely on looks_like_doc +
+        // the downloader's landing-page→PDF resolution to filter documents.
+        let q = keywords.join(" ");
 
         stream::unfold((0usize, 0usize, false), move |(page, yielded, done)| {
             let client = client.clone();

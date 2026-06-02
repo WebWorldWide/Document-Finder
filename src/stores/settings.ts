@@ -92,8 +92,21 @@ export function qualityToFlags(q: Quality): {
 if (!settings.libraryRoot) {
   api
     .defaultLibraryDir()
-    .then(({ library_root }) => setSettings("libraryRoot", library_root))
-    .catch(() => {});
+    .then((resp) => {
+      // Guard the destructure: outside a Tauri runtime (e.g. unit tests) the
+      // invoke can resolve to undefined, which shouldn't log a scary error.
+      const root = resp?.library_root;
+      if (!root) return undefined;
+      setSettings("libraryRoot", root);
+      return syncLibraryRoot(root);
+    })
+    .catch((e) => console.error("set_library_root failed:", e));
+} else {
+  // Tell the backend our configured root so open/export/delete confine to it
+  // (otherwise a custom location outside ~/Documents/Document Finder fails).
+  // One-time module init, not a reactive scope — the read is intentional.
+  // eslint-disable-next-line solid/reactivity
+  syncLibraryRoot(settings.libraryRoot).catch((e) => console.error("set_library_root failed:", e));
 }
 
 export function saveSettings() {
@@ -115,4 +128,100 @@ export function toggleSource(id: SourceId) {
     prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id],
   );
   saveSettings();
+}
+
+// --- Download intensity ----------------------------------------------------
+//
+// A single, friendly control that sets the three raw discovery numbers
+// (per-source / max-total / parallel downloads) together, so non-technical
+// users don't have to reason about each number. The raw numbers remain editable
+// under "Advanced"; editing them directly moves the slider to "Custom".
+
+export type DownloadIntensity = "light" | "balanced" | "deep" | "exhaustive";
+
+export interface IntensityPreset {
+  perSource: number;
+  maxTotal: number;
+  concurrency: number;
+  label: string;
+  blurb: string;
+}
+
+/// Ordered light→exhaustive. `balanced` matches the historical defaults so the
+/// behavior of existing installs is unchanged.
+export const INTENSITY_ORDER: DownloadIntensity[] = ["light", "balanced", "deep", "exhaustive"];
+
+export const INTENSITY_PRESETS: Record<DownloadIntensity, IntensityPreset> = {
+  light: {
+    perSource: 25,
+    maxTotal: 75,
+    concurrency: 4,
+    label: "Light",
+    blurb: "Quick skim — fewer results, gentle on sources.",
+  },
+  balanced: {
+    perSource: 100,
+    maxTotal: 500,
+    concurrency: 8,
+    label: "Balanced",
+    blurb: "Good for most searches — ~100/source, 500 max, 8 at a time.",
+  },
+  deep: {
+    perSource: 200,
+    maxTotal: 1200,
+    concurrency: 12,
+    label: "Deep",
+    blurb: "More thorough — more results, faster, more rate-limits.",
+  },
+  exhaustive: {
+    perSource: 400,
+    maxTotal: 3000,
+    concurrency: 16,
+    label: "Exhaustive",
+    blurb: "Everything we can find — slowest, heaviest on sources.",
+  },
+};
+
+/// The preset matching the current raw numbers, or null when they've been
+/// hand-tuned in Advanced ("Custom").
+export function currentIntensity(): DownloadIntensity | null {
+  for (const level of INTENSITY_ORDER) {
+    const p = INTENSITY_PRESETS[level];
+    if (
+      settings.perSource === p.perSource &&
+      settings.maxTotal === p.maxTotal &&
+      settings.concurrency === p.concurrency
+    ) {
+      return level;
+    }
+  }
+  return null;
+}
+
+/// Apply a preset to the three raw numbers and persist.
+export function setDownloadIntensity(level: DownloadIntensity) {
+  const p = INTENSITY_PRESETS[level];
+  setSettings("perSource", p.perSource);
+  setSettings("maxTotal", p.maxTotal);
+  setSettings("concurrency", p.concurrency);
+  saveSettings();
+}
+
+// --- Library root ----------------------------------------------------------
+
+/// Push the configured library root to the backend so path commands
+/// (open/export/delete) confine to it. The returned promise REJECTS on failure
+/// (e.g. a path the backend can't create/resolve) so interactive callers can
+/// surface it; fire-and-forget callers should attach their own `.catch`.
+export function syncLibraryRoot(path: string): Promise<unknown> {
+  if (!path) return Promise.resolve();
+  return api.setLibraryRoot(path);
+}
+
+/// Update the library root setting, persist it, and sync it to the backend.
+/// Returns the sync promise so the UI can show an error if it fails.
+export function setLibraryRoot(path: string): Promise<unknown> {
+  setSettings("libraryRoot", path);
+  saveSettings();
+  return syncLibraryRoot(path);
 }

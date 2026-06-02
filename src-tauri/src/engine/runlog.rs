@@ -74,6 +74,13 @@ pub enum Event<'a> {
         url: &'a str,
         error: &'a str,
     },
+    /// A file downloaded and validated, but persisting its row to SQLite
+    /// failed. Logged so a silent library undercount is observable offline.
+    DbError {
+        title: &'a str,
+        url: &'a str,
+        error: &'a str,
+    },
     RunComplete {
         done: usize,
         failed: usize,

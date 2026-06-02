@@ -49,7 +49,10 @@ impl Source for MojeekHtmlSource {
         limit: usize,
     ) -> BoxStream<'static, anyhow::Result<Document>> {
         let client = self.client.clone();
-        let q = format!("{} filetype:pdf OR filetype:epub", keywords.join(" "));
+        // Mojeek uses different operator syntax and doesn't honor Google/Bing
+        // `filetype:`; the literal tokens just pollute the query. Query plain
+        // keywords and let looks_like_doc + the downloader filter for documents.
+        let q = keywords.join(" ");
 
         stream::unfold((0usize, 0usize, false), move |(page, yielded, done)| {
             let client = client.clone();

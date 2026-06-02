@@ -148,6 +148,13 @@ pub struct DownloadDonePayload {
     pub absolute_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_path: Option<String>,
+    /// Authoritative on-disk size of the saved file. The frontend reconciles
+    /// the live throughput counter against this so the graph total stays exact
+    /// regardless of progress-event throttling.
+    pub bytes: u64,
+    /// True when the file was reused from a previous run (no bytes hit the
+    /// network). The frontend excludes cached bytes from network throughput.
+    pub cached: bool,
     pub done: usize,
     pub failed: usize,
     pub total: usize,

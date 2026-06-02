@@ -13,8 +13,31 @@ permissions:
   contents: write
 
 jobs:
+  # Fail fast (before any OS build starts) if the pushed tag's version doesn't
+  # match all three manifests. The release process is a manual 3-file bump
+  # (package.json / Cargo.toml / tauri.conf.json) that's easy to get partially
+  # wrong; without this the installers would report a version that disagrees
+  # with the tag/release name. Runs once on Linux with portable POSIX tooling.
+  verify-version:
+    name: Verify tag matches manifests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Assert tag == package.json == Cargo.toml == tauri.conf.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(jq -r .version package.json)
+          CONF=$(jq -r .version src-tauri/tauri.conf.json)
+          CARGO=$(grep -m1 '^version = ' src-tauri/Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+          echo "tag=$TAG  package.json=$PKG  tauri.conf.json=$CONF  Cargo.toml=$CARGO"
+          if [ "$TAG" != "$PKG" ] || [ "$TAG" != "$CONF" ] || [ "$TAG" != "$CARGO" ]; then
+            echo "::error::Version mismatch — tag '$TAG' must equal package.json ($PKG), tauri.conf.json ($CONF), and Cargo.toml ($CARGO). Bump all three before tagging."
+            exit 1
+          fi
+
   build:
     name: Build ${{ matrix.platform.label }}
+    needs: verify-version
     strategy:
       fail-fast: false
       matrix:
@@ -22,15 +45,24 @@ jobs:
           - label: macOS (Apple Silicon)
             os: macos-14
             args: --target aarch64-apple-darwin
+            rust_target: aarch64-apple-darwin
+          # Separate Intel build so x86_64 Macs (still a large installed base)
+          # get a native .dmg instead of being unable to run an arm64-only build.
+          - label: macOS (Intel)
+            os: macos-13
+            args: --target x86_64-apple-darwin
+            rust_target: x86_64-apple-darwin
           # ubuntu-24.04 (glibc 2.39) is required: the `ort` crate's prebuilt
           # ONNX Runtime binary references glibc 2.38+ C23 symbols, so linking
           # on 22.04's glibc 2.35 fails. The .deb/.AppImage need glibc 2.39+.
           - label: Linux (x86_64)
             os: ubuntu-24.04
             args: ""
+            rust_target: ""
           - label: Windows (x86_64)
             os: windows-latest
             args: ""
+            rust_target: ""
 
     runs-on: ${{ matrix.platform.os }}
 
@@ -52,7 +84,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform.os == 'macos-14' && 'aarch64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform.rust_target }}
 
       - name: Cache Rust
         uses: swatinem/rust-cache@v2
@@ -85,7 +117,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Document Finder ${{ github.ref_name }}"
           releaseBody: |
-            Native installers for **macOS** (Apple Silicon), **Windows**, and **Linux** (Flatpak, `.deb`, `.AppImage`).
+            Native installers for **macOS** (Apple Silicon + Intel), **Windows** (`.exe`, `.msi`), and **Linux** (Flatpak, `.deb`, `.AppImage`).
 
             Builds are **unsigned** — on first launch, allow the app via your OS:
             macOS → System Settings → Privacy & Security → **Open Anyway**;

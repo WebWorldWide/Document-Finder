@@ -34,18 +34,12 @@ pub fn safe_within_root(path: &Path, root: &Path) -> Result<PathBuf, String> {
 }
 
 /// Resolve the user's Documents/Document Finder library root, or return an
-/// error if the system's Documents directory cannot be determined.
+/// error if the system's Documents directory cannot be determined. Used as the
+/// default confinement root when the user hasn't configured a custom one.
 pub fn library_root() -> Result<PathBuf, String> {
     dirs::document_dir()
         .ok_or_else(|| "Cannot resolve system Documents directory".to_string())
         .map(|d| d.join("Document Finder"))
-}
-
-/// Convenience: canonicalize `path` and assert it is inside the standard
-/// Document Finder library root (`~/Documents/Document Finder/`).
-pub fn safe_within_library(path: &Path) -> Result<PathBuf, String> {
-    let root = library_root()?;
-    safe_within_root(path, &root)
 }
 
 #[cfg(test)]

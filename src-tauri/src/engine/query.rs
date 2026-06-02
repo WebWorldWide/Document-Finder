@@ -110,10 +110,13 @@ pub fn safe_folder(query: &str) -> String {
     } else {
         slug
     };
+    // Append seconds + nanoseconds so two runs of the same query within the same
+    // wall-clock second still get distinct folders (and thus distinct
+    // library.db files), avoiding any cross-run row collisions.
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map(|d| format!("{}-{}", d.as_secs(), d.subsec_nanos()))
+        .unwrap_or_else(|_| "0".to_string());
     format!("{}-{}", base, ts)
 }
 
@@ -150,7 +153,8 @@ mod tests {
             "unexpected slug: {}",
             slug
         );
-        // Timestamp suffix is at least 10 digits (Unix seconds since 2001).
+        // Suffix is now `{secs}-{nanos}`; the final segment is the sub-second
+        // nanoseconds field (still a parseable integer).
         let suffix = slug.rsplit_once('-').unwrap().1;
         assert!(
             suffix.parse::<u64>().is_ok(),

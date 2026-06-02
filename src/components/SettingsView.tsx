@@ -1,4 +1,4 @@
-import { createSignal, onMount, Show, Switch, Match, For } from "solid-js";
+import { createSignal, onMount, onCleanup, Show, Switch, Match, For } from "solid-js";
 import {
   FolderOpen,
   FileText,
@@ -10,7 +10,17 @@ import {
   AlertCircle,
 } from "lucide-solid";
 import { api, type LogInfo } from "@/lib/tauri";
-import { settings, setSettings, saveSettings, type Quality } from "@/stores/settings";
+import {
+  settings,
+  setSettings,
+  saveSettings,
+  setLibraryRoot,
+  setDownloadIntensity,
+  currentIntensity,
+  INTENSITY_ORDER,
+  INTENSITY_PRESETS,
+  type Quality,
+} from "@/stores/settings";
 import { modelsStore } from "@/stores/models";
 import ModelDownloadCard from "./ModelDownloadCard";
 import MetaSearchHealthBar from "./MetaSearchHealthBar";
@@ -21,6 +31,13 @@ import { formatBytes } from "@/lib/utils";
 export default function SettingsView() {
   const [logInfo, setLogInfo] = createSignal<LogInfo | null>(null);
   const [warming, setWarming] = createSignal(false);
+  const [libRootError, setLibRootError] = createSignal<string | null>(null);
+  // Tracked so the readiness poll is cleared if the user leaves Settings while a
+  // model download is still warming (otherwise the interval leaks).
+  let pollTimer: ReturnType<typeof setInterval> | undefined;
+  onCleanup(() => {
+    if (pollTimer) clearInterval(pollTimer);
+  });
 
   async function handleWarmEmbedding() {
     if (warming()) return;
@@ -35,11 +52,13 @@ export default function SettingsView() {
     // warm runs in the background; poll readiness so the row updates live, and
     // clear the spinner once it's loaded/on-disk (or after ~45s if it fails).
     let tries = 0;
-    const poll = setInterval(() => {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(() => {
       tries += 1;
       void modelsStore.refresh();
       if (modelsStore.embeddingState !== "absent" || tries >= 30) {
-        clearInterval(poll);
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = undefined;
         setWarming(false);
       }
     }, 1500);
@@ -60,6 +79,14 @@ export default function SettingsView() {
       }
     };
   }
+
+  // Reactive: the preset matching the current raw numbers (null = "Custom").
+  const activeIntensity = () => currentIntensity();
+  // Slider thumb position; defaults to "balanced" when the numbers are custom.
+  const sliderIndex = () => {
+    const c = activeIntensity();
+    return c ? INTENSITY_ORDER.indexOf(c) : INTENSITY_ORDER.indexOf("balanced");
+  };
 
   return (
     <div class="df-canvas">
@@ -99,49 +126,141 @@ export default function SettingsView() {
                   setSettings("libraryRoot", e.currentTarget.value);
                   saveSettings();
                 }}
+                onChange={(e) =>
+                  setLibraryRoot(e.currentTarget.value)
+                    .then(() => setLibRootError(null))
+                    .catch((err) => setLibRootError(String(err)))
+                }
               />
+              <Show when={libRootError()}>
+                <span class="help" style={{ color: "var(--bad)" }}>
+                  {libRootError()}
+                </span>
+              </Show>
             </div>
           </section>
 
-          {/* Discovery limits */}
+          {/* Download depth */}
           <section class="df-section">
-            <h2>Discovery limits</h2>
+            <h2>Download depth</h2>
             <p class="hint">
-              Tune throughput. Higher numbers find more but take longer and trip more rate limits.
+              How much to pull and how aggressively. Most people can leave this on Balanced — drag
+              toward Exhaustive for more results (slower, and heavier on the sources).
             </p>
-            <div class="df-field-row">
-              <div class="df-field">
-                <label>Per source</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={settings.perSource}
-                  onInput={numInput("perSource")}
-                />
-                <span class="help">Docs per source, per sub-query</span>
-              </div>
-              <div class="df-field">
-                <label>Max total</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={settings.maxTotal}
-                  onInput={numInput("maxTotal")}
-                />
-                <span class="help">Hard cap across all sources</span>
-              </div>
-              <div class="df-field">
-                <label>Parallel downloads</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="32"
-                  value={settings.concurrency}
-                  onInput={numInput("concurrency")}
-                />
-                <span class="help">Higher is faster, more rate limits</span>
-              </div>
+
+            <input
+              type="range"
+              min="0"
+              max={INTENSITY_ORDER.length - 1}
+              step="1"
+              value={sliderIndex()}
+              aria-label="Download depth"
+              style={{
+                width: "100%",
+                "accent-color": "var(--accent)",
+                cursor: "pointer",
+                // Dim when the numbers were hand-tuned in Advanced ("Custom"),
+                // signalling the thumb position is only an approximation.
+                opacity: activeIntensity() ? 1 : 0.5,
+              }}
+              onInput={(e) => setDownloadIntensity(INTENSITY_ORDER[+e.currentTarget.value])}
+            />
+            <div
+              style={{
+                display: "flex",
+                "justify-content": "space-between",
+                "margin-top": "2px",
+              }}
+            >
+              <For each={INTENSITY_ORDER}>
+                {(level) => (
+                  <button
+                    type="button"
+                    onClick={() => setDownloadIntensity(level)}
+                    style={{
+                      "font-size": "10px",
+                      padding: "2px 2px",
+                      border: "none",
+                      background: "transparent",
+                      cursor: "pointer",
+                      color: activeIntensity() === level ? "var(--accent)" : "var(--ink-3)",
+                      "font-weight": activeIntensity() === level ? 600 : 400,
+                    }}
+                  >
+                    {INTENSITY_PRESETS[level].label}
+                  </button>
+                )}
+              </For>
             </div>
+
+            <p style={{ "font-size": "11.5px", color: "var(--ink-3)", margin: "10px 0 0" }}>
+              <Show
+                when={activeIntensity()}
+                fallback={
+                  <>
+                    <strong>Custom.</strong> Hand-tuned in Advanced below.
+                  </>
+                }
+              >
+                {(lvl) => (
+                  <>
+                    <strong>{INTENSITY_PRESETS[lvl()].label}.</strong>{" "}
+                    {INTENSITY_PRESETS[lvl()].blurb}
+                  </>
+                )}
+              </Show>{" "}
+              <span style={{ "font-family": "var(--font-mono)", color: "var(--ink-4)" }}>
+                ≈ {settings.perSource}/source · {settings.maxTotal} max · {settings.concurrency}{" "}
+                parallel
+              </span>
+            </p>
+
+            <details style={{ "margin-top": "12px" }}>
+              <summary
+                style={{
+                  cursor: "pointer",
+                  "font-size": "11px",
+                  "font-weight": 500,
+                  color: "var(--ink-3)",
+                  padding: "4px 2px",
+                }}
+              >
+                Advanced — exact numbers
+              </summary>
+              <div class="df-field-row" style={{ "margin-top": "10px" }}>
+                <div class="df-field">
+                  <label>Per source</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={settings.perSource}
+                    onInput={numInput("perSource")}
+                  />
+                  <span class="help">Docs per source, per sub-query</span>
+                </div>
+                <div class="df-field">
+                  <label>Max total</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={settings.maxTotal}
+                    onInput={numInput("maxTotal")}
+                  />
+                  <span class="help">Hard cap across all sources</span>
+                </div>
+                <div class="df-field">
+                  <label>Parallel downloads</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="32"
+                    value={settings.concurrency}
+                    onInput={numInput("concurrency")}
+                  />
+                  <span class="help">Higher is faster, more rate limits</span>
+                </div>
+              </div>
+            </details>
           </section>
 
           {/* Search quality */}

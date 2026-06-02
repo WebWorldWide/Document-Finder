@@ -11,6 +11,7 @@ use percent_encoding::percent_decode_str;
 use regex::Regex;
 use std::sync::Arc;
 
+use super::web_common::looks_like_doc;
 use super::{Document, Source, USER_AGENT};
 
 const ENDPOINT: &str = "https://html.duckduckgo.com/html/";
@@ -60,27 +61,6 @@ fn clean_title(html_chunk: &str) -> String {
         .replace("&quot;", "\"")
         .replace("&#39;", "'")
         .replace("&apos;", "'")
-}
-
-fn looks_like_doc(url: &str) -> bool {
-    let u = url.to_lowercase();
-    // More permissive: allow URLs that look like PDFs or repository downloads.
-    if u.contains(".pdf")
-        || u.contains(".epub")
-        || u.contains("/pdf/")
-        || u.contains("/pdf?")
-        || u.contains("download=pdf")
-    {
-        return true;
-    }
-    if u.contains("/bitstream/") || u.contains("/download/") || u.contains("getfile") {
-        return true;
-    }
-    // If it doesn't explicitly claim to be HTML, give it a shot.
-    !u.ends_with(".html")
-        && !u.ends_with(".htm")
-        && !u.contains("/abs/")
-        && !u.contains("/article/")
 }
 
 #[async_trait]
