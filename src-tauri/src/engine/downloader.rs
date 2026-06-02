@@ -1,6 +1,9 @@
-//! Streaming download with cancellation, content validation, and resume guard.
+//! Streaming download with cancellation, content validation, landing-page→PDF
+//! resolution, and a resume guard.
 
 use futures::StreamExt;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use std::path::{Path, PathBuf};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -10,7 +13,12 @@ use crate::sources::Document;
 
 /// Result of an individual download attempt.
 pub enum DownloadOutcome {
+    /// Newly downloaded to disk.
     Saved(PathBuf),
+    /// An existing, valid file was reused (no bytes hit the network). Kept
+    /// distinct from `Saved` so the UI never charges a cached file's size to
+    /// the live network-throughput graph.
+    Cached(PathBuf),
     Cancelled,
     Failed(String),
 }
@@ -19,6 +27,11 @@ pub enum DownloadOutcome {
 pub struct ProgressEvent {
     pub downloaded: u64,
     pub total: u64,
+    /// When true, this is the terminal update for a file and must bypass the
+    /// caller's time-based throttle so the final byte count is never dropped
+    /// (the cause of a flat/under-counting throughput graph for fast or
+    /// unknown-length downloads).
+    pub force: bool,
 }
 
 /// Smallest size we'll accept for a "real" document. Sub-4 KB responses for
@@ -27,6 +40,11 @@ const MIN_DOC_BYTES: u64 = 4 * 1024;
 
 /// Hard cap per file — prevents a malicious or runaway server from exhausting disk.
 const MAX_FILE_BYTES: u64 = 500 * 1024 * 1024;
+
+/// Cap on how much of an HTML landing page we'll read while hunting for a PDF
+/// link. Real publisher pages put `citation_pdf_url` in the `<head>`, so this is
+/// generous; it also bounds memory if a server streams a huge "HTML" body.
+const HTML_RESOLVE_CAP: usize = 2 * 1024 * 1024;
 
 /// Accept header for document downloads. Biases content-negotiation toward real
 /// documents but still accepts anything (`*/*`) so picky servers don't 406.
@@ -76,6 +94,16 @@ fn referer_for(url: &str) -> Option<String> {
     }
 }
 
+/// Cheap, pre-network URL rewrites that turn a known landing-page shape into a
+/// direct document URL without a round-trip. Currently: arXiv `/abs/<id>` →
+/// `/pdf/<id>` (the PDF endpoint serves `%PDF` directly).
+pub fn canonicalize_doc_url(url: &str) -> String {
+    if url.contains("arxiv.org/abs/") {
+        return url.replace("arxiv.org/abs/", "arxiv.org/pdf/");
+    }
+    url.to_string()
+}
+
 pub fn ext_from(url: &str, content_type: &str) -> &'static str {
     let ct = content_type.to_lowercase();
     let u = url.to_lowercase();
@@ -114,6 +142,81 @@ fn reject_content_type(url: &str, content_type: &str) -> Option<String> {
         || ct.contains("text/xml")
     {
         return Some("This link opened a web page, not a downloadable document.".to_string());
+    }
+    None
+}
+
+// --- Landing-page → PDF resolution -----------------------------------------
+
+static META_CITATION_PDF: Lazy<Regex> = Lazy::new(|| {
+    // Require the token inside a name/property attribute — not anywhere in the
+    // tag — so a stray mention in a description/content value can't false-match
+    // and pre-empt the anchor fallback.
+    Regex::new(r#"(?is)<meta\b[^>]*\b(?:name|property)\s*=\s*["']citation_pdf_url["'][^>]*>"#)
+        .unwrap()
+});
+static LINK_PDF_ALTERNATE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?is)<link\b[^>]*\btype\s*=\s*["']application/pdf["'][^>]*>"#).unwrap()
+});
+static ATTR_CONTENT: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?is)\bcontent\s*=\s*["']([^"']+)["']"#).unwrap());
+static ATTR_HREF: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?is)\bhref\s*=\s*["']([^"']+)["']"#).unwrap());
+static ANCHOR_PDF: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?is)<a\b[^>]*\bhref\s*=\s*["']([^"'#]+\.pdf(?:\?[^"']*)?)["']"#).unwrap()
+});
+
+/// Read at most `cap` bytes of a response body as lossy UTF-8. Used to scan an
+/// HTML landing page without pulling an unbounded body into memory.
+async fn read_body_capped(resp: reqwest::Response, cap: usize) -> Option<String> {
+    let mut stream = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.ok()?;
+        buf.extend_from_slice(&chunk);
+        if buf.len() >= cap {
+            break;
+        }
+    }
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Resolve a relative or absolute href against `base`, returning an absolute URL.
+fn resolve_href(base: &url::Url, href: &str) -> Option<String> {
+    base.join(href.trim()).ok().map(|u| u.to_string())
+}
+
+/// Hunt an HTML page for a direct PDF link. Priority, highest-yield first:
+///   1. `<meta name="citation_pdf_url" content="…">` (the Google-Scholar tag
+///      most scholarly publishers emit) — trusted, any host.
+///   2. `<link rel="alternate" type="application/pdf" href="…">` — trusted.
+///   3. The first **same-host** `<a href="….pdf">` — untrusted, so host-locked
+///      to avoid grabbing an unrelated/advertised PDF.
+///
+/// Returns an absolute URL resolved against `base` (the page's final URL).
+fn resolve_pdf_from_html(html: &str, base: &url::Url) -> Option<String> {
+    if let Some(tag) = META_CITATION_PDF.find(html) {
+        if let Some(c) = ATTR_CONTENT.captures(tag.as_str()) {
+            if let Some(u) = resolve_href(base, &c[1]) {
+                return Some(u);
+            }
+        }
+    }
+    if let Some(tag) = LINK_PDF_ALTERNATE.find(html) {
+        if let Some(c) = ATTR_HREF.captures(tag.as_str()) {
+            if let Some(u) = resolve_href(base, &c[1]) {
+                return Some(u);
+            }
+        }
+    }
+    for cap in ANCHOR_PDF.captures_iter(html) {
+        if let Some(abs) = resolve_href(base, &cap[1]) {
+            if let Ok(u) = url::Url::parse(&abs) {
+                if u.host_str() == base.host_str() {
+                    return Some(abs);
+                }
+            }
+        }
     }
     None
 }
@@ -173,6 +276,56 @@ async fn existing_file_is_valid(path: &Path) -> bool {
     check_magic_bytes(path).await.is_none()
 }
 
+/// GET a document URL with the document-shaped headers and bounded retry on
+/// 429/5xx. Returns the validated `Response` or a terminal `DownloadOutcome`.
+async fn get_document_response(
+    client: &reqwest::Client,
+    url: &str,
+    cancel: &CancellationToken,
+) -> Result<reqwest::Response, DownloadOutcome> {
+    let referer = referer_for(url);
+    for attempt in 0..3 {
+        if cancel.is_cancelled() {
+            return Err(DownloadOutcome::Cancelled);
+        }
+        let mut req = client
+            .get(url)
+            .header(reqwest::header::ACCEPT, DOC_ACCEPT)
+            .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9");
+        if let Some(r) = &referer {
+            req = req.header(reqwest::header::REFERER, r.clone());
+        }
+        match req.send().await {
+            Ok(r) => match r.error_for_status() {
+                Ok(r) => return Ok(r),
+                Err(e) => {
+                    let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
+                    if attempt < 2 && (status == 429 || (500..=599).contains(&status)) {
+                        let wait = std::time::Duration::from_secs(2 * (attempt + 1) as u64);
+                        tokio::time::sleep(wait).await;
+                        continue;
+                    }
+                    return Err(DownloadOutcome::Failed(format!(
+                        "{}. (HTTP {status})",
+                        http_status_message(status)
+                    )));
+                }
+            },
+            Err(_e) if attempt < 2 => {
+                let wait = std::time::Duration::from_secs(2 * (attempt + 1) as u64);
+                tokio::time::sleep(wait).await;
+                continue;
+            }
+            Err(e) => return Err(DownloadOutcome::Failed(network_error_message(&e))),
+        }
+    }
+    // The retry loop always returns inside the body; this guard just keeps a
+    // future refactor from turning that into a panic.
+    Err(DownloadOutcome::Failed(
+        "Download failed after multiple attempts.".to_string(),
+    ))
+}
+
 pub async fn download<F>(
     doc: &Document,
     dest_dir: &Path,
@@ -183,96 +336,78 @@ pub async fn download<F>(
 where
     F: FnMut(ProgressEvent) + Send,
 {
-    let initial_ext = ext_from(&doc.url, "");
+    let initial_url = canonicalize_doc_url(&doc.url);
+    let initial_ext = ext_from(&initial_url, "");
     let mut out = dest_dir.join(format!("{}{}", doc.slug(), initial_ext));
 
     // Resume-skip: only honor an existing file if it passes magic-byte checks.
     // Older runs of this app saved HTML landing pages with .pdf extensions —
-    // those need to be re-attempted (or rejected) rather than reused.
+    // those need to be re-attempted (or rejected) rather than reused. A valid
+    // existing file is reported as `Cached` (not `Saved`) and emits NO progress,
+    // so its size is never charged to the live network-throughput graph.
     if let Ok(meta) = tokio::fs::metadata(&out).await {
         if meta.len() >= MIN_DOC_BYTES && existing_file_is_valid(&out).await {
-            on_progress(ProgressEvent {
-                downloaded: meta.len(),
-                total: meta.len(),
-            });
-            return DownloadOutcome::Saved(out);
+            return DownloadOutcome::Cached(out);
         }
         // Stale junk — wipe so the new download has a clean slot.
         let _ = tokio::fs::remove_file(&out).await;
     }
 
-    // SSRF guard: the document URL comes from arbitrary remote search results,
-    // so validate it (http/https only, no credentials, resolves to a public IP)
+    // Fetch loop: try the (canonicalized) document URL; if the server returns an
+    // HTML landing page, resolve it to a real PDF link ONCE and retry. This is
+    // the difference between "most web/meta-search results fail" and "they
+    // download" — search engines overwhelmingly return landing-page URLs, not
+    // direct PDFs.
+    //
+    // SSRF guard: every URL we connect to (the original AND any resolved hop)
+    // is validated (http/https only, no credentials, resolves to a public IP)
     // before we connect. Redirects are re-checked by the client's redirect
-    // policy (see `sources::make_client`).
-    if let Err(reason) = crate::util::url_safety::validate_download_url(&doc.url).await {
-        return DownloadOutcome::Failed(format!("Blocked for safety: {reason}"));
-    }
+    // policy (see `sources::make_client` / `make_download_client`).
+    let mut target = initial_url;
+    let mut resolved_once = false;
+    let (resp, content_type) = loop {
+        if let Err(reason) = crate::util::url_safety::validate_download_url(&target).await {
+            return DownloadOutcome::Failed(format!("Blocked for safety: {reason}"));
+        }
+        let resp = match get_document_response(client, &target, cancel).await {
+            Ok(r) => r,
+            Err(outcome) => return outcome,
+        };
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
 
-    // Send document-shaped headers. A browser UA alone isn't enough for many
-    // publisher CDNs: without an Accept that lists the document type and a
-    // same-origin Referer, they answer 400/403. Adding both turns a chunk of
-    // those rejections into successful downloads.
-    let referer = referer_for(&doc.url);
-    let mut resp = None;
-    for attempt in 0..3 {
-        if cancel.is_cancelled() {
-            return DownloadOutcome::Cancelled;
-        }
-        let mut req = client
-            .get(&doc.url)
-            .header(reqwest::header::ACCEPT, DOC_ACCEPT)
-            .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9");
-        if let Some(r) = &referer {
-            req = req.header(reqwest::header::REFERER, r.clone());
-        }
-        match req.send().await {
-            Ok(r) => match r.error_for_status() {
-                Ok(r) => {
-                    resp = Some(r);
-                    break;
-                }
-                Err(e) => {
-                    let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
-                    if attempt < 2 && (status == 429 || (500..=599).contains(&status)) {
-                        let wait = std::time::Duration::from_secs(2 * (attempt + 1) as u64);
-                        tokio::time::sleep(wait).await;
+        if reject_content_type(&target, &content_type).is_some() {
+            // Landing page / JSON / XML. Try to resolve a PDF link from the
+            // HTML body — but only once, to bound work and avoid loops.
+            if !resolved_once {
+                let base = resp.url().clone();
+                let resolved = match read_body_capped(resp, HTML_RESOLVE_CAP).await {
+                    Some(html) => resolve_pdf_from_html(&html, &base),
+                    None => None,
+                };
+                if let Some(pdf_url) = resolved {
+                    // Skip if the resolved link points back at the URL we just
+                    // requested OR the page's own (post-redirect) final URL —
+                    // re-fetching it would just return the same HTML.
+                    if pdf_url != target && pdf_url != base.as_str() {
+                        target = pdf_url;
+                        resolved_once = true;
                         continue;
                     }
-                    return DownloadOutcome::Failed(format!(
-                        "{}. (HTTP {status})",
-                        http_status_message(status)
-                    ));
                 }
-            },
-            Err(_e) if attempt < 2 => {
-                let wait = std::time::Duration::from_secs(2 * (attempt + 1) as u64);
-                tokio::time::sleep(wait).await;
-                continue;
             }
-            Err(e) => return DownloadOutcome::Failed(network_error_message(&e)),
+            return DownloadOutcome::Failed(
+                "This link opened a web page, not a downloadable document.".to_string(),
+            );
         }
-    }
-    let Some(resp) = resp else {
-        // The retry loop above always sets `resp` or returns early; this guard
-        // just ensures a future refactor can't turn that into a panic.
-        return DownloadOutcome::Failed("Download failed after multiple attempts.".to_string());
+        break (resp, content_type);
     };
 
-    let content_type = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-
-    // Early reject: the URL claimed to be a document but the server is serving
-    // an HTML landing page / JSON / XML wrapper. Don't waste bandwidth.
-    if let Some(reason) = reject_content_type(&doc.url, &content_type) {
-        return DownloadOutcome::Failed(reason);
-    }
-
-    let final_ext = ext_from(&doc.url, &content_type);
+    let final_ext = ext_from(&target, &content_type);
     if final_ext != initial_ext {
         out = dest_dir.join(format!("{}{}", doc.slug(), final_ext));
     }
@@ -283,11 +418,6 @@ where
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0);
 
-    let mut file = match File::create(&out).await {
-        Ok(f) => f,
-        Err(e) => return DownloadOutcome::Failed(format!("Couldn't create the file on disk: {e}")),
-    };
-
     // Pre-reject oversized files declared in Content-Length before writing
     // anything. (`total == 0` means "unknown length" and is never > the cap.)
     if total > MAX_FILE_BYTES {
@@ -296,6 +426,11 @@ where
             MAX_FILE_BYTES / 1024 / 1024
         ));
     }
+
+    let mut file = match File::create(&out).await {
+        Ok(f) => f,
+        Err(e) => return DownloadOutcome::Failed(format!("Couldn't create the file on disk: {e}")),
+    };
 
     let mut downloaded: u64 = 0;
     let mut stream = resp.bytes_stream();
@@ -334,8 +469,22 @@ where
                 MAX_FILE_BYTES / 1024 / 1024
             ));
         }
-        on_progress(ProgressEvent { downloaded, total });
+        on_progress(ProgressEvent {
+            downloaded,
+            total,
+            force: false,
+        });
     }
+
+    // Terminal, un-throttled progress event: guarantees the true final byte
+    // count reaches the throughput graph even for fast or unknown-length
+    // (chunked, total==0) downloads whose last chunk would otherwise be
+    // suppressed by the caller's time-based throttle.
+    on_progress(ProgressEvent {
+        downloaded,
+        total: if total == 0 { downloaded } else { total },
+        force: true,
+    });
 
     if let Err(e) = file.flush().await {
         return DownloadOutcome::Failed(format!("Couldn't finish saving the file to disk: {e}"));
@@ -397,5 +546,60 @@ mod tests {
     fn url_with_query_string_recognized_as_html() {
         assert!(url_claims_html("https://example.com/page.html?x=1"));
         assert!(!url_claims_html("https://example.com/paper.pdf?x=1"));
+    }
+
+    #[test]
+    fn canonicalizes_arxiv_abs_to_pdf() {
+        assert_eq!(
+            canonicalize_doc_url("https://arxiv.org/abs/1706.03762"),
+            "https://arxiv.org/pdf/1706.03762"
+        );
+        // Non-arxiv URLs pass through untouched.
+        assert_eq!(
+            canonicalize_doc_url("https://example.com/paper.pdf"),
+            "https://example.com/paper.pdf"
+        );
+    }
+
+    #[test]
+    fn resolves_citation_pdf_url_meta() {
+        let base = url::Url::parse("https://journal.org/articles/42").unwrap();
+        let html = r#"<html><head>
+            <meta name="citation_title" content="A Paper">
+            <meta name="citation_pdf_url" content="https://journal.org/articles/42.pdf">
+            </head><body>…</body></html>"#;
+        assert_eq!(
+            resolve_pdf_from_html(html, &base).as_deref(),
+            Some("https://journal.org/articles/42.pdf")
+        );
+    }
+
+    #[test]
+    fn resolves_relative_pdf_link_against_base() {
+        let base = url::Url::parse("https://repo.edu/record/9").unwrap();
+        let html = r#"<a class="dl" href="/record/9/files/paper.pdf">Download PDF</a>"#;
+        assert_eq!(
+            resolve_pdf_from_html(html, &base).as_deref(),
+            Some("https://repo.edu/record/9/files/paper.pdf")
+        );
+    }
+
+    #[test]
+    fn skips_cross_host_pdf_anchor() {
+        let base = url::Url::parse("https://repo.edu/record/9").unwrap();
+        // Only an off-host PDF anchor exists → not resolved (avoids ads/junk).
+        let html = r#"<a href="https://ads.example.com/promo.pdf">ad</a>"#;
+        assert_eq!(resolve_pdf_from_html(html, &base), None);
+    }
+
+    #[test]
+    fn prefers_pdf_link_alternate_over_anchor() {
+        let base = url::Url::parse("https://ojs.example.org/index.php/j/article/view/10").unwrap();
+        let html = r#"<head><link rel="alternate" type="application/pdf" href="/index.php/j/article/view/10/9">
+            </head><body><a href="/some/other.pdf">x</a></body>"#;
+        assert_eq!(
+            resolve_pdf_from_html(html, &base).as_deref(),
+            Some("https://ojs.example.org/index.php/j/article/view/10/9")
+        );
     }
 }

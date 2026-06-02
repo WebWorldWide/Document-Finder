@@ -15,7 +15,7 @@ use crate::engine::runlog;
 use crate::engine::{run_pipeline, RunRequest};
 use crate::events::{ErrorPayload, EV_ERROR};
 use crate::sources::USER_AGENT;
-use crate::util::path_safety::safe_within_library;
+use crate::util::path_safety::{library_root as default_library_root, safe_within_root};
 
 /// HTTP client tuned for huge model downloads — connect_timeout fails fast on
 /// dead URLs but there is NO overall .timeout, because the default
@@ -34,6 +34,60 @@ fn make_model_download_client() -> reqwest::Client {
 pub struct AppState {
     /// Active run's cancellation token, if any.
     pub current_cancel: Mutex<Option<CancellationToken>>,
+    /// The user-configured library root, validated + canonicalized once when
+    /// set from the frontend (`set_library_root`). All path commands confine
+    /// to this so a library relocated to e.g. `D:\Research` can still be
+    /// opened/exported/deleted. `None` falls back to the default
+    /// `~/Documents/Document Finder` root.
+    pub library_root: Mutex<Option<PathBuf>>,
+}
+
+/// Resolve the confinement root every path command must stay inside: the
+/// user-configured root if one has been set + validated, else the default
+/// `~/Documents/Document Finder`. Keeping this server-side (rather than trusting
+/// a root passed per-call from the renderer) preserves the anti-traversal
+/// guarantee while still honoring a custom location.
+fn confinement_root(state: &AppState) -> Result<PathBuf, String> {
+    let guard = state.library_root.lock().unwrap_or_else(|e| e.into_inner());
+    match guard.as_ref() {
+        Some(root) => Ok(root.clone()),
+        None => default_library_root(),
+    }
+}
+
+/// Persist + validate the user's chosen library root. Called by the frontend on
+/// startup and whenever the Settings library path changes, so the security
+/// envelope for open/export/delete matches where downloads actually go.
+#[tauri::command]
+pub fn set_library_root(state: State<'_, AppState>, path: String) -> Result<String, String> {
+    let raw = PathBuf::from(&path);
+    if !raw.is_absolute() {
+        return Err("Library folder must be an absolute path.".into());
+    }
+    // Don't let a buggy/compromised renderer trigger arbitrary deep directory
+    // creation: only create the folder if it doesn't already exist AND its
+    // parent does — i.e. create at most one new level under an existing dir.
+    if !raw.exists() {
+        match raw.parent() {
+            Some(parent) if parent.is_dir() => {
+                std::fs::create_dir(&raw).map_err(|e| {
+                    format!("Could not create library folder '{}': {e}", raw.display())
+                })?;
+            }
+            _ => {
+                return Err(format!(
+                    "Library folder '{}' doesn't exist and its parent is missing — create the folder first.",
+                    raw.display()
+                ));
+            }
+        }
+    }
+    let canonical = raw
+        .canonicalize()
+        .map_err(|e| format!("Could not resolve library folder '{}': {e}", raw.display()))?;
+    let mut root = state.library_root.lock().unwrap_or_else(|e| e.into_inner());
+    *root = Some(canonical.clone());
+    Ok(canonical.to_string_lossy().to_string())
 }
 
 #[derive(Debug, Serialize)]
@@ -223,8 +277,9 @@ pub async fn list_libraries(root: String) -> Result<Vec<LibraryInfo>, String> {
 }
 
 #[tauri::command]
-pub async fn open_library(path: String) -> Result<LibraryInfo, String> {
-    let p = safe_within_library(&PathBuf::from(&path))?;
+pub async fn open_library(state: State<'_, AppState>, path: String) -> Result<LibraryInfo, String> {
+    let root = confinement_root(&state)?;
+    let p = safe_within_root(&PathBuf::from(&path), &root)?;
     let db_path = p.join("library.db");
     if !db_path.exists() {
         return Err("library.db not found".into());
@@ -289,8 +344,12 @@ pub struct ExportResult {
 /// Pack a library folder as a single ZIP that's easy to upload to AI tools
 /// (Claude Projects, ChatGPT, etc.). Skips the BM25 index and OS junk.
 #[tauri::command]
-pub fn export_library_zip(args: ExportArgs) -> Result<ExportResult, String> {
-    let src = safe_within_library(&PathBuf::from(&args.folder))?;
+pub fn export_library_zip(
+    state: State<'_, AppState>,
+    args: ExportArgs,
+) -> Result<ExportResult, String> {
+    let root = confinement_root(&state)?;
+    let src = safe_within_root(&PathBuf::from(&args.folder), &root)?;
     if !src.is_dir() {
         return Err(format!("not a folder: {}", args.folder));
     }
@@ -783,46 +842,18 @@ pub async fn reset_ai_state() -> Result<(), String> {
 /// outside Documents, busy file handle, permission denied) so the UI can show
 /// the user what to fix instead of a generic "delete failed".
 #[tauri::command]
-pub async fn delete_library(path: String) -> Result<(), String> {
-    let raw = PathBuf::from(&path);
-    let p = raw.canonicalize().map_err(|e| {
-        let msg = format!(
-            "could not resolve library path '{}': {}. The folder may have already been moved or deleted.",
-            raw.display(),
-            e
-        );
-        tracing::warn!("delete_library: {}", msg);
-        msg
+pub async fn delete_library(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let root = confinement_root(&state)?;
+    // `safe_within_root` canonicalizes BOTH the path and the root, so this keeps
+    // the Windows `\\?\` verbatim-prefix fix that the old hand-rolled check
+    // needed — while moving the boundary to the configured library root (matching
+    // open/export) instead of the broader whole-Documents tree.
+    let p = safe_within_root(&PathBuf::from(&path), &root).map_err(|e| {
+        tracing::warn!("delete_library: {}", e);
+        e
     })?;
     if !p.is_dir() {
         let msg = format!("'{}' is not a folder — refusing to delete.", p.display());
-        tracing::warn!("delete_library: {}", msg);
-        return Err(msg);
-    }
-    // Canonicalize Documents too: `p` came from `canonicalize()`, which on
-    // Windows yields a `\\?\`-prefixed verbatim path. A bare `dirs::document_dir()`
-    // has no such prefix, so `starts_with` would spuriously fail (the source of
-    // the "library must live inside Documents … is outside" error). Resolving
-    // both sides puts them in the same form.
-    let docs = dirs::document_dir()
-        .ok_or_else(|| {
-            let msg =
-                "cannot resolve your Documents directory — delete refused for safety.".to_string();
-            tracing::warn!("delete_library: {}", msg);
-            msg
-        })?
-        .canonicalize()
-        .map_err(|e| {
-            let msg = format!("cannot resolve your Documents directory: {e}");
-            tracing::warn!("delete_library: {}", msg);
-            msg
-        })?;
-    if !p.starts_with(&docs) {
-        let msg = format!(
-            "library must live inside Documents ({}); '{}' is outside.",
-            docs.display(),
-            p.display()
-        );
         tracing::warn!("delete_library: {}", msg);
         return Err(msg);
     }

@@ -22,6 +22,7 @@ pub fn run() {
         .manage(ai::AiState::default())
         .invoke_handler(tauri::generate_handler![
             commands::default_library_dir,
+            commands::set_library_root,
             commands::start_run,
             commands::cancel_run,
             commands::list_libraries,

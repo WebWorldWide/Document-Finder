@@ -7,6 +7,7 @@ description = "Grants full access to the Document Finder library and core app co
 # and the user only sees "Command X not allowed by ACL" at runtime.
 commands.allow = [
   "default_library_dir",
+  "set_library_root",
   "start_run",
   "cancel_run",
   "list_libraries",

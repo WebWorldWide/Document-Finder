@@ -6,6 +6,22 @@ use std::io::Read;
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 
+/// Cap on raw source text (TXT/HTML) read into memory before extraction. With
+/// up to `num_cpus` extractions running concurrently, an unbounded read of a
+/// pathological multi-hundred-MB file (times N) could exhaust memory.
+const MAX_TEXT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Read a text file as lossy UTF-8, bounded to `MAX_TEXT_BYTES`. `read_to_string`
+/// hard-errors on any non-UTF-8 byte (Latin-1, UTF-16, legacy encodings), which
+/// would silently drop otherwise-readable documents; lossy decoding keeps the
+/// readable text instead.
+fn read_text_file_capped(path: &Path) -> anyhow::Result<String> {
+    let f = std::fs::File::open(path)?;
+    let mut buf = Vec::new();
+    f.take(MAX_TEXT_BYTES).read_to_end(&mut buf)?;
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
 pub fn extract_text(path: &Path) -> anyhow::Result<String> {
     let suffix = path
         .extension()
@@ -13,12 +29,10 @@ pub fn extract_text(path: &Path) -> anyhow::Result<String> {
         .unwrap_or("")
         .to_lowercase();
     match suffix.as_str() {
-        "txt" => std::fs::read_to_string(path).map_err(anyhow::Error::from),
+        "txt" => read_text_file_capped(path),
         "pdf" => extract_pdf(path),
         "epub" => extract_epub(path),
-        "html" | "htm" => std::fs::read_to_string(path)
-            .map(|h| strip_html(&h))
-            .map_err(anyhow::Error::from),
+        "html" | "htm" => read_text_file_capped(path).map(|h| strip_html(&h)),
         _ => Err(anyhow::anyhow!("Unsupported file extension: .{}", suffix)),
     }
 }

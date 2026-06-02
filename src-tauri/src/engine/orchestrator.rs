@@ -19,7 +19,9 @@ use super::query::{expand_query, parse_query, safe_folder};
 use super::ranking::{flag_rejects, rank_candidates, RankedDoc};
 use super::runlog;
 use crate::events::*;
-use crate::sources::{build_source, make_client, Document, SourceOptions, SOURCE_IDS};
+use crate::sources::{
+    build_source, make_client, make_download_client, Document, SourceOptions, SOURCE_IDS,
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RunRequest {
@@ -233,9 +235,25 @@ async fn discover_wave(
                                 sub_query: Some(&sub_t),
                             });
                             let kind = crate::events::classify_source_error(&err_str);
-                            // Parse-class errors mean HTML markup drift — users
-                            // can't act on them. Silent.
-                            if kind == "parse_error" {
+                            // Parse-class errors from the HTML *scrapers* mean
+                            // markup drift — users can't act on them, so stay
+                            // silent. But for structured-API sources (arxiv,
+                            // openalex, semantic_scholar, internet_archive, doaj,
+                            // gutenberg) a "parse" failure is a real, reportable
+                            // outage (API shape changed / returned an error body),
+                            // so surface it instead of swallowing it.
+                            let is_web_scraper = matches!(
+                                sname_t.as_str(),
+                                "web"
+                                    | "brave"
+                                    | "bing"
+                                    | "mojeek"
+                                    | "marginalia"
+                                    | "startpage"
+                                    | "meta_search"
+                                    | "searxng"
+                            );
+                            if kind == "parse_error" && is_web_scraper {
                                 continue;
                             }
                             if !seen_kinds.insert(kind) {
@@ -684,6 +702,12 @@ pub async fn run_pipeline(
         );
         let query_for_rerank = req.query.clone();
         let app_for_rerank = app.clone();
+        // Keep a Tier-1 fallback: if the rerank task PANICS, `taken` is dropped
+        // inside the dead thread and `ranked` would be left empty — meaning zero
+        // candidates and zero downloads. Restore the lexical ranking instead.
+        // The clone (≤ a few hundred RankedDocs) is a deliberate, cheap trade
+        // against silently losing the entire run's results.
+        let fallback = ranked.clone();
         let mut taken: Vec<RankedDoc> = std::mem::take(&mut ranked);
         let result = tokio::task::spawn_blocking(move || {
             let res = crate::ai::embeddings::rerank_blocking(
@@ -720,17 +744,19 @@ pub async fn run_pipeline(
                 );
             }
             Err(e) => {
-                tracing::warn!("rerank task panicked: {}", e);
+                tracing::warn!("rerank task panicked, falling back to Tier 1: {}", e);
+                // `taken` died with the panicked thread; restore the lexical
+                // ranking so the run still produces (correctly-ordered) downloads
+                // instead of silently dropping every candidate.
+                ranked = fallback;
                 emit_stage(
                     &app,
                     "semantic_rerank",
                     "skipped",
                     None,
                     None,
-                    Some(format!("rerank task panicked: {}", e)),
+                    Some(format!("rerank task panicked — using lexical only: {}", e)),
                 );
-                // ranked is empty here because of std::mem::take — that's fine
-                // because the task only panics after taking ownership.
             }
         }
     }
@@ -941,6 +967,24 @@ pub async fn run_pipeline(
         .map(|r| r.doc.doc)
         .collect();
 
+    // If the user hit Stop during the ranking / rerank / LLM-filter / citation
+    // phases (which run to completion before checking the token), bail before
+    // kicking off the download phase so the UI flips to "cancelled" promptly
+    // instead of grinding through a no-op download/extract stage.
+    if cancel.is_cancelled() {
+        let _ = app.emit(
+            EV_CANCELLED,
+            CompletePayload {
+                done: 0,
+                failed: 0,
+                total: 0,
+                folder: folder.to_string_lossy().to_string(),
+                manifest: db_path.to_string_lossy().to_string(),
+            },
+        );
+        return Ok(());
+    }
+
     emit_stage(
         &app,
         "download",
@@ -981,11 +1025,15 @@ pub async fn run_pipeline(
     let counters = Arc::new(tokio::sync::Mutex::new((0usize, 0usize))); // (done, failed)
     let download_sem = Arc::new(Semaphore::new(req.concurrency.clamp(1, 32)));
     let extract_sem = Arc::new(Semaphore::new(num_cpus::get().clamp(1, 8)));
+    // Downloads use a dedicated client with NO overall timeout (only connect +
+    // read-stall timeouts) so a large or slow PDF isn't aborted at 60s like the
+    // shared API client would. See `make_download_client`.
+    let download_client = Arc::new(make_download_client());
 
     let mut handles = Vec::with_capacity(candidates.len());
     for doc in candidates {
         let app = app.clone();
-        let client = client.clone();
+        let client = download_client.clone();
         let cancel = cancel.clone();
         let download_sem = download_sem.clone();
         let extract_sem = extract_sem.clone();
@@ -1019,9 +1067,12 @@ pub async fn run_pipeline(
             let last_emit = std::sync::Mutex::new(std::time::Instant::now());
 
             let outcome = download(&doc, &folder, &client, &cancel, |ev| {
-                // Throttle progress to ~5 updates/sec/file
+                // Throttle progress to ~5 updates/sec/file, but NEVER drop the
+                // terminal (`force`) event — that's the one that carries the
+                // true final byte count for fast / unknown-length downloads.
                 let mut last = last_emit.lock().unwrap_or_else(|e| e.into_inner());
-                if last.elapsed() < std::time::Duration::from_millis(200)
+                if !ev.force
+                    && last.elapsed() < std::time::Duration::from_millis(200)
                     && (ev.total == 0 || ev.downloaded < ev.total)
                 {
                     return;
@@ -1039,8 +1090,43 @@ pub async fn run_pipeline(
             })
             .await;
 
-            match outcome {
-                DownloadOutcome::Saved(path) => {
+            // Map the outcome to a saved/cached file (with a `cached` flag), or
+            // handle the terminal failure/cancel cases and bail out of the task.
+            let (path, cached) = match outcome {
+                DownloadOutcome::Saved(path) => (path, false),
+                DownloadOutcome::Cached(path) => (path, true),
+                DownloadOutcome::Failed(err) => {
+                    runlog::log(runlog::Event::DownloadFail {
+                        source: &doc.source,
+                        title: &doc.title,
+                        url: &doc.url,
+                        error: &err,
+                    });
+                    let (done, failed) = {
+                        let mut c = counters.lock().await;
+                        c.1 += 1;
+                        (c.0, c.1)
+                    };
+                    let _ = app.emit(
+                        EV_DOWNLOAD_FAILED,
+                        DownloadFailedPayload {
+                            doc,
+                            error: err,
+                            done,
+                            failed,
+                            total,
+                        },
+                    );
+                    return;
+                }
+                DownloadOutcome::Cancelled => {
+                    // Counted neither done nor failed; UI shows "cancelled" via cancel event.
+                    return;
+                }
+            };
+
+            {
+                {
                     let bytes = tokio::fs::metadata(&path)
                         .await
                         .map(|m| m.len())
@@ -1119,24 +1205,45 @@ pub async fn run_pipeline(
                     let lp_for_db = local_path.clone();
                     let tp_for_db = text_path.clone();
                     let ee_for_db = extract_error.clone();
-                    let _ = tokio::task::spawn_blocking(move || {
-                        if let Ok(mgr) = DbManager::new(&db_path_for_task) {
-                            let _ = mgr.insert_document(
-                                run_id,
-                                &title_for_db,
-                                &url_for_db,
-                                &source_for_db,
-                                &authors_for_db,
-                                year_for_db.as_deref(),
-                                abstract_for_db.as_deref(),
-                                &lp_for_db,
-                                tp_for_db.as_deref(),
-                                ee_for_db.as_deref(),
-                                bytes,
-                            );
-                        }
+                    // Persist the row, capturing any error. Previously this was
+                    // `let _ =` on both the connection open and the insert, so a
+                    // SQLITE_BUSY / lock / constraint failure silently dropped a
+                    // downloaded doc from the library with no log — the user saw
+                    // fewer docs than were actually saved. Open a lightweight
+                    // connection (schema already created at run start) and
+                    // surface failures via tracing + the run log. The doc is
+                    // still counted as `done` (the bytes are on disk); only its
+                    // index row is missing, which the log now makes observable.
+                    let db_result = tokio::task::spawn_blocking(move || -> rusqlite::Result<()> {
+                        let mgr = DbManager::open_existing(&db_path_for_task)?;
+                        mgr.insert_document(
+                            run_id,
+                            &title_for_db,
+                            &url_for_db,
+                            &source_for_db,
+                            &authors_for_db,
+                            year_for_db.as_deref(),
+                            abstract_for_db.as_deref(),
+                            &lp_for_db,
+                            tp_for_db.as_deref(),
+                            ee_for_db.as_deref(),
+                            bytes,
+                        )
                     })
                     .await;
+                    let db_err = match db_result {
+                        Ok(Ok(())) => None,
+                        Ok(Err(e)) => Some(e.to_string()),
+                        Err(join_err) => Some(format!("db task panicked: {join_err}")),
+                    };
+                    if let Some(err) = db_err {
+                        tracing::error!("failed to persist document row for {}: {}", doc.url, err);
+                        runlog::log(runlog::Event::DbError {
+                            title: &doc.title,
+                            url: &doc.url,
+                            error: &err,
+                        });
+                    }
 
                     let (done, failed) = {
                         let mut c = counters.lock().await;
@@ -1151,37 +1258,13 @@ pub async fn run_pipeline(
                             local_path,
                             absolute_path: path.to_string_lossy().to_string(),
                             text_path,
+                            bytes,
+                            cached,
                             done,
                             failed,
                             total,
                         },
                     );
-                }
-                DownloadOutcome::Failed(err) => {
-                    runlog::log(runlog::Event::DownloadFail {
-                        source: &doc.source,
-                        title: &doc.title,
-                        url: &doc.url,
-                        error: &err,
-                    });
-                    let (done, failed) = {
-                        let mut c = counters.lock().await;
-                        c.1 += 1;
-                        (c.0, c.1)
-                    };
-                    let _ = app.emit(
-                        EV_DOWNLOAD_FAILED,
-                        DownloadFailedPayload {
-                            doc,
-                            error: err,
-                            done,
-                            failed,
-                            total,
-                        },
-                    );
-                }
-                DownloadOutcome::Cancelled => {
-                    // Counted neither done nor failed; UI shows "cancelled" via cancel event.
                 }
             }
         });

@@ -144,6 +144,24 @@ pub fn make_client() -> reqwest::Client {
         .expect("http client")
 }
 
+/// HTTP client tuned for document downloads. Unlike `make_client`, it sets NO
+/// overall request timeout — reqwest's `.timeout()` is a *total* deadline
+/// covering the whole body read, so a 60s cap silently aborts large or slow
+/// PDFs mid-stream (and the partial file is then deleted, surfacing as a
+/// failed download). Instead we bound only the parts that can legitimately
+/// hang: `connect_timeout` fails fast on dead hosts, and `read_timeout` aborts
+/// a stalled stream (no bytes for the window) while letting a slow-but-
+/// progressing transfer run to completion.
+pub fn make_download_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .connect_timeout(std::time::Duration::from_secs(20))
+        .read_timeout(std::time::Duration::from_secs(60))
+        .redirect(safe_redirect_policy())
+        .build()
+        .expect("download http client")
+}
+
 /// Redirect policy that follows normal cross-host redirects but refuses to hop
 /// to a non-http(s) scheme or to an IP-literal host in a private/reserved
 /// range. This blocks the common SSRF-via-redirect cases (a public URL 302-ing
