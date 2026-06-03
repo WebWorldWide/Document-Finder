@@ -29,9 +29,7 @@ export default function Sidebar() {
     requestAnimationFrame(() => (document.getElementById("main-content") as HTMLElement)?.focus());
 
   const recent = () =>
-    [...uiStore.knownLibraries]
-      .sort((a, b) => compareLibraryRecency(a.name, b.name))
-      .slice(0, 5);
+    [...uiStore.knownLibraries].sort((a, b) => compareLibraryRecency(a.name, b.name)).slice(0, 5);
 
   return (
     <nav class="df-sidebar" aria-label="Primary">
