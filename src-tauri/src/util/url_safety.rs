@@ -5,7 +5,8 @@
 //! loopback, link-local, or multicast). Designed as a best-effort defence
 //! for a desktop app — not a substitute for network-level controls.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use url::Url;
 
 /// Validate `raw` is an **https** URL pointing at a public host.
@@ -74,6 +75,44 @@ async fn validate_url_inner(raw: &str, allowed_schemes: &[&str]) -> Result<Url, 
     }
 
     Ok(url)
+}
+
+/// A reqwest DNS resolver that drops private/reserved IPs at resolution time.
+///
+/// This closes two gaps the one-shot `validate_*` lookups and the synchronous
+/// redirect policy cannot:
+/// 1. **DNS-rebinding TOCTOU** — `validate_download_url` resolves a host once,
+///    then reqwest resolves it again at connect time. A malicious host (download
+///    URLs come from untrusted search results) can answer the first lookup with
+///    a public IP and the second with `127.0.0.1` / `169.254.169.254`. Resolving
+///    inside reqwest's own connection path means there is only one lookup.
+/// 2. **Redirect to a private *hostname*** — the redirect policy can only inspect
+///    IP literals; a 302 to a hostname that resolves private slipped through.
+///    This resolver runs for every hop, including redirects.
+///
+/// reqwest only consults a custom resolver for **hostname** hosts; IP-literal
+/// hosts (e.g. the in-process SearXNG at `127.0.0.1:<port>`) bypass DNS entirely
+/// and remain governed by `validate_*` + the redirect policy — so installing
+/// this globally does not break the loopback local-SearXNG fallback.
+#[derive(Debug, Default, Clone)]
+pub struct PublicOnlyResolver;
+
+impl Resolve for PublicOnlyResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        Box::pin(async move {
+            let host = name.as_str().to_owned();
+            // Port 0: reqwest substitutes the real destination port; only the
+            // resolved IPs matter for the privacy decision.
+            let resolved = tokio::net::lookup_host(format!("{host}:0")).await?;
+            let public: Vec<SocketAddr> = resolved.filter(|a| !is_private_ip(&a.ip())).collect();
+            if public.is_empty() {
+                let err: Box<dyn std::error::Error + Send + Sync> =
+                    format!("blocked: '{host}' resolves only to private/reserved addresses").into();
+                return Err(err);
+            }
+            Ok(Box::new(public.into_iter()) as Addrs)
+        })
+    }
 }
 
 /// True if `ip` is loopback, private, link-local, multicast, unspecified, or

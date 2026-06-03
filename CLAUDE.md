@@ -174,15 +174,51 @@ needs glibc 2.39+ C23 symbols).
    git tag vx.y.z
    git push origin main --tags
    ```
-2. `release.yml` builds unsigned installers — macOS (Apple Silicon `.dmg`),
-   Linux (`.deb`, `.AppImage`, and a `.flatpak` from `packaging/flatpak/`,
-   glibc 2.39+), Windows (`.exe` + `.msi`) — and attaches them to a **draft**
-   GitHub Release. Review, edit notes, publish.
+2. A `create-release` job opens **one** draft Release for the tag (so the three
+   matrix legs don't race to create duplicate drafts), then `release.yml` builds
+   installers and uploads them to that draft via tauri-action's `releaseId` —
+   macOS (Apple Silicon `.dmg`, **ad-hoc signed**), Linux (`.deb`, `.rpm`,
+   `.AppImage`, and a `.flatpak` from `packaging/flatpak/`, glibc 2.39+), Windows
+   (`.exe` + `.msi`). Review, edit notes, publish.
 
-The builds are unsigned, so first launch needs a manual allow:
-- **macOS** — System Settings → Privacy & Security → **Open Anyway**, or
-  `xattr -dr com.apple.quarantine "/Applications/Document Finder.app"`.
+The macOS build is **ad-hoc signed** (`bundle.macOS.signingIdentity = "-"` in
+`tauri.conf.json`, also set via `APPLE_SIGNING_IDENTITY: '-'` in `release.yml`).
+Ad-hoc signing is required on Apple Silicon — without it a downloaded (quarantined)
+arm64 app gets the unrecoverable Gatekeeper *"is damaged"* verdict, **not** the
+milder "unidentified developer" prompt. Ad-hoc signing removes the "damaged" wall
+but is **not** notarization, so first launch still needs a manual allow:
+- **macOS** — right-click the app → **Open**, then confirm. If macOS still
+  refuses: `xattr -dr com.apple.quarantine "/Applications/Document Finder.app"`.
+  (Zero-friction opens would require a paid Developer ID cert + notarization.)
 - **Windows** — SmartScreen → **More info** → **Run anyway**.
+
+The Flatpak builds against the **GNOME runtime** (`org.gnome.Platform`/`Sdk`),
+not the bare freedesktop runtime, because only the GNOME runtime ships
+`libwebkit2gtk-4.1` (a Tauri Linux app dlopen's it). The flatpak job runs an
+`ldd` smoke check that fails the release if the chosen runtime is missing the lib
+— bump `runtime-version` (manifest) and the `flatpak install` line together.
+
+## Uninstall / data purge
+
+Clean uninstall is three layers (no native uninstaller can remove the user's
+document library, and shouldn't auto-nuke `~/Documents`):
+- **`purge_all_data` command** (`commands.rs`) — the in-app "Settings → Danger
+  zone → Erase app data". It takes **no path argument** by design: it only
+  deletes dirs derived server-side from the app identifier (`app_data_dir()` —
+  AI models + fastembed cache + config), `runlog::log_path()`'s parent (the per-
+  OS log dir), and — only when `include_library` is set — `confinement_root()`
+  (which knows a custom library root). It reuses `force_remove_dir` and is
+  best-effort (returns a `PurgeReport { removed, failed }`). Registered in the
+  usual four places (`commands.rs`, `lib.rs`, `permissions/app.toml`,
+  `src/lib/tauri.ts`).
+- **`scripts/uninstall.{ps1,sh}`** — standalone per-user data wipe for when the
+  app is already gone. They only know the **default** `~/Documents/Document
+  Finder`; keep their hard-coded identifier (`com.webworldwide.documentfinder`)
+  and log paths in sync with `runlog.rs` if those ever change.
+- **NSIS hook is intentionally deferred** — Tauri's generated Windows uninstaller
+  already ships an opt-in "Delete application data" checkbox covering
+  `%APPDATA%`/`%LOCALAPPDATA%`; a force hook would only remove that choice and
+  still must not touch the Documents library.
 
 ## Icon regeneration
 

@@ -39,6 +39,7 @@ pub fn run() {
             commands::cancel_model_download,
             commands::delete_model,
             commands::delete_library,
+            commands::purge_all_data,
             commands::reset_ai_state,
             commands::local_searxng_port,
         ])

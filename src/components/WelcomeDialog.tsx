@@ -11,6 +11,9 @@ import { formatBytes } from "@/lib/utils";
 /// Surfaces once on first launch (or after wiping app state).
 export default function WelcomeDialog() {
   const [modelsOpen, setModelsOpen] = createSignal(true);
+  const headingId = "welcome-dialog-title";
+  let dialogRef: HTMLDivElement | undefined;
+  let previouslyFocused: HTMLElement | null = null;
 
   onMount(() => {
     void modelsStore.refresh();
@@ -31,6 +34,41 @@ export default function WelcomeDialog() {
   function dismiss() {
     setSettings("aiOnboardingDismissed", true);
     saveSettings();
+    // Restore focus to whatever the user was on before the modal opened.
+    previouslyFocused?.focus?.();
+  }
+
+  // When the dialog mounts, remember the prior focus and move focus into it so
+  // screen readers announce the modal and the Esc / focus-trap handlers fire.
+  function captureDialog(el: HTMLDivElement) {
+    dialogRef = el;
+    previouslyFocused = document.activeElement as HTMLElement | null;
+    queueMicrotask(() => el.focus());
+  }
+
+  // Esc closes; Tab is trapped so focus can't escape behind the modal.
+  function handleKeyDown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      dismiss();
+      return;
+    }
+    if (e.key !== "Tab" || !dialogRef) return;
+    const focusable = Array.from(
+      dialogRef.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
   }
 
   function downloadDefaults() {
@@ -44,7 +82,13 @@ export default function WelcomeDialog() {
     <Show when={open()}>
       <div class="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm">
         <div
-          class="material-linen border-stitched relative max-h-[88vh] w-full max-w-xl overflow-y-auto p-6"
+          ref={captureDialog}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={headingId}
+          tabindex="-1"
+          onKeyDown={handleKeyDown}
+          class="material-linen border-stitched relative max-h-[88vh] w-full max-w-xl overflow-y-auto p-6 outline-none"
           style={{ "box-shadow": "0 24px 60px rgba(0,0,0,0.25), 0 0 0 0.5px var(--line)" }}
         >
           <button
@@ -57,7 +101,9 @@ export default function WelcomeDialog() {
 
           <div class="mb-2 flex items-center gap-2">
             <Logo size={32} style={{ "border-radius": "8px" }} />
-            <h2 class="text-embossed text-base font-semibold">Welcome to Document Finder</h2>
+            <h2 id={headingId} class="text-embossed text-base font-semibold">
+              Welcome to Document Finder
+            </h2>
           </div>
           <p class="mb-5 text-xs leading-relaxed text-[var(--color-muted-foreground)]">
             Three optional setup steps. Each is independent — skip whatever you don't need.

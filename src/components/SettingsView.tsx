@@ -8,7 +8,9 @@ import {
   Sparkles,
   RefreshCw,
   AlertCircle,
+  Trash2,
 } from "lucide-solid";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { api, type LogInfo } from "@/lib/tauri";
 import {
   settings,
@@ -32,6 +34,9 @@ export default function SettingsView() {
   const [logInfo, setLogInfo] = createSignal<LogInfo | null>(null);
   const [warming, setWarming] = createSignal(false);
   const [libRootError, setLibRootError] = createSignal<string | null>(null);
+  const [purging, setPurging] = createSignal(false);
+  const [purgeMsg, setPurgeMsg] = createSignal<string | null>(null);
+  const [purgeLibrary, setPurgeLibrary] = createSignal(false);
   // Tracked so the readiness poll is cleared if the user leaves Settings while a
   // model download is still warming (otherwise the interval leaks).
   let pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -62,6 +67,37 @@ export default function SettingsView() {
         setWarming(false);
       }
     }, 1500);
+  }
+
+  async function handlePurge() {
+    setPurgeMsg(null);
+    const msg = purgeLibrary()
+      ? "Delete ALL Document Finder data including your downloaded document library? This permanently erases models, caches, logs, and every downloaded document and database. This cannot be undone."
+      : "Delete Document Finder's app data (AI models, caches, run logs)? Your document library will be kept. This cannot be undone.";
+    const ok = await ask(msg, { title: "Erase Document Finder data", kind: "warning" });
+    if (!ok) return;
+    setPurging(true);
+    try {
+      const report = await api.purgeAllData(purgeLibrary());
+      // localStorage is the only place settings/theme persist — wipe it too so
+      // preferences don't outlive a full erase.
+      try {
+        localStorage.clear();
+      } catch {
+        /* ignore */
+      }
+      const removed = report?.removed?.length ?? 0;
+      const failed = report?.failed?.length ?? 0;
+      setPurgeMsg(
+        failed === 0
+          ? `Erased ${removed} location${removed === 1 ? "" : "s"}. Quit the app to finish.`
+          : `Erased ${removed}, but ${failed} could not be removed — close the app and retry, or run the uninstall script.`,
+      );
+    } catch (e) {
+      setPurgeMsg(`Could not erase data: ${String(e)}`);
+    } finally {
+      setPurging(false);
+    }
   }
 
   onMount(async () => {
@@ -529,6 +565,56 @@ export default function SettingsView() {
                   </div>
                 </div>
               )}
+            </Show>
+          </section>
+
+          {/* Danger zone — clean uninstall */}
+          <section class="df-section">
+            <h2
+              style={{ color: "var(--bad)", display: "flex", "align-items": "center", gap: "6px" }}
+            >
+              <AlertCircle size={16} /> Danger zone
+            </h2>
+            <p class="hint">
+              Permanently delete Document Finder's downloaded AI models, caches, and run logs — for
+              a clean uninstall. Your document library is kept unless you tick the box below.
+            </p>
+            <label
+              style={{
+                display: "flex",
+                "align-items": "flex-start",
+                gap: "8px",
+                "font-size": "12px",
+                margin: "10px 0",
+                color: "var(--bad)",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={purgeLibrary()}
+                onChange={(e) => setPurgeLibrary(e.currentTarget.checked)}
+                style={{ "margin-top": "2px" }}
+              />
+              <span style={{ flex: 1 }}>
+                Also delete my document library (downloaded PDFs/EPUBs and search databases). This
+                cannot be undone.
+              </span>
+            </label>
+            <button
+              class="df-btn sm"
+              disabled={purging()}
+              onClick={() => void handlePurge()}
+              style={{ background: "var(--bad-soft)", color: "var(--bad)" }}
+            >
+              <Show when={purging()} fallback={<Trash2 size={12} />}>
+                <Loader2 size={12} class="animate-spin" />
+              </Show>
+              Erase app data
+            </button>
+            <Show when={purgeMsg()}>
+              <p class="hint" style={{ "margin-top": "8px" }}>
+                {purgeMsg()}
+              </p>
             </Show>
           </section>
 

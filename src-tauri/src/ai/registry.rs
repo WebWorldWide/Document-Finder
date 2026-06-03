@@ -37,10 +37,12 @@ pub struct ModelEntry {
     /// Approximate size in bytes — for UI progress denominator before
     /// the server reports Content-Length.
     pub approx_bytes: u64,
-    /// Pinned SHA256 of the file. Verified after download. Empty string
-    /// disables verification — but every shipping entry has one pinned (taken
-    /// from the file's HuggingFace LFS ETag), so a tampered or corrupted
-    /// download is rejected and re-fetched.
+    /// Pinned SHA256 of the file, verified after download so a tampered or
+    /// corrupted file is rejected and re-fetched (taken from the file's
+    /// HuggingFace LFS ETag). An empty string would disable verification, so the
+    /// `every_entry_pins_a_valid_sha256` test enforces that every shipping entry
+    /// pins a real 64-hex-char hash — you can't accidentally ship an unpinned
+    /// (unverified) model.
     pub sha256: &'static str,
     /// SPDX license identifier of the model weights (e.g. "Apache-2.0").
     /// The catalog ships only permissive licenses compatible with this app's
@@ -110,4 +112,30 @@ pub fn find(id: &str) -> Option<&'static ModelEntry> {
 
 pub fn default_for(kind: ModelKind) -> Option<&'static ModelEntry> {
     REGISTRY.iter().find(|m| m.kind == kind && m.is_default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every catalog entry must pin a real SHA256. An empty (or malformed) pin
+    /// silently disables post-download verification in `downloader::download`,
+    /// so this guards against ever shipping an unverified model.
+    #[test]
+    fn every_entry_pins_a_valid_sha256() {
+        for entry in REGISTRY.iter() {
+            assert_eq!(
+                entry.sha256.len(),
+                64,
+                "model '{}' must pin a 64-hex-char SHA256 (got {} chars); an empty/short pin disables download verification",
+                entry.id,
+                entry.sha256.len()
+            );
+            assert!(
+                entry.sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+                "model '{}' SHA256 must be lowercase hex",
+                entry.id
+            );
+        }
+    }
 }

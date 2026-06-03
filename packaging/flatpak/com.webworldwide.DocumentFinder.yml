@@ -1,7 +1,16 @@
 id: com.webworldwide.DocumentFinder
-runtime: org.freedesktop.Platform
-runtime-version: "24.08"
-sdk: org.freedesktop.Sdk
+# A Tauri 2 app links libwebkit2gtk-4.1.so.0 / libjavascriptcoregtk-4.1.so.0 at
+# runtime. The bare org.freedesktop.Platform runtime does NOT ship WebKitGTK, so
+# building against it produces a bundle that installs but aborts on launch with
+# "cannot open shared object file: libwebkit2gtk-4.1.so.0". The GNOME runtime
+# bundles WebKitGTK, so we build against it instead (this is what the official
+# Tauri Flatpak guide does). The runtime-version MUST be one that still ships
+# webkit2gtk-4.1; the `ldd` smoke step in release.yml fails the release loudly if
+# a chosen runtime is missing the library, so bump this in lockstep with the
+# `flatpak install` line in release.yml if WebKitGTK ever moves.
+runtime: org.gnome.Platform
+runtime-version: "48"
+sdk: org.gnome.Sdk
 command: document-finder
 
 finish-args:

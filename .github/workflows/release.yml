@@ -35,9 +35,54 @@ jobs:
             exit 1
           fi
 
+  # Create exactly ONE draft Release for this tag up front. The 3-OS build matrix
+  # (fail-fast: false) would otherwise each invoke tauri-action's non-atomic
+  # check-then-create and can race into duplicate drafts — or a 422 that drops a
+  # platform's installers from the release (tauri-apps/tauri-action#914). Each
+  # build leg uploads to this release by id instead of creating its own.
+  create-release:
+    name: Create draft release
+    needs: verify-version
+    runs-on: ubuntu-24.04
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+    steps:
+      - name: Create (or reuse) the draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Reuse an existing draft if this workflow is re-run on the same tag
+          # (the /releases list includes drafts for authenticated write access).
+          release_id=$(gh api "repos/$GH_REPO/releases" --paginate \
+            --jq "[.[] | select(.tag_name==\"$GITHUB_REF_NAME\")][0].id // empty")
+          if [ -z "$release_id" ]; then
+            printf '%s\n' \
+              'Native installers for **macOS** (Apple Silicon `.dmg`), **Windows** (`.exe`, `.msi`), and **Linux** (Flatpak, `.deb`, `.rpm`, `.AppImage`).' \
+              '' \
+              'The apps are **unsigned** (the macOS build is **ad-hoc signed**, which removes the "app is damaged" error). First launch:' \
+              '' \
+              '- **macOS** — right-click the app → **Open**, then confirm. If macOS still refuses, clear the download quarantine:' \
+              '  ```' \
+              '  xattr -dr com.apple.quarantine "/Applications/Document Finder.app"' \
+              '  ```' \
+              '- **Windows** — SmartScreen → **More info** → **Run anyway**.' \
+              '- **Linux** — the `.deb`/`.rpm`/AppImage need glibc 2.39+ (built on Ubuntu 24.04); the Flatpak ships its own runtime.' \
+              > notes.md
+            release_id=$(gh api -X POST "repos/$GH_REPO/releases" \
+              -f tag_name="$GITHUB_REF_NAME" \
+              -f name="Document Finder $GITHUB_REF_NAME" \
+              -F body=@notes.md \
+              -F draft=true -F prerelease=false \
+              --jq '.id')
+          fi
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build ${{ matrix.platform.label }}
-    needs: verify-version
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -111,17 +156,16 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Ad-hoc sign the macOS bundle (also pinned in tauri.conf.json). On
+          # Apple Silicon an unsigned, downloaded (quarantined) arm64 app fails
+          # Gatekeeper with the unrecoverable "is damaged" verdict; '-' is the
+          # ad-hoc pseudo-identity (no Apple Developer account needed). No-op on
+          # Windows/Linux legs.
+          APPLE_SIGNING_IDENTITY: "-"
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Document Finder ${{ github.ref_name }}"
-          releaseBody: |
-            Native installers for **macOS** (Apple Silicon), **Windows** (`.exe`, `.msi`), and **Linux** (Flatpak, `.deb`, `.AppImage`).
-
-            Builds are **unsigned** — on first launch, allow the app via your OS:
-            macOS → System Settings → Privacy & Security → **Open Anyway**;
-            Windows → SmartScreen → **More info** → **Run anyway**.
-          releaseDraft: true
-          prerelease: false
+          # Upload to the single pre-created draft by id — no tagName/releaseName
+          # here, so the matrix legs can't race to create competing drafts.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.platform.args }}
 
   # Repackage the Linux .deb into a Flatpak bundle and attach it to the draft
@@ -138,10 +182,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libgdk-pixbuf-2.0-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libappindicator3-dev librsvg2-dev patchelf \
             cmake clang flatpak flatpak-builder
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+          # GNOME runtime (not the bare freedesktop one): only the GNOME runtime
+          # bundles WebKitGTK, which the Tauri app dlopen's at launch. Keep this
+          # version in lockstep with runtime-version in the Flatpak manifest.
+          flatpak install --user -y flathub org.gnome.Platform//48 org.gnome.Sdk//48
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -170,7 +223,19 @@ jobs:
       - name: Build Flatpak bundle
         working-directory: packaging/flatpak
         run: |
+          set -euo pipefail
           flatpak-builder --user --force-clean --repo=repo build-dir com.webworldwide.DocumentFinder.yml
+          # Smoke test: a successful build does NOT prove the runtime provides
+          # every shared library the app dlopen's (e.g. libwebkit2gtk-4.1). Run
+          # ldd inside the build environment and fail loudly on any unresolved
+          # lib, so a wrong/EOL runtime can never ship a dead-on-arrival bundle.
+          echo "Verifying shared-library resolution inside the runtime…"
+          ldd_out=$(flatpak-builder --run build-dir com.webworldwide.DocumentFinder.yml ldd /app/bin/document-finder)
+          echo "$ldd_out"
+          if echo "$ldd_out" | grep -q "not found"; then
+            echo "::error::Flatpak runtime is missing a shared library the app needs (see 'not found' above) — bump runtime-version or fix the manifest."
+            exit 1
+          fi
           flatpak build-bundle repo "Document Finder_${{ github.ref_name }}_x86_64.flatpak" com.webworldwide.DocumentFinder
 
       - name: Upload Flatpak to the draft release
