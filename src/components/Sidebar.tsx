@@ -5,7 +5,7 @@ import { uiStore } from "@/stores/ui";
 import { settings } from "@/stores/settings";
 import { runStore } from "@/stores/run";
 import { api } from "@/lib/tauri";
-import { formatBytes } from "@/lib/utils";
+import { compareLibraryRecency, formatBytes } from "@/lib/utils";
 
 const navItems = [
   { id: "find" as const, label: "Discover", icon: Compass },
@@ -28,7 +28,10 @@ export default function Sidebar() {
   const focusMain = () =>
     requestAnimationFrame(() => (document.getElementById("main-content") as HTMLElement)?.focus());
 
-  const recent = () => uiStore.knownLibraries.slice(0, 5);
+  const recent = () =>
+    [...uiStore.knownLibraries]
+      .sort((a, b) => compareLibraryRecency(a.name, b.name))
+      .slice(0, 5);
 
   return (
     <nav class="df-sidebar" aria-label="Primary">

@@ -13,10 +13,12 @@ use fastembed::{EmbeddingModel as FastEmbedModel, InitOptions, TextEmbedding};
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 use super::embed_worker::{WorkerRequest, WorkerResponse, WORKER_ARG};
@@ -87,27 +89,55 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
 // Worker client — manages the child process and the JSON request/response IPC.
 // =============================================================================
 
+/// How long to wait for a worker response before treating an alive-but-silent
+/// worker as a crash. `Warm` includes the first-run model download, so it gets a
+/// generous budget; `Embed` is pure inference on an already-loaded model and is
+/// quick. Bounding the wait is what turns a *hang* (ort deadlock, a black-hole
+/// connection during the first download) into the same graceful degradation to
+/// lexical ranking that a native *abort* already gets — instead of an unbounded
+/// blocked thread pinning the client mutex for the session.
+const WARM_TIMEOUT: Duration = Duration::from_secs(300);
+const EMBED_TIMEOUT: Duration = Duration::from_secs(120);
+
+fn request_timeout(req: &WorkerRequest) -> Duration {
+    match req {
+        WorkerRequest::Warm => WARM_TIMEOUT,
+        WorkerRequest::Embed { .. } => EMBED_TIMEOUT,
+    }
+}
+
 struct WorkerClient {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    /// Response lines drained off the worker's stdout by `stdout_thread`. A
+    /// disconnected channel means stdout hit EOF — the worker died.
+    responses: Receiver<String>,
     /// Last ~64 stderr lines (phase markers) for crash forensics.
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    stdout_thread: Option<JoinHandle<()>>,
     stderr_thread: Option<JoinHandle<()>>,
 }
 
 impl WorkerClient {
-    /// Send one request, read one response. `Err(())` means the worker is dead
-    /// (write failed or stdout hit EOF) — the caller treats that as a crash.
-    fn request(&mut self, req: &WorkerRequest) -> std::result::Result<WorkerResponse, ()> {
+    /// Send one request and wait up to `timeout` for its response. `Err(())`
+    /// means the worker is unusable — it died (channel disconnected / write
+    /// failed), hung (no response within `timeout`), or sent an unparseable
+    /// line. The caller treats all of these identically: reap it, latch
+    /// `UNAVAILABLE`, and degrade to lexical ranking.
+    fn request(
+        &mut self,
+        req: &WorkerRequest,
+        timeout: Duration,
+    ) -> std::result::Result<WorkerResponse, ()> {
         let line = serde_json::to_string(req).map_err(|_| ())?;
         if writeln!(self.stdin, "{line}").is_err() || self.stdin.flush().is_err() {
             return Err(());
         }
-        let mut resp = String::new();
-        match self.stdout.read_line(&mut resp) {
-            Ok(0) | Err(_) => Err(()), // EOF / read error → worker died
-            Ok(_) => serde_json::from_str(&resp).map_err(|_| ()),
+        match self.responses.recv_timeout(timeout) {
+            Ok(resp) => serde_json::from_str(&resp).map_err(|_| ()),
+            // Timeout (worker hung) or Disconnected (stdout closed = worker
+            // died) — both mean the worker can no longer be trusted.
+            Err(_) => Err(()),
         }
     }
 }
@@ -136,8 +166,26 @@ fn spawn_worker(cache_dir: &Path) -> Result<WorkerClient> {
         .spawn()
         .context("spawn embedding worker")?;
     let stdin = child.stdin.take().context("embedding worker stdin")?;
-    let stdout = BufReader::new(child.stdout.take().context("embedding worker stdout")?);
+    let stdout = child.stdout.take().context("embedding worker stdout")?;
     let stderr = child.stderr.take().context("embedding worker stderr")?;
+
+    // Drain stdout on a dedicated thread, forwarding whole response lines over a
+    // channel. This lets `request` apply a `recv_timeout` (so an alive-but-silent
+    // worker can't block the caller — and the held client mutex — forever) and
+    // keeps the worker from ever stalling on a full stdout pipe.
+    let (tx, responses) = channel::<String>();
+    let stdout_thread = std::thread::spawn(move || {
+        for line in BufReader::new(stdout)
+            .lines()
+            .map_while(std::result::Result::ok)
+        {
+            if tx.send(line).is_err() {
+                break; // receiver gone (client dropped) — stop draining
+            }
+        }
+        // Loop end drops `tx`; a waiting `recv_timeout` then sees Disconnected,
+        // i.e. the worker's stdout closed (it died).
+    });
 
     let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(64)));
     let tail = stderr_tail.clone();
@@ -157,8 +205,9 @@ fn spawn_worker(cache_dir: &Path) -> Result<WorkerClient> {
     Ok(WorkerClient {
         child,
         stdin,
-        stdout,
+        responses,
         stderr_tail,
+        stdout_thread: Some(stdout_thread),
         stderr_thread: Some(stderr_thread),
     })
 }
@@ -174,14 +223,14 @@ fn worker_request(cache_dir: &Path, req: &WorkerRequest) -> Result<WorkerRespons
         *guard = Some(spawn_worker(cache_dir)?);
     }
     let client = guard.as_mut().expect("spawned just above");
-    match client.request(req) {
+    match client.request(req, request_timeout(req)) {
         Ok(WorkerResponse::Error { message }) => {
             // Recoverable worker-side failure — keep the worker alive for retry.
             anyhow::bail!("embedding failed: {message}")
         }
         Ok(resp) => Ok(resp),
         Err(()) => {
-            // Worker died (likely a native ONNX abort). Capture + latch.
+            // Worker died (native abort) or hung past its deadline. Capture + latch.
             let dead = guard.take();
             UNAVAILABLE.store(true, Ordering::SeqCst);
             LOADED.store(false, Ordering::SeqCst);
@@ -197,11 +246,18 @@ fn worker_request(cache_dir: &Path, req: &WorkerRequest) -> Result<WorkerRespons
 /// Reap a dead worker and log where/why it died to the run log (the recoverable
 /// equivalent of the macOS `.ips` crash report).
 fn capture_worker_failure(mut client: WorkerClient) {
+    // The worker either died on its own (native abort) or hung past its deadline;
+    // `kill` is a harmless no-op on an already-exited child and, for a hang,
+    // guarantees the pipes close so the drain threads below can finish.
+    let _ = client.child.kill();
     let exit = match client.child.wait() {
         Ok(status) => exit_desc(status),
         Err(e) => format!("wait failed: {e}"),
     };
-    // Child is reaped → its stderr pipe is closed → the drain thread finishes.
+    // Child is reaped → its stdout/stderr pipes close → the drain threads finish.
+    if let Some(t) = client.stdout_thread.take() {
+        let _ = t.join();
+    }
     if let Some(t) = client.stderr_thread.take() {
         let _ = t.join();
     }

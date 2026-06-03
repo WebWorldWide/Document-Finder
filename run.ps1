@@ -43,6 +43,15 @@ if (-not (Test-Path "node_modules")) {
     if ($LASTEXITCODE -ne 0) { throw "pnpm install failed" }
 }
 
+# Stop any running instance BEFORE building. On Windows the linker cannot
+# overwrite a currently-executing .exe (the OS locks it), so a build while the
+# app from a prior run is still open fails with "Access is denied (os error 5)".
+# Stopping first also means the launch below cleanly replaces the old instance.
+Write-Info "Stopping any running Document Finder instance..."
+$null = Get-Process -Name "document-finder","Document Finder" -ErrorAction SilentlyContinue |
+    ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Milliseconds 500
+
 # Build --------------------------------------------------------------------
 Write-Info "Building app (parallel codegen - should pin all CPU cores)..."
 # Invoke the Tauri CLI's Node entry directly instead of via `pnpm exec`. pnpm
@@ -63,12 +72,6 @@ if (-not $exePath) {
     exit 1
 }
 Write-OK "Built $exePath"
-
-# Stop any running instance so the new build replaces it cleanly.
-Write-Info "Stopping any running Document Finder instance..."
-$null = Get-Process -Name "document-finder","Document Finder" -ErrorAction SilentlyContinue |
-    ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
-Start-Sleep -Milliseconds 500
 
 # Launch -------------------------------------------------------------------
 Write-Info "Launching..."

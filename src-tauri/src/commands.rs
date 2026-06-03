@@ -55,6 +55,28 @@ fn confinement_root(state: &AppState) -> Result<PathBuf, String> {
     }
 }
 
+/// Reject directories too broad to serve as the confinement root. That root is
+/// the deletion boundary for `delete_library`, `export_library_zip`, and
+/// `purge_all_data(include_library)`, so letting a (renderer-supplied) root be a
+/// drive/filesystem root, the home dir, or the Documents dir itself would turn a
+/// later purge into a recursive wipe of unrelated user data. A dedicated
+/// *subfolder* is fine. `path` is expected to be already canonicalized.
+fn is_sensitive_root(path: &Path) -> bool {
+    // Filesystem root or a bare drive root (e.g. `C:\`) has no parent.
+    if path.parent().is_none() {
+        return true;
+    }
+    for special in [dirs::home_dir(), dirs::document_dir()]
+        .into_iter()
+        .flatten()
+    {
+        if special.canonicalize().ok().as_deref() == Some(path) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Persist + validate the user's chosen library root. Called by the frontend on
 /// startup and whenever the Settings library path changes, so the security
 /// envelope for open/export/delete matches where downloads actually go.
@@ -85,6 +107,12 @@ pub fn set_library_root(state: State<'_, AppState>, path: String) -> Result<Stri
     let canonical = raw
         .canonicalize()
         .map_err(|e| format!("Could not resolve library folder '{}': {e}", raw.display()))?;
+    if is_sensitive_root(&canonical) {
+        return Err(format!(
+            "'{}' is too broad to use as the library folder — choose a dedicated subfolder.",
+            canonical.display()
+        ));
+    }
     let mut root = state.library_root.lock().unwrap_or_else(|e| e.into_inner());
     *root = Some(canonical.clone());
     Ok(canonical.to_string_lossy().to_string())
@@ -205,11 +233,21 @@ fn folder_size_bytes(path: &Path) -> u64 {
 }
 
 #[tauri::command]
-pub async fn list_libraries(root: String) -> Result<Vec<LibraryInfo>, String> {
+pub async fn list_libraries(
+    state: State<'_, AppState>,
+    root: String,
+) -> Result<Vec<LibraryInfo>, String> {
+    // Confine the scanned root to the configured library root. Without this a
+    // compromised/buggy renderer could enumerate + stat-walk arbitrary
+    // directories and induce a `library.db` write into any folder holding a
+    // legacy manifest.json (the migration path below). Mirrors the confinement
+    // every other library command applies.
+    let confined = confinement_root(&state)?;
     let root = PathBuf::from(root);
     if !root.exists() {
         return Ok(Vec::new());
     }
+    let root = safe_within_root(&root, &confined)?;
     let mut out = Vec::new();
     for entry in std::fs::read_dir(&root).map_err(|e| e.to_string())? {
         let Ok(entry) = entry else { continue };
@@ -366,9 +404,26 @@ pub fn export_library_zip(
     if !src.is_dir() {
         return Err(format!("not a folder: {}", args.folder));
     }
+    // The destination is legitimately OUTSIDE the library root (the user picks
+    // it via the native save dialog — Desktop, Downloads, etc.), so it can't be
+    // confined like the source. But it still arrives from the renderer, so don't
+    // let it fabricate arbitrary directory trees or clobber a non-file: require
+    // an absolute path whose parent folder already exists, and a plain-file (or
+    // absent) target. This removes the prior `create_dir_all` write primitive.
     let dest_path = PathBuf::from(&args.dest);
-    if let Some(parent) = dest_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    if !dest_path.is_absolute() {
+        return Err("Export destination must be an absolute path.".into());
+    }
+    match dest_path.parent() {
+        Some(parent) if parent.is_dir() => {}
+        _ => {
+            return Err(
+                "Export destination's folder doesn't exist — pick an existing folder.".into(),
+            )
+        }
+    }
+    if dest_path.exists() && !dest_path.is_file() {
+        return Err("Export destination already exists and isn't a file.".into());
     }
     let file = std::fs::File::create(&dest_path).map_err(|e| e.to_string())?;
     let mut zip_writer = zip::ZipWriter::new(file);
@@ -508,11 +563,21 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
+        // explorer.exe `/select,` does not understand the `\\?\` verbatim prefix
+        // that `canonicalize()` returns — handed one it fails to highlight the
+        // target and opens the default folder instead. Strip the prefix back to
+        // a normal Win32 path.
+        let s = p.to_string_lossy();
+        let simplified = s
+            .strip_prefix(r"\\?\UNC\")
+            .map(|rest| format!(r"\\{rest}"))
+            .or_else(|| s.strip_prefix(r"\\?\").map(str::to_string))
+            .unwrap_or_else(|| s.to_string());
         // Pass /select and the path as two separate args so commas in the
         // path cannot split the argument and confuse Explorer's parser.
         std::process::Command::new("explorer")
             .arg("/select,")
-            .arg(&p)
+            .arg(&simplified)
             .spawn()
             .map_err(|e| e.to_string())?;
         Ok(())
@@ -914,6 +979,16 @@ pub async fn purge_all_data(
     match app.path().app_data_dir() {
         Ok(dir) => targets.push(dir),
         Err(e) => tracing::warn!("purge_all_data: no app_data_dir: {e}"),
+    }
+    // 1b. Local app data dir (identifier-keyed). On Windows this is the
+    //     %LOCALAPPDATA% WebView2/EBWebView store (localStorage, IndexedDB, HTTP
+    //     cache) — a *different* folder from the Roaming app_data_dir above, so
+    //     without this the in-app purge silently leaves it behind (matching
+    //     scripts/uninstall.ps1). On macOS/Linux it resolves to the same path as
+    //     app_data_dir, so the loop's is_dir() guard just skips the duplicate.
+    match app.path().app_local_data_dir() {
+        Ok(dir) => targets.push(dir),
+        Err(e) => tracing::warn!("purge_all_data: no app_local_data_dir: {e}"),
     }
     // 2. Run-log directory (a different base dir on every OS).
     if let Some(log_dir) = runlog::log_path().and_then(|p| p.parent().map(Path::to_path_buf)) {

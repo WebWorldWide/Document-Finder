@@ -87,13 +87,18 @@ fn extract_epub_inner(path: &Path) -> anyhow::Result<String> {
         if entry.size() > MAX_EPUB_ENTRY_BYTES {
             continue;
         }
-        // …and still cap the actual read in case the declared size lied.
+        // …and still cap the actual read — bounded by the *remaining* total
+        // budget, not just the per-entry cap, so a final oversized entry can't
+        // push the buffered text past MAX_EPUB_TOTAL_BYTES (the loop only
+        // re-checks `total` between entries, so the cap was previously a soft
+        // limit that one extra ~64 MB entry could overshoot).
+        let remaining = MAX_EPUB_TOTAL_BYTES.saturating_sub(total) as u64;
+        if remaining == 0 {
+            break;
+        }
+        let read_cap = remaining.min(MAX_EPUB_ENTRY_BYTES);
         let mut buf = String::new();
-        if entry
-            .take(MAX_EPUB_ENTRY_BYTES)
-            .read_to_string(&mut buf)
-            .is_ok()
-        {
+        if entry.take(read_cap).read_to_string(&mut buf).is_ok() {
             let stripped = strip_html(&buf);
             total += stripped.len();
             chunks.push(stripped);

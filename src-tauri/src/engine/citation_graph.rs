@@ -73,10 +73,13 @@ fn doi_from(doc: &Document) -> Option<String> {
 
 /// Process-wide memoization of S2 fetches keyed by `(endpoint_kind, doi)`.
 /// Refs/cites are immutable once published (papers don't un-cite each other),
-/// so any later query that looks at the same DOI gets a free hit. Bounded by
-/// unique DOIs ever queried this process — practically a few hundred.
+/// so any later query that looks at the same DOI gets a free hit. Capped at
+/// `FETCH_CACHE_MAX` entries (cleared wholesale on overflow) so a long-lived
+/// session running many distinct queries can't grow it without bound.
 type FetchCache = RwLock<HashMap<(&'static str, String), Vec<String>>>;
 static FETCH_CACHE: Lazy<FetchCache> = Lazy::new(|| RwLock::new(HashMap::new()));
+/// Upper bound on memoized `(kind, doi)` entries before the cache is cleared.
+const FETCH_CACHE_MAX: usize = 4096;
 
 async fn fetch_dois(client: &reqwest::Client, template: &str, paper_doi: &str) -> Vec<String> {
     let kind = if template == REFERENCES_URL {
@@ -114,6 +117,12 @@ async fn fetch_dois(client: &reqwest::Client, template: &str, paper_doi: &str) -
         .map(|d| d.to_lowercase())
         .collect();
     if let Ok(mut g) = FETCH_CACHE.write() {
+        // Bound process-lifetime growth: clear wholesale on overflow rather than
+        // tracking per-entry LRU — refs/cites are only reused within a run's
+        // top-K fanout, so the occasional cold start after a clear is cheap.
+        if g.len() >= FETCH_CACHE_MAX {
+            g.clear();
+        }
         g.insert(key, dois.clone());
     }
     dois

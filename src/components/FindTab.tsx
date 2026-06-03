@@ -209,6 +209,8 @@ export default function FindTab() {
         title: c.title,
         status: "done" as const,
         ftype: ftypeFromPath(c.local_path),
+        // Carry the on-disk size so DocRow can render it next to the checkmark.
+        bytes: c.bytes,
       }));
 
   const issues = createMemo(() => {

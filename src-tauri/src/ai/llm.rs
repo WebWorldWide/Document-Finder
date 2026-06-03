@@ -21,6 +21,7 @@ use llama_cpp_2::sampling::LlamaSampler;
 use std::path::Path;
 use std::sync::{Arc, OnceLock, RwLock};
 use tokio::sync::Mutex as AsyncMutex;
+use tokio_util::sync::CancellationToken;
 
 /// One backend per process — initializing twice is undefined behavior.
 fn backend() -> anyhow::Result<&'static LlamaBackend> {
@@ -52,8 +53,18 @@ impl LlmModel {
         Ok(Self { model })
     }
 
-    /// Generate up to `max_tokens` from `prompt`. Stops early on EOS.
-    pub fn generate(&self, prompt: &str, max_tokens: usize) -> anyhow::Result<String> {
+    /// Generate up to `max_tokens` from `prompt`. Stops early on EOS, or when
+    /// `cancel` fires. The cancel check matters because this runs on a blocking
+    /// thread holding the model mutex: without it, a Stop (or a timed-out
+    /// `select!` in the caller) detaches the task but the decode keeps running to
+    /// the full token budget, pinning the singleton mutex and a blocking-pool
+    /// thread until it finishes. Checking per token bounds that to ~one decode.
+    pub fn generate(
+        &self,
+        prompt: &str,
+        max_tokens: usize,
+        cancel: &CancellationToken,
+    ) -> anyhow::Result<String> {
         let backend = backend()?;
         let mut ctx_params = LlamaContextParams::default();
         ctx_params = ctx_params.with_n_ctx(std::num::NonZeroU32::new(2048));
@@ -103,6 +114,11 @@ impl LlmModel {
         // substitute, so the explicit counter is intentional.
         #[allow(clippy::explicit_counter_loop)]
         for _ in 0..max_tokens {
+            // Cooperative cancellation: a detached/timed-out caller can't abort
+            // this blocking thread, so bail here to release the model mutex.
+            if cancel.is_cancelled() {
+                break;
+            }
             let next = sampler.sample(&ctx, last_logits_idx);
             sampler.accept(next);
 
@@ -132,8 +148,8 @@ impl LlmModel {
     /// Yes/no classification — generates up to 4 tokens and parses the
     /// leading word as a boolean. "y", "yes" → true; "n", "no" → false;
     /// anything else also → false (conservative).
-    pub fn yes_no(&self, prompt: &str) -> anyhow::Result<bool> {
-        let raw = self.generate(prompt, 6)?;
+    pub fn yes_no(&self, prompt: &str, cancel: &CancellationToken) -> anyhow::Result<bool> {
+        let raw = self.generate(prompt, 6, cancel)?;
         Ok(parse_yes(&raw))
     }
 }

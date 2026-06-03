@@ -57,14 +57,29 @@ pub fn extract_doi(s: &str) -> Option<String> {
 }
 
 /// Title normalization for fuzzy matching. Lowercases, strips punctuation,
-/// and collapses whitespace. Truncated to 80 chars so trivially different
-/// suffixes still collide ("Foo: a study" vs "Foo: a study (revised)").
+/// and collapses whitespace. Truncated to 200 chars so trivially different
+/// suffixes still collide ("Foo: a study" vs "Foo: a study (revised)") without
+/// false-merging genuinely distinct long titles that merely share a leading
+/// phrase (common in survey/review papers, which routinely exceed 80 chars).
 pub fn normalize_title(title: &str) -> String {
     let lower = title.to_lowercase();
     let no_punct = NON_ALNUM_RE.replace_all(&lower, " ");
     let collapsed = WHITESPACE_RE.replace_all(&no_punct, " ");
-    let trimmed: String = collapsed.trim().chars().take(80).collect();
+    let trimmed: String = collapsed.trim().chars().take(200).collect();
     trimmed
+}
+
+/// Guard for the author/year backstop (step 4 of `add`): two papers sharing only
+/// a common first author, year, and generic 3-word title prefix ("the role of
+/// …") must NOT be merged. Require the titles to actually corroborate — one
+/// normalized title being a prefix of the other (the reissue / "Revised Edition"
+/// case the backstop is meant to catch).
+fn titles_corroborate(a: &str, b: &str) -> bool {
+    let (na, nb) = (normalize_title(a), normalize_title(b));
+    if na.is_empty() || nb.is_empty() {
+        return false;
+    }
+    na.starts_with(&nb) || nb.starts_with(&na)
 }
 
 fn author_year_fingerprint(doc: &Document) -> Option<String> {
@@ -155,15 +170,20 @@ impl Deduplicator {
         }
 
         // 4. (author, year, title-prefix) fingerprint — last-resort backstop.
+        //    Only accept it when the full titles corroborate, so distinct papers
+        //    that merely share an author, year, and generic 3-word prefix aren't
+        //    collapsed (which would silently drop the second from the results).
         let ay = author_year_fingerprint(&doc);
         if let Some(ref ay_key) = ay {
             if let Some(&idx) = self.by_author_year.get(ay_key) {
-                self.docs[idx]
-                    .source_ranks
-                    .push((source_id.to_string(), rank));
-                self.by_url.insert(doc.url.clone(), idx);
-                self.by_title.insert(norm, idx);
-                return AddOutcome::Merged(idx);
+                if titles_corroborate(&doc.title, &self.docs[idx].doc.title) {
+                    self.docs[idx]
+                        .source_ranks
+                        .push((source_id.to_string(), rank));
+                    self.by_url.insert(doc.url.clone(), idx);
+                    self.by_title.insert(norm, idx);
+                    return AddOutcome::Merged(idx);
+                }
             }
         }
 
@@ -177,7 +197,10 @@ impl Deduplicator {
             self.by_title.insert(norm, idx);
         }
         if let Some(ay_key) = ay {
-            self.by_author_year.insert(ay_key, idx);
+            // Keep the FIRST doc as the fingerprint anchor; a later doc that
+            // shared the fingerprint but failed title corroboration must not
+            // hijack the bucket away from the original.
+            self.by_author_year.entry(ay_key).or_insert(idx);
         }
         self.docs.push(MergedDoc {
             doc,

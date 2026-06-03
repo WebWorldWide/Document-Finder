@@ -45,10 +45,18 @@ export default function MetaSearchHealthBar() {
   // inside onMount — by then the owner scope has exited and the cleanup would
   // never run, leaking the Tauri listener across remounts).
   let unlisten: UnlistenFn | undefined;
-  onCleanup(() => unlisten?.());
+  // Guard against unmount during the await below: if the component is disposed
+  // before listen() resolves, onCleanup runs while `unlisten` is still
+  // undefined (a no-op), and the handle that resolves afterwards would leak. The
+  // `disposed` flag lets us tear it down immediately instead.
+  let disposed = false;
+  onCleanup(() => {
+    disposed = true;
+    unlisten?.();
+  });
 
   onMount(async () => {
-    unlisten = await listen<MetaSearchHealthPayload>("df:meta_search_health", (ev) => {
+    const u = await listen<MetaSearchHealthPayload>("df:meta_search_health", (ev) => {
       const payload = ev.payload;
       setBackends((prev) => {
         const idx = prev.findIndex((b) => b.backend === payload.backend);
@@ -61,6 +69,8 @@ export default function MetaSearchHealthBar() {
         return [...prev, entry];
       });
     });
+    if (disposed) u();
+    else unlisten = u;
   });
 
   return (

@@ -50,29 +50,44 @@ fi
 echo -e "${BLUE}→ Building app (parallel codegen — should pin all CPU cores)...${NC}"
 node node_modules/@tauri-apps/cli/tauri.js build -- --profile release-fast
 
-APP_PATH="src-tauri/target/release-fast/bundle/macos/Document Finder.app"
-if [ ! -d "$APP_PATH" ]; then
-  echo -e "${RED}✗ Build finished but '$APP_PATH' not found.${NC}"
-  exit 1
-fi
-
-# Stop any running instance so the new build replaces it cleanly.
-# `pkill` returns 1 when nothing matched — that's fine, just means the app
-# wasn't running. Mute the exit code without disabling errexit globally.
-echo -e "${BLUE}→ Stopping any running Document Finder instance...${NC}"
-pkill -x "Document Finder" 2>/dev/null || true
-# Give the process a beat to release the bundle before we overwrite it.
-sleep 1
-
-# Install to /Applications so the new build *replaces* the old one. Without
-# this, double-clicking the previously installed copy would still launch
-# stale code and the changes wouldn't appear to "take effect".
-echo -e "${BLUE}→ Installing to /Applications...${NC}"
-rm -rf "/Applications/Document Finder.app"
-cp -R "$APP_PATH" /Applications/
-echo -e "${GREEN}✓ Installed /Applications/Document Finder.app${NC}"
-
-# Launch -------------------------------------------------------------------
-echo -e "${BLUE}→ Launching...${NC}"
-open -a "Document Finder"
+# Locate the build output and (re)launch — per-OS, since Tauri emits a
+# .app on macOS but a bare ELF binary on Linux (no /Applications, no `open`).
+# `pkill` returns 1 when nothing matched — fine, just means the app wasn't
+# running — so mute its exit code without disabling errexit globally.
+case "$(uname -s)" in
+  Darwin)
+    APP_PATH="src-tauri/target/release-fast/bundle/macos/Document Finder.app"
+    if [ ! -d "$APP_PATH" ]; then
+      echo -e "${RED}✗ Build finished but '$APP_PATH' not found.${NC}"
+      exit 1
+    fi
+    echo -e "${BLUE}→ Stopping any running Document Finder instance...${NC}"
+    pkill -x "Document Finder" 2>/dev/null || true
+    # Give the process a beat to release the bundle before we overwrite it.
+    sleep 1
+    # Install to /Applications so the new build *replaces* the old one. Without
+    # this, double-clicking the previously installed copy would still launch
+    # stale code and the changes wouldn't appear to "take effect".
+    echo -e "${BLUE}→ Installing to /Applications...${NC}"
+    rm -rf "/Applications/Document Finder.app"
+    cp -R "$APP_PATH" /Applications/
+    echo -e "${GREEN}✓ Installed /Applications/Document Finder.app${NC}"
+    echo -e "${BLUE}→ Launching...${NC}"
+    open -a "Document Finder"
+    ;;
+  *)
+    # Linux: run the freshly built binary directly. The process name is
+    # `document-finder` (not "Document Finder", which is macOS-only).
+    BIN="src-tauri/target/release-fast/document-finder"
+    if [ ! -x "$BIN" ]; then
+      echo -e "${RED}✗ Build finished but '$BIN' not found.${NC}"
+      exit 1
+    fi
+    echo -e "${BLUE}→ Stopping any running Document Finder instance...${NC}"
+    pkill -x "document-finder" 2>/dev/null || true
+    sleep 1
+    echo -e "${BLUE}→ Launching...${NC}"
+    "$BIN" &
+    ;;
+esac
 echo -e "${GREEN}✓ Done${NC}"

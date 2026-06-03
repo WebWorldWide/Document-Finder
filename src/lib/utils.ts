@@ -17,6 +17,20 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
 }
 
+/** Compare two library folder names by the run timestamp the backend embeds as
+ *  a `{slug}-{secs}-{nanos}` suffix, newest first. Used for the "Recent" views,
+ *  where the backend's reverse-name ordering is dominated by the slug text and
+ *  doesn't reflect recency. Names without the suffix sort last. */
+export function compareLibraryRecency(a: string, b: string): number {
+  const ts = (name: string): [number, number] => {
+    const m = /-(\d+)-(\d+)$/.exec(name);
+    return m ? [Number(m[1]), Number(m[2])] : [0, 0];
+  };
+  const [as, an] = ts(a);
+  const [bs, bn] = ts(b);
+  return bs - as || bn - an;
+}
+
 export const SOURCE_LABELS: Record<string, string> = {
   arxiv: "arXiv",
   openalex: "OpenAlex",

@@ -32,12 +32,14 @@ const EPSILON: f32 = 0.001;
 /// than abstract matches because titles are densely informative.
 const TITLE_BOOST: f32 = 3.0;
 
-/// Tokenize a string into lowercased word tokens. Drops anything shorter
-/// than 3 chars (matches behavior of `query::parse_query` for stopword-light
-/// inputs).
+/// Tokenize a string into lowercased word tokens. Drops single-character noise
+/// but keeps short acronyms (e.g. "AI", "ML") — filtering by char count, not
+/// byte length, so multi-byte 2-char tokens aren't mis-measured. (A byte-length
+/// `>= 3` filter silently dropped every token of an all-2-char query, zeroing
+/// the whole TF-IDF column and rejecting every result.)
 fn tokenize(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric())
-        .filter(|t| t.len() >= 3)
+        .filter(|t| t.chars().count() >= 2)
         .map(str::to_lowercase)
         .collect()
 }
@@ -153,6 +155,12 @@ pub fn flag_rejects(mut ranked: Vec<RankedDoc>) -> Vec<RankedDoc> {
         return ranked;
     }
     let top_tfidf = ranked.iter().map(|r| r.tfidf).fold(0.0f32, f32::max);
+    // A uniformly-zero TF-IDF column (e.g. a query whose only tokens were too
+    // short to tokenize) carries no signal — rejecting on it would flag every
+    // doc and the run would download nothing. Leave the results unflagged.
+    if top_tfidf == 0.0 {
+        return ranked;
+    }
     let absolute_floor = 0.10f32;
     let relative_floor = top_tfidf * 0.05;
     let cutoff = absolute_floor.max(relative_floor);
