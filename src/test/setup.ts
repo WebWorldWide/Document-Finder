@@ -31,4 +31,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(async () => null),
   save: vi.fn(async () => null),
+  // Default to "cancelled" so a mounted confirm flow never proceeds in tests.
+  ask: vi.fn(async () => false),
+  confirm: vi.fn(async () => false),
 }));

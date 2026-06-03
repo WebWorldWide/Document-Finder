@@ -140,6 +140,11 @@ pub fn make_client() -> reqwest::Client {
         .user_agent(USER_AGENT)
         .timeout(std::time::Duration::from_secs(60))
         .redirect(safe_redirect_policy())
+        // Drop private/reserved IPs at resolution time for every request and
+        // redirect — closes the DNS-rebinding window and the private-hostname
+        // redirect gap the synchronous policy can't (IP-literal hosts like the
+        // in-process SearXNG bypass DNS and are unaffected).
+        .dns_resolver(Arc::new(crate::util::url_safety::PublicOnlyResolver))
         .build()
         .expect("http client")
 }
@@ -158,6 +163,10 @@ pub fn make_download_client() -> reqwest::Client {
         .connect_timeout(std::time::Duration::from_secs(20))
         .read_timeout(std::time::Duration::from_secs(60))
         .redirect(safe_redirect_policy())
+        // SSRF defence-in-depth: resolve to public IPs only, on every hop. See
+        // `make_client` — this is the layer that survives DNS rebinding because
+        // it sits in reqwest's own connection path, not a pre-flight lookup.
+        .dns_resolver(Arc::new(crate::util::url_safety::PublicOnlyResolver))
         .build()
         .expect("download http client")
 }
@@ -167,10 +176,12 @@ pub fn make_download_client() -> reqwest::Client {
 /// range. This blocks the common SSRF-via-redirect cases (a public URL 302-ing
 /// to `http://127.0.0.1` or the cloud-metadata `169.254.169.254`).
 ///
-/// A redirect to a *hostname* that DNS-resolves to a private IP isn't caught
-/// here — the policy closure is synchronous and can't resolve names. The
-/// initial-hop `util::url_safety::validate_download_url` async check covers that
-/// case for document downloads.
+/// This is the IP-literal layer; it can't resolve a redirect to a *hostname*
+/// that maps to a private IP (the closure is synchronous). That case — and the
+/// DNS-rebinding window between `validate_download_url` and the fetch — is now
+/// covered by [`crate::util::url_safety::PublicOnlyResolver`], installed on both
+/// HTTP clients, which filters private IPs inside reqwest's own resolution path
+/// for every hop. The two layers are complementary defence-in-depth.
 fn safe_redirect_policy() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
         if attempt.previous().len() >= 10 {
@@ -197,38 +208,90 @@ fn safe_redirect_policy() -> reqwest::redirect::Policy {
     })
 }
 
-/// Helper: GET with exponential backoff on 429/5xx. Uses longer waits for
-/// 429 specifically — APIs like Semantic Scholar set short rate-limit windows
-/// that recover quickly if you back off enough.
+const RETRY_MAX_ATTEMPTS: u32 = 4;
+/// Per-attempt backoff ceiling. The discovery wave aborts in-flight tasks at a
+/// ~60s deadline; capping each sleep (and honoring it for a server-sent
+/// `Retry-After`) keeps a single rate-limited source from sleeping past that
+/// deadline and yielding zero docs. The old `5 * attempt^2` schedule reached
+/// 5+20+45 = 70s, which blew the budget.
+const RETRY_CAP: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Parse a `Retry-After` header in its delta-seconds form. The HTTP-date form is
+/// not handled (it falls back to the computed backoff); the keyless APIs we hit
+/// (Semantic Scholar, archive.org) send delta-seconds.
+fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<std::time::Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(std::time::Duration::from_secs)
+}
+
+/// Additive jitter of up to `min(base, 3s)` on top of `base`, so concurrent
+/// retries against the same rate-limited host don't wake in lockstep and
+/// re-trip the limit. Adding (never subtracting) keeps a server-sent
+/// `Retry-After` floor intact. Seeded from the wall clock + url + attempt to
+/// decorrelate sibling tasks — the same dependency-free approach `searxng_pool`
+/// uses, so we avoid pulling in `rand`.
+fn backoff_with_jitter(base: std::time::Duration, url: &str, attempt: u32) -> std::time::Duration {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .hash(&mut h);
+    url.hash(&mut h);
+    attempt.hash(&mut h);
+    let window_ms = (base.as_millis().min(3000)) as u64;
+    let jitter = if window_ms == 0 {
+        std::time::Duration::ZERO
+    } else {
+        std::time::Duration::from_millis(h.finish() % (window_ms + 1))
+    };
+    base + jitter
+}
+
+/// Helper: GET with capped, jittered exponential backoff on 429/5xx. Honors a
+/// server-sent `Retry-After` as a floor (capped at [`RETRY_CAP`]). 429 gets a
+/// longer base wait — short retries against a rate-limit window just trip again.
 pub async fn get_with_retry(
     client: &reqwest::Client,
     url: &str,
     query: &[(&str, String)],
 ) -> anyhow::Result<reqwest::Response> {
     let mut delay = std::time::Duration::from_millis(2000);
-    for attempt in 1..=4 {
+    for attempt in 1..=RETRY_MAX_ATTEMPTS {
         let resp = client.get(url).query(query).send().await;
         match resp {
             Ok(r) => {
                 let status = r.status().as_u16();
-                if attempt < 4 && (status == 429 || (502..=504).contains(&status)) {
-                    // 429 gets a longer wait — short retries just trip again.
-                    let wait = if status == 429 {
-                        std::time::Duration::from_secs(5 * attempt as u64 * attempt as u64)
+                if attempt < RETRY_MAX_ATTEMPTS && (status == 429 || (502..=504).contains(&status))
+                {
+                    // Base wait: a server-sent Retry-After takes precedence;
+                    // otherwise 429 gets a linear bump and 5xx the doubling delay.
+                    let base = if status == 429 {
+                        std::time::Duration::from_secs(5 * attempt as u64)
                     } else {
                         delay
                     };
+                    let base = parse_retry_after(r.headers())
+                        .unwrap_or(base)
+                        .min(RETRY_CAP);
+                    let wait = backoff_with_jitter(base, url, attempt);
                     tracing::debug!("retry {} ({}): waiting {:?}", attempt, status, wait);
                     tokio::time::sleep(wait).await;
-                    delay *= 2;
+                    delay = (delay * 2).min(RETRY_CAP);
                     continue;
                 }
                 return Ok(r.error_for_status()?);
             }
-            Err(e) if attempt < 4 => {
-                tracing::debug!("retry {}: {}", attempt, e);
-                tokio::time::sleep(delay).await;
-                delay *= 2;
+            Err(e) if attempt < RETRY_MAX_ATTEMPTS => {
+                let wait = backoff_with_jitter(delay.min(RETRY_CAP), url, attempt);
+                tracing::debug!("retry {}: {} (waiting {:?})", attempt, e, wait);
+                tokio::time::sleep(wait).await;
+                delay = (delay * 2).min(RETRY_CAP);
             }
             Err(e) => return Err(e.into()),
         }

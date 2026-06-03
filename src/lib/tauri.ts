@@ -66,6 +66,11 @@ export interface LogInfo {
   size_bytes: number;
 }
 
+export interface PurgeReport {
+  removed: string[];
+  failed: string[];
+}
+
 export const api = {
   defaultLibraryDir: () => invoke<{ library_root: string }>("default_library_dir"),
   /** Persist + validate the library root so open/export/delete confine to it. */
@@ -98,5 +103,8 @@ export const api = {
   cancelModelDownload: (modelId: string) => invoke<void>("cancel_model_download", { modelId }),
   deleteModel: (modelId: string) => invoke<void>("delete_model", { modelId }),
   deleteLibrary: (path: string) => invoke<void>("delete_library", { path }),
+  /** Clean uninstall: erase app data (models, caches, logs); optionally the library too. */
+  purgeAllData: (includeLibrary: boolean) =>
+    invoke<PurgeReport>("purge_all_data", { includeLibrary }),
   resetAiState: () => invoke<void>("reset_ai_state"),
 };

@@ -112,6 +112,19 @@ pub async fn start_run(
     state: State<'_, AppState>,
     req: RunRequest,
 ) -> Result<(), String> {
+    // Confine the download output to the configured library root. `out_dir`
+    // arrives from the renderer and the pipeline `create_dir_all`s under it, so
+    // without this a compromised/buggy renderer could redirect every downloaded
+    // file outside the library (e.g. into C:\Windows or /etc). The per-query
+    // subfolder is already slugged (`safe_folder`), making `out_dir` the only
+    // traversal vector. The normal flow always pre-creates this folder
+    // (`default_library_dir` / `set_library_root`), so the canonicalizing check
+    // succeeds for legitimate runs and rejects anything outside the root.
+    let root = confinement_root(&state)?;
+    safe_within_root(Path::new(&req.out_dir), &root).map_err(|e| {
+        format!("Refusing to run: the library folder is outside the allowed root. {e}")
+    })?;
+
     {
         let mut cur = state
             .current_cancel
@@ -863,4 +876,77 @@ pub async fn delete_library(state: State<'_, AppState>, path: String) -> Result<
     })?;
     tracing::info!("delete_library: removed {} via {}", p.display(), stage);
     Ok(())
+}
+
+// =============================================================================
+// Clean uninstall — purge all app data
+// =============================================================================
+
+/// What [`purge_all_data`] removed (or failed to remove). Best-effort: a failure
+/// on one location is recorded here and the remaining locations are still tried.
+#[derive(Debug, Serialize)]
+pub struct PurgeReport {
+    pub removed: Vec<String>,
+    pub failed: Vec<String>,
+}
+
+/// Erase everything Document Finder writes to disk, for a clean uninstall on any
+/// OS (the part no native installer removes).
+///
+/// SAFETY: this takes **no path from the caller** — every directory it deletes is
+/// derived server-side from the app identifier (`app_data_dir`, which holds the
+/// downloaded AI model weights + the fastembed cache + config), the run-log
+/// location ([`runlog::log_path`]), and — only when `include_library` is set —
+/// the confined library root ([`confinement_root`], which already knows a custom
+/// root configured via `set_library_root`). So a compromised/buggy renderer can't
+/// turn this into an arbitrary `rm -rf`. The document library is user content, so
+/// it is preserved unless `include_library` is explicitly true.
+#[tauri::command]
+pub async fn purge_all_data(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    include_library: bool,
+) -> Result<PurgeReport, String> {
+    let mut targets: Vec<PathBuf> = Vec::new();
+
+    // 1. App data dir (identifier-keyed): downloaded LLM weights, the fastembed
+    //    BGE/ONNX cache, and any config nested under the same folder.
+    match app.path().app_data_dir() {
+        Ok(dir) => targets.push(dir),
+        Err(e) => tracing::warn!("purge_all_data: no app_data_dir: {e}"),
+    }
+    // 2. Run-log directory (a different base dir on every OS).
+    if let Some(log_dir) = runlog::log_path().and_then(|p| p.parent().map(Path::to_path_buf)) {
+        targets.push(log_dir);
+    }
+    // 3. The document library (downloaded files + per-query SQLite) — user
+    //    content, so only when the user explicitly opts in.
+    if include_library {
+        match confinement_root(&state) {
+            Ok(root) => targets.push(root),
+            Err(e) => tracing::warn!("purge_all_data: could not resolve library root: {e}"),
+        }
+    }
+
+    let mut report = PurgeReport {
+        removed: Vec::new(),
+        failed: Vec::new(),
+    };
+    for dir in targets {
+        let path_str = dir.display().to_string();
+        if !dir.is_dir() {
+            continue; // Nothing there (or already gone) — treat as success.
+        }
+        match force_remove_dir(&dir).await {
+            Ok(stage) => {
+                tracing::info!("purge_all_data: removed {} via {}", path_str, stage);
+                report.removed.push(path_str);
+            }
+            Err(e) => {
+                tracing::warn!("purge_all_data: failed to remove {} ({})", path_str, e);
+                report.failed.push(format!("{path_str}: {e}"));
+            }
+        }
+    }
+    Ok(report)
 }
