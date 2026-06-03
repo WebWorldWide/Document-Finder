@@ -126,6 +126,7 @@ pub(crate) fn is_private_ip(ip: &IpAddr) -> bool {
 }
 
 fn is_private_v4(v4: &Ipv4Addr) -> bool {
+    let bits = u32::from(*v4);
     v4.is_loopback()
         || v4.is_private()
         || v4.is_link_local()
@@ -134,7 +135,13 @@ fn is_private_v4(v4: &Ipv4Addr) -> bool {
         || v4.is_documentation()
         || v4.is_unspecified()
         // CGNAT: 100.64.0.0/10
-        || (u32::from(*v4) & 0xFFC0_0000 == 0x6440_0000)
+        || (bits & 0xFFC0_0000 == 0x6440_0000)
+        // Benchmarking 198.18.0.0/15 (RFC 2544)
+        || (bits & 0xFFFE_0000 == 0xC612_0000)
+        // IETF protocol assignments 192.0.0.0/24 (RFC 6890; incl. 192.0.0.171)
+        || (bits & 0xFFFF_FF00 == 0xC000_0000)
+        // 6to4 anycast relay 192.88.99.0/24
+        || (bits & 0xFFFF_FF00 == 0xC058_6300)
 }
 
 fn is_private_v6(v6: &Ipv6Addr) -> bool {
@@ -145,9 +152,15 @@ fn is_private_v6(v6: &Ipv6Addr) -> bool {
         || (v6.segments()[0] & 0xFE00 == 0xFC00)
         // Link-local fe80::/10
         || (v6.segments()[0] & 0xFFC0 == 0xFE80)
-        // IPv4-mapped (::ffff:a.b.c.d) — judge by the embedded IPv4 so
-        // ::ffff:127.0.0.1 etc. can't slip past the v6 checks.
-        || v6.to_ipv4_mapped().is_some_and(|v4| is_private_v4(&v4))
+        // NAT64 well-known prefix 64:ff9b::/96 — can translate to an internal
+        // IPv4 on a NAT64 network.
+        || (v6.segments()[0..6] == [0x0064, 0xFF9B, 0, 0, 0, 0])
+        // Embedded IPv4 — judge by the embedded address so neither the modern
+        // ::ffff:a.b.c.d (IPv4-mapped) NOR the deprecated-but-parseable
+        // ::a.b.c.d (IPv4-compatible) form can smuggle 127.0.0.1 /
+        // 169.254.169.254 etc. past the v6 checks. `to_ipv4` covers both forms;
+        // `to_ipv4_mapped` would miss the compatible one.
+        || v6.to_ipv4().is_some_and(|v4| is_private_v4(&v4))
 }
 
 #[cfg(test)]
@@ -185,6 +198,21 @@ mod tests {
         assert!(is_private_ip(&"::ffff:127.0.0.1".parse().unwrap()));
         assert!(is_private_ip(&"::ffff:10.0.0.1".parse().unwrap()));
         assert!(!is_private_ip(&"::ffff:1.1.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn ipv4_compatible_is_judged_by_embedded_v4() {
+        // Deprecated ::a.b.c.d form (high 96 bits zero, not 0xffff) must not
+        // smuggle loopback / metadata past the v6 classifier.
+        assert!(is_private_ip(&"::127.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"::169.254.169.254".parse().unwrap()));
+    }
+
+    #[test]
+    fn reserved_v4_ranges_are_private() {
+        assert!(is_private_ip(&"198.18.0.1".parse().unwrap())); // benchmarking
+        assert!(is_private_ip(&"192.0.0.171".parse().unwrap())); // IETF protocol
+        assert!(is_private_ip(&"192.88.99.1".parse().unwrap())); // 6to4 relay
     }
 
     #[test]

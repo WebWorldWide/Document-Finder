@@ -17,6 +17,11 @@ interface ModelsState {
   /// fetch). Polled from the `embedding_downloaded` command. Distinct from
   /// `embeddingLoaded`, which is in-memory readiness for this session.
   embeddingDownloaded: boolean;
+  /// Set when the out-of-process embedding worker fails/crashes (the
+  /// `embedding_failed` status event). Sticky until a retry or reset, so the
+  /// Settings row can show a clear "couldn't load" state instead of the app
+  /// just having vanished.
+  embeddingError: string | null;
   // Per-model bytes/sec for the UI ETA, keyed by model_id.
   bytesPerSec: Record<string, number>;
   // Last activity status for the model (e.g. "embedding 23/100", "llm_warming").
@@ -32,6 +37,7 @@ const [state, setState] = createStore<ModelsState>({
   error: null,
   embeddingLoaded: false,
   embeddingDownloaded: false,
+  embeddingError: null,
   bytesPerSec: {},
   activity: {},
 });
@@ -89,6 +95,14 @@ async function ensureSubscribed() {
   });
   unsubStatus = await listen<ModelStatusPayload>("df:model_status", (ev) => {
     const { model_id, status, detail } = ev.payload;
+    // The out-of-process embedding worker failed/crashed. Record a sticky error
+    // so the Settings row shows "couldn't load (see logs)" with a retry, rather
+    // than the app appearing to have done nothing (or, pre-fix, having crashed).
+    if (status === "embedding_failed") {
+      setState("embeddingError", detail ?? "embedding model unavailable");
+      setState("embeddingLoaded", false);
+      return;
+    }
     // Track non-disk activity events (embedding/llm_warming/etc) separately.
     if (
       status === "embedding" ||
@@ -101,6 +115,8 @@ async function ensureSubscribed() {
         setState("embeddingLoaded", true);
         // Loaded into memory implies it's also cached on disk now.
         setState("embeddingDownloaded", true);
+        // Clear any prior failure now that it's working.
+        setState("embeddingError", null);
       }
       setState("activity", model_id, { status, detail });
       // Auto-clear activity after 5s of silence.
@@ -180,6 +196,8 @@ async function remove(modelId: string) {
 /// embeddingLoaded when ready. Returns the invoke promise so the caller can
 /// show a spinner and surface errors.
 function warmEmbedding() {
+  // Clear any prior failure so the row reflects this fresh attempt.
+  setState("embeddingError", null);
   return api.warmEmbedding();
 }
 
@@ -203,11 +221,16 @@ export const modelsStore = {
   get embeddingDownloaded() {
     return state.embeddingDownloaded;
   },
-  /// Coarse state for the Settings row: in-memory > on-disk > absent.
-  get embeddingState(): "loaded" | "downloaded" | "absent" {
+  /// Coarse state for the Settings row: failed > in-memory > on-disk > absent.
+  get embeddingState(): "loaded" | "downloaded" | "absent" | "failed" {
+    if (state.embeddingError) return "failed";
     if (state.embeddingLoaded) return "loaded";
     if (state.embeddingDownloaded) return "downloaded";
     return "absent";
+  },
+  /// The last embedding-worker failure message, if any (for the Settings row).
+  get embeddingError() {
+    return state.embeddingError;
   },
   /// Convenience: any LLM model in Ready status?
   get llmReady() {

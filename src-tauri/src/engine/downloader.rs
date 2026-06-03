@@ -241,7 +241,11 @@ async fn check_magic_bytes(path: &Path) -> Option<String> {
     let mut head = [0u8; 4];
     use tokio::io::AsyncReadExt;
     if file.read_exact(&mut head).await.is_err() {
-        return Some("The downloaded file was too small to be a real document.".to_string());
+        // This runs only after the caller's `size >= MIN_DOC_BYTES` (4096) gate,
+        // so a 4-byte read can't fail by being short — it's an I/O fault (e.g. a
+        // Windows AV sharing-lock on the just-written file). Report it as such
+        // rather than the misleading "too small", which matches the open branch.
+        return Some("Couldn't verify the downloaded file.".to_string());
     }
 
     match ext.as_str() {

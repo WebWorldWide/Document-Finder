@@ -145,6 +145,7 @@ export interface ModelStatusPayload {
     | "failed"
     | "cancelled"
     | "embedding"
+    | "embedding_failed"
     | "llm_warming"
     | "llm_expanding"
     | "llm_filtering";

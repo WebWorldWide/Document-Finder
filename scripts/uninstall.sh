@@ -51,6 +51,11 @@ case "$(uname -s)" in
     rm_if "${XDG_CONFIG_HOME:-$HOME/.config}/$id"               # config
     rm_if "${XDG_CACHE_HOME:-$HOME/.cache}/$id"                 # caches
     rm_if "${XDG_STATE_HOME:-$HOME/.local/state}/document-finder"  # run log
+    # Flatpak redirects all per-app data into its sandbox under ~/.var/app using
+    # the reverse-DNS *app id* (mixed case — distinct from the lowercase runtime
+    # identifier above). Without this, a Flatpak user's downloaded AI model
+    # weights survive an uninstall.sh that reports it removed everything.
+    rm_if "$HOME/.var/app/com.webworldwide.DocumentFinder"        # Flatpak sandbox data (models/config/cache)
     ask_library "$HOME/Documents/Document Finder"
     echo ""
     echo "Done. To remove the app, use whichever you installed:"

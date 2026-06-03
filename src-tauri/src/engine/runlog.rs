@@ -87,6 +87,17 @@ pub enum Event<'a> {
         total: usize,
         folder: &'a str,
     },
+    /// The out-of-process embedding worker died (likely a native ONNX abort).
+    /// `phase` is the last stderr phase marker it reached, `exit` the exit
+    /// status/signal. This is how we diagnose the macOS embedding crash without
+    /// the OS `.ips` report. Gated so the fast (no-AI) build doesn't see an
+    /// unconstructed variant.
+    #[cfg(feature = "ai-embeddings")]
+    EmbeddingWorkerFailed {
+        phase: &'a str,
+        exit: &'a str,
+        stderr_tail: &'a str,
+    },
 }
 
 pub fn log(event: Event<'_>) {

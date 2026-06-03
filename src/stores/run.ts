@@ -305,6 +305,9 @@ function apply(ev: DfEvent) {
         done: ev.payload.done,
         failed: ev.payload.failed,
         total: ev.payload.total,
+        // A clean terminal state clears any earlier (e.g. task-panic) error so a
+        // stale fatal-error banner doesn't linger over a run that finished.
+        fatalError: null,
       });
       addLog(
         ev.type === "cancelled" ? "warn" : "info",
@@ -378,8 +381,13 @@ async function startSearch(query: string) {
       llm_model_id: settings.llmModelId || null,
     });
   } catch (e) {
-    setState("running", false);
-    apply({ type: "error", payload: { message: String(e) } });
+    // A start_run rejection (the concurrent-run guard, or a library folder
+    // outside the allowed root) means the pipeline never started — it is NOT an
+    // inference crash, so surface the error WITHOUT routing through the `error`
+    // event handler, which would needlessly evict warmed AI models and force a
+    // multi-second re-warm on the next search.
+    setState({ running: false, fatalError: String(e) });
+    addLog("error", `Error: ${String(e)}`);
   }
 }
 

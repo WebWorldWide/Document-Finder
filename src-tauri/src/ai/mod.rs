@@ -13,6 +13,8 @@ pub mod state;
 pub mod storage;
 
 #[cfg(feature = "ai-embeddings")]
+pub mod embed_worker;
+#[cfg(feature = "ai-embeddings")]
 pub mod embeddings;
 
 #[cfg(feature = "ai-llm")]

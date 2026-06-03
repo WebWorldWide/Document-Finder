@@ -1,28 +1,61 @@
-//! Semantic embeddings via `fastembed`.
+//! Semantic embeddings via `fastembed` (BGE-Small-EN-v1.5, 384-dim, int8 ONNX).
 //!
-//! Uses BGE-Small-EN-v1.5 (384-dim, int8-quantized ONNX). fastembed downloads
-//! the model from Hugging Face on first use and caches it under the app data
-//! dir (`<app_data>/models/fastembed/`), so it's fetched once and then loaded
-//! offline on every subsequent run — nothing is bundled into the installer.
-//! (Earlier builds tried to bundle the ONNX files as Tauri resources, but they
-//! were never wired into `bundle.resources`, so the model never loaded.)
-//!
-//! Inference is synchronous (ort is blocking); we wrap calls in
-//! `tokio::task::spawn_blocking` so the orchestrator's async runtime
-//! stays responsive while reranking runs.
+//! fastembed/ort can abort the process natively (not a catchable Rust panic)
+//! during ONNX Runtime init on some platforms (macOS). So all fastembed/ort
+//! work runs in a **child process** (see [`super::embed_worker`]); this module
+//! is the *client* that spawns it, talks JSON over its stdin/stdout, and — when
+//! the worker dies — degrades gracefully to lexical ranking instead of letting
+//! the whole app crash. The model is downloaded by the worker on first use and
+//! cached under `<app_data>/models/fastembed/`, fetched once then loaded offline.
 
 use anyhow::{Context, Result};
 use fastembed::{EmbeddingModel as FastEmbedModel, InitOptions, TextEmbedding};
-use parking_lot::Mutex;
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Receiver};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::JoinHandle;
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
+use super::embed_worker::{WorkerRequest, WorkerResponse, WORKER_ARG};
+
+/// Owns the in-process fastembed model. Constructed ONLY inside the worker
+/// child (the parent never touches ort), so a native abort can't reach the UI.
 pub struct EmbeddingModel {
     inner: TextEmbedding,
 }
 
-/// Where fastembed caches the downloaded model — under the app data dir so it
-/// survives across runs and is fetched only once.
+impl EmbeddingModel {
+    /// Load BGE-Small-EN-v1.5 via fastembed, downloading + caching it on first
+    /// use. Takes a cache dir directly (the worker has no `AppHandle`).
+    pub fn init_with_cache_dir(cache_dir: &Path) -> Result<Self> {
+        let _ = std::fs::create_dir_all(cache_dir);
+        let inner = TextEmbedding::try_new(
+            InitOptions::new(FastEmbedModel::BGESmallENV15Q)
+                .with_cache_dir(cache_dir.to_path_buf())
+                .with_show_download_progress(false),
+        )
+        .context("fastembed BGE-Small init failed (first-run download needs internet)")?;
+        Ok(Self { inner })
+    }
+
+    /// Embed a batch of texts. Returns one `Vec<f32>` per input. Called only in
+    /// the worker process.
+    pub fn embed_batch(&mut self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        self.inner
+            .embed(refs, None)
+            .context("embedding inference failed")
+    }
+}
+
+/// Where fastembed caches the model — under the app data dir so it survives
+/// across runs and is fetched only once. The parent computes this and passes it
+/// to the worker.
 fn cache_dir(app: &AppHandle) -> Result<std::path::PathBuf> {
     let dir = app
         .path()
@@ -34,35 +67,8 @@ fn cache_dir(app: &AppHandle) -> Result<std::path::PathBuf> {
     Ok(dir)
 }
 
-impl EmbeddingModel {
-    /// Load BGE-Small-EN-v1.5 via fastembed, downloading + caching it on first
-    /// use (subsequent loads are offline from the cache). Only happens once per
-    /// process via the singleton below.
-    pub fn init(app: &AppHandle) -> Result<Self> {
-        let inner = TextEmbedding::try_new(
-            InitOptions::new(FastEmbedModel::BGESmallENV15Q)
-                .with_cache_dir(cache_dir(app)?)
-                .with_show_download_progress(false),
-        )
-        .context("fastembed BGE-Small init failed (first-run download needs internet)")?;
-
-        Ok(Self { inner })
-    }
-
-    /// Embed a batch of texts. Returns one Vec<f32> per input. Internal
-    /// batching is handled by fastembed (default size 256, plenty).
-    /// Requires `&mut self` because the underlying ONNX session is stateful.
-    pub fn embed_batch(&mut self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-        self.inner
-            .embed(refs, None)
-            .context("embedding inference failed")
-    }
-}
-
-/// Cosine similarity between two unit-length-ish vectors. fastembed
-/// already returns L2-normalized vectors, so this is effectively a dot
-/// product, but we still divide by the norm product to be defensive.
+/// Cosine similarity. fastembed returns L2-normalized vectors, so this is
+/// effectively a dot product, but we divide by the norm product defensively.
 pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
@@ -80,70 +86,236 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
 }
 
 // =============================================================================
-// Singleton — load once per process, resettable on demand.
-//
-// Uses parking_lot::Mutex (no poisoning) so a panic during ONNX inference
-// releases the lock cleanly rather than permanently poisoning it. The outer
-// RwLock<Option<...>> allows reset_embedding_model() to drop the model and
-// force re-initialization on the next search.
+// Worker client — manages the child process and the JSON request/response IPC.
 // =============================================================================
 
-use std::sync::OnceLock;
-use std::sync::RwLock as StdRwLock;
+/// How long to wait for a worker response before treating an alive-but-silent
+/// worker as a crash. `Warm` includes the first-run model download, so it gets a
+/// generous budget; `Embed` is pure inference on an already-loaded model and is
+/// quick. Bounding the wait is what turns a *hang* (ort deadlock, a black-hole
+/// connection during the first download) into the same graceful degradation to
+/// lexical ranking that a native *abort* already gets — instead of an unbounded
+/// blocked thread pinning the client mutex for the session.
+const WARM_TIMEOUT: Duration = Duration::from_secs(300);
+const EMBED_TIMEOUT: Duration = Duration::from_secs(120);
 
-static MODEL: OnceLock<StdRwLock<Option<Arc<Mutex<EmbeddingModel>>>>> = OnceLock::new();
-
-fn model_lock() -> &'static StdRwLock<Option<Arc<Mutex<EmbeddingModel>>>> {
-    MODEL.get_or_init(|| StdRwLock::new(None))
+fn request_timeout(req: &WorkerRequest) -> Duration {
+    match req {
+        WorkerRequest::Warm => WARM_TIMEOUT,
+        WorkerRequest::Embed { .. } => EMBED_TIMEOUT,
+    }
 }
 
-/// Returns the shared embedding model, initializing it on the calling thread
-/// the first time (or after a reset). Idempotent when already loaded.
-///
-/// Always called from `spawn_blocking` so the ~50 ms cold-start I/O never
-/// blocks the async runtime.
-pub fn get_or_init(app: &AppHandle) -> Result<Arc<Mutex<EmbeddingModel>>> {
-    // Fast path: model already loaded.
-    {
-        let guard = model_lock().read().unwrap_or_else(|e| e.into_inner());
-        if let Some(ref m) = *guard {
-            return Ok(m.clone());
+struct WorkerClient {
+    child: Child,
+    stdin: ChildStdin,
+    /// Response lines drained off the worker's stdout by `stdout_thread`. A
+    /// disconnected channel means stdout hit EOF — the worker died.
+    responses: Receiver<String>,
+    /// Last ~64 stderr lines (phase markers) for crash forensics.
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    stdout_thread: Option<JoinHandle<()>>,
+    stderr_thread: Option<JoinHandle<()>>,
+}
+
+impl WorkerClient {
+    /// Send one request and wait up to `timeout` for its response. `Err(())`
+    /// means the worker is unusable — it died (channel disconnected / write
+    /// failed), hung (no response within `timeout`), or sent an unparseable
+    /// line. The caller treats all of these identically: reap it, latch
+    /// `UNAVAILABLE`, and degrade to lexical ranking.
+    fn request(
+        &mut self,
+        req: &WorkerRequest,
+        timeout: Duration,
+    ) -> std::result::Result<WorkerResponse, ()> {
+        let line = serde_json::to_string(req).map_err(|_| ())?;
+        if writeln!(self.stdin, "{line}").is_err() || self.stdin.flush().is_err() {
+            return Err(());
+        }
+        match self.responses.recv_timeout(timeout) {
+            Ok(resp) => serde_json::from_str(&resp).map_err(|_| ()),
+            // Timeout (worker hung) or Disconnected (stdout closed = worker
+            // died) — both mean the worker can no longer be trusted.
+            Err(_) => Err(()),
         }
     }
+}
 
-    // Slow path: initialize under write lock.
-    let mut guard = model_lock().write().unwrap_or_else(|e| e.into_inner());
+static CLIENT: OnceLock<Mutex<Option<WorkerClient>>> = OnceLock::new();
+/// Set once the worker has successfully loaded the model this session.
+static LOADED: AtomicBool = AtomicBool::new(false);
+/// Latched when the worker dies (likely native abort). Stops respawn loops;
+/// cleared by an explicit user warm or `reset_embedding_model`.
+static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
+/// Dedups concurrent background warms.
+static WARMING: AtomicBool = AtomicBool::new(false);
 
-    // Re-check after acquiring write lock (another thread may have raced us).
-    if let Some(ref m) = *guard {
-        return Ok(m.clone());
+fn client_lock() -> &'static Mutex<Option<WorkerClient>> {
+    CLIENT.get_or_init(|| Mutex::new(None))
+}
+
+fn spawn_worker(cache_dir: &Path) -> Result<WorkerClient> {
+    let exe = std::env::current_exe().context("resolve current_exe for embedding worker")?;
+    let mut child = Command::new(exe)
+        .arg(WORKER_ARG)
+        .arg(cache_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("spawn embedding worker")?;
+    let stdin = child.stdin.take().context("embedding worker stdin")?;
+    let stdout = child.stdout.take().context("embedding worker stdout")?;
+    let stderr = child.stderr.take().context("embedding worker stderr")?;
+
+    // Drain stdout on a dedicated thread, forwarding whole response lines over a
+    // channel. This lets `request` apply a `recv_timeout` (so an alive-but-silent
+    // worker can't block the caller — and the held client mutex — forever) and
+    // keeps the worker from ever stalling on a full stdout pipe.
+    let (tx, responses) = channel::<String>();
+    let stdout_thread = std::thread::spawn(move || {
+        for line in BufReader::new(stdout)
+            .lines()
+            .map_while(std::result::Result::ok)
+        {
+            if tx.send(line).is_err() {
+                break; // receiver gone (client dropped) — stop draining
+            }
+        }
+        // Loop end drops `tx`; a waiting `recv_timeout` then sees Disconnected,
+        // i.e. the worker's stdout closed (it died).
+    });
+
+    let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(64)));
+    let tail = stderr_tail.clone();
+    let stderr_thread = std::thread::spawn(move || {
+        for line in BufReader::new(stderr)
+            .lines()
+            .map_while(std::result::Result::ok)
+        {
+            let mut g = tail.lock().unwrap_or_else(|e| e.into_inner());
+            if g.len() == 64 {
+                g.pop_front();
+            }
+            g.push_back(line);
+        }
+    });
+
+    Ok(WorkerClient {
+        child,
+        stdin,
+        responses,
+        stderr_tail,
+        stdout_thread: Some(stdout_thread),
+        stderr_thread: Some(stderr_thread),
+    })
+}
+
+/// Send a request to the worker, spawning it on first use. On a worker crash,
+/// latch `UNAVAILABLE`, record diagnostics to the run log, and return `Err`.
+fn worker_request(cache_dir: &Path, req: &WorkerRequest) -> Result<WorkerResponse> {
+    if UNAVAILABLE.load(Ordering::SeqCst) {
+        anyhow::bail!("embedding worker previously crashed; semantic rerank disabled this session");
     }
-
-    let model = Arc::new(Mutex::new(EmbeddingModel::init(app)?));
-    *guard = Some(model.clone());
-    Ok(model)
+    let mut guard = client_lock().lock().unwrap_or_else(|e| e.into_inner());
+    if guard.is_none() {
+        *guard = Some(spawn_worker(cache_dir)?);
+    }
+    let client = guard.as_mut().expect("spawned just above");
+    match client.request(req, request_timeout(req)) {
+        Ok(WorkerResponse::Error { message }) => {
+            // Recoverable worker-side failure — keep the worker alive for retry.
+            anyhow::bail!("embedding failed: {message}")
+        }
+        Ok(resp) => Ok(resp),
+        Err(()) => {
+            // Worker died (native abort) or hung past its deadline. Capture + latch.
+            let dead = guard.take();
+            UNAVAILABLE.store(true, Ordering::SeqCst);
+            LOADED.store(false, Ordering::SeqCst);
+            drop(guard);
+            if let Some(c) = dead {
+                capture_worker_failure(c);
+            }
+            anyhow::bail!("embedding worker crashed; semantic rerank disabled this session")
+        }
+    }
 }
 
-/// Drop the loaded model so the next call to `get_or_init` re-initializes it.
-/// Called by the `reset_ai_state` Tauri command after an inference error.
-pub fn reset_embedding_model() {
-    let mut guard = model_lock().write().unwrap_or_else(|e| e.into_inner());
-    *guard = None;
-    tracing::info!("embedding model reset");
+/// Reap a dead worker and log where/why it died to the run log (the recoverable
+/// equivalent of the macOS `.ips` crash report).
+fn capture_worker_failure(mut client: WorkerClient) {
+    // The worker either died on its own (native abort) or hung past its deadline;
+    // `kill` is a harmless no-op on an already-exited child and, for a hang,
+    // guarantees the pipes close so the drain threads below can finish.
+    let _ = client.child.kill();
+    let exit = match client.child.wait() {
+        Ok(status) => exit_desc(status),
+        Err(e) => format!("wait failed: {e}"),
+    };
+    // Child is reaped → its stdout/stderr pipes close → the drain threads finish.
+    if let Some(t) = client.stdout_thread.take() {
+        let _ = t.join();
+    }
+    if let Some(t) = client.stderr_thread.take() {
+        let _ = t.join();
+    }
+    let tail = client.stderr_tail.lock().unwrap_or_else(|e| e.into_inner());
+    let last_phase = tail
+        .iter()
+        .rev()
+        .find_map(|l| l.strip_prefix("phase:"))
+        .unwrap_or("unknown")
+        .to_string();
+    let recent: Vec<String> = tail.iter().rev().take(8).cloned().collect();
+    let stderr_tail = recent.into_iter().rev().collect::<Vec<_>>().join(" | ");
+    tracing::warn!("embedding worker died: phase={last_phase} exit={exit} stderr=[{stderr_tail}]");
+    crate::engine::runlog::log(crate::engine::runlog::Event::EmbeddingWorkerFailed {
+        phase: &last_phase,
+        exit: &exit,
+        stderr_tail: &stderr_tail,
+    });
 }
 
-/// Whether the embedding model is initialized in-process.
+#[cfg(unix)]
+fn exit_desc(status: std::process::ExitStatus) -> String {
+    use std::os::unix::process::ExitStatusExt;
+    if let Some(sig) = status.signal() {
+        return format!("killed by signal {sig}");
+    }
+    format!("{status}")
+}
+
+#[cfg(not(unix))]
+fn exit_desc(status: std::process::ExitStatus) -> String {
+    format!("{status}")
+}
+
+fn emit_status(app: &AppHandle, status: &str, detail: &str) {
+    use tauri::Emitter;
+    let _ = app.emit(
+        crate::events::EV_MODEL_STATUS,
+        crate::events::ModelStatusPayload {
+            model_id: "bge-small-en-v1.5".to_string(),
+            status: status.to_string(),
+            detail: Some(detail.to_string()),
+        },
+    );
+}
+
+// =============================================================================
+// Public API (signatures preserved for callers in commands.rs / orchestrator).
+// =============================================================================
+
+/// Whether the embedding model is loaded and usable this session.
 pub fn is_loaded() -> bool {
-    model_lock()
-        .read()
-        .unwrap_or_else(|e| e.into_inner())
-        .is_some()
+    LOADED.load(Ordering::SeqCst) && !UNAVAILABLE.load(Ordering::SeqCst)
 }
 
-/// Whether the embedding model appears to be already downloaded to the on-disk
-/// cache (so it will load without a network fetch). Best-effort: scans the
-/// fastembed cache dir for a `.onnx` file. Distinct from [`is_loaded`], which
-/// reports whether it's loaded into memory this session.
+/// Whether the model is already cached on disk (loads without a network fetch).
+/// Best-effort scan of the fastembed cache dir for a `.onnx` file; does not
+/// touch ort, so it's safe to call in the UI process.
 pub fn is_downloaded(app: &AppHandle) -> bool {
     let Ok(dir) = cache_dir(app) else {
         return false;
@@ -151,8 +323,6 @@ pub fn is_downloaded(app: &AppHandle) -> bool {
     contains_onnx(&dir)
 }
 
-/// Recurse the cache dir looking for a `.onnx` file (fastembed nests the model
-/// under a repo-named subdir). Returns on the first hit.
 fn contains_onnx(dir: &std::path::Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
@@ -172,51 +342,70 @@ fn contains_onnx(dir: &std::path::Path) -> bool {
     false
 }
 
-use std::sync::atomic::{AtomicBool, Ordering};
-static WARMING: AtomicBool = AtomicBool::new(false);
+/// Drop the worker so the next call re-spawns/re-loads it. Clears the crash
+/// latch so the user can retry after `reset_ai_state`.
+pub fn reset_embedding_model() {
+    let mut guard = client_lock().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(mut c) = guard.take() {
+        let _ = c.child.kill();
+        let _ = c.child.wait();
+    }
+    LOADED.store(false, Ordering::SeqCst);
+    UNAVAILABLE.store(false, Ordering::SeqCst);
+    tracing::info!("embedding model reset");
+}
 
-/// Kick off a one-time background load (downloading the model on first ever use)
-/// without blocking the caller. Safe to call repeatedly — the `WARMING` flag
-/// dedups concurrent warms. Used by the orchestrator so a search never stalls
-/// on a cold ~60 MB model download: that run falls back to lexical ranking and
-/// semantic rerank kicks in on the next search once the model is ready.
+/// User-initiated warm (Settings "Download now"). Clears the crash latch so a
+/// previously-failed load can be retried, then loads in the background.
 pub fn warm_in_background(app: AppHandle) {
-    if is_loaded() || WARMING.swap(true, Ordering::SeqCst) {
+    UNAVAILABLE.store(false, Ordering::SeqCst);
+    warm_inner(app);
+}
+
+/// Implicit warm triggered by a search. Skips entirely if the worker already
+/// crashed this session, so a search can never trigger a crash loop.
+pub fn warm_in_background_implicit(app: AppHandle) {
+    if UNAVAILABLE.load(Ordering::SeqCst) {
+        return;
+    }
+    warm_inner(app);
+}
+
+fn warm_inner(app: AppHandle) {
+    if LOADED.load(Ordering::SeqCst) || WARMING.swap(true, Ordering::SeqCst) {
         return;
     }
     tokio::task::spawn_blocking(move || {
-        match get_or_init(&app) {
-            Ok(_) => {
-                tracing::info!("embedding model warmed and ready");
-                // Notify the UI so the Settings row flips from
-                // "loads on first search" to "ready".
-                use tauri::Emitter;
-                let _ = app.emit(
-                    crate::events::EV_MODEL_STATUS,
-                    crate::events::ModelStatusPayload {
-                        model_id: "bge-small-en-v1.5".to_string(),
-                        status: "embedding".to_string(),
-                        detail: Some("ready".to_string()),
-                    },
-                );
+        let cache = match cache_dir(&app) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("embedding warm: cache dir: {e}");
+                WARMING.store(false, Ordering::SeqCst);
+                return;
             }
-            Err(e) => tracing::warn!("embedding model warm failed: {e}"),
+        };
+        match worker_request(&cache, &WorkerRequest::Warm) {
+            Ok(WorkerResponse::Warmed) => {
+                LOADED.store(true, Ordering::SeqCst);
+                tracing::info!("embedding model warmed and ready");
+                emit_status(&app, "embedding", "ready");
+            }
+            Ok(_) => tracing::warn!("embedding warm: unexpected worker response"),
+            Err(e) => {
+                tracing::warn!("embedding model warm failed: {e}");
+                emit_status(&app, "embedding_failed", &e.to_string());
+            }
         }
         WARMING.store(false, Ordering::SeqCst);
     });
 }
 
-/// Semantic rerank step. Embeds the query and the (title + " " + abstract)
-/// of every candidate, computes cosine similarity, normalizes to [0,1],
-/// and blends with the existing Tier 1 score using
-/// `final = 0.6*tier1 + 0.4*semantic`.
-///
-/// Runs entirely on a blocking thread because ort is sync. Caller awaits
-/// via `tokio::task::spawn_blocking`.
-///
-/// `top_k` caps how many candidates we re-embed — keeping it bounded
-/// guarantees latency is roughly linear in `top_k`, not in total candidates.
-/// Items beyond `top_k` keep their Tier 1 score unchanged.
+/// Semantic rerank: embed the query + each candidate's (title + abstract) in the
+/// worker, blend cosine similarity with the Tier-1 score (`0.6*tier1 +
+/// 0.4*semantic`), and re-sort. Runs on a blocking thread (caller uses
+/// `spawn_blocking`). Only the first `top_k` candidates are re-embedded; the
+/// rest keep their Tier-1 score. On worker crash this returns `Err` and the
+/// orchestrator falls back to the existing ranking.
 pub fn rerank_blocking(
     app: &AppHandle,
     query: &str,
@@ -226,30 +415,31 @@ pub fn rerank_blocking(
     if candidates.is_empty() {
         return Ok(());
     }
-    let model = get_or_init(app)?;
-    // parking_lot::Mutex::lock() returns the guard directly — no Result, no poisoning.
-    let mut model = model.lock();
-
-    let query_emb = model
-        .embed_batch(&[query.to_string()])?
-        .pop()
-        .ok_or_else(|| anyhow::anyhow!("query embedding returned empty"))?;
-
+    let cache = cache_dir(app)?;
     let limit = top_k.min(candidates.len());
-    let texts: Vec<String> = candidates
-        .iter()
-        .take(limit)
-        .map(|c| {
-            let abstract_ = c.doc.doc.abstract_.as_deref().unwrap_or("");
-            format!("{} {}", c.doc.doc.title, abstract_)
-        })
-        .collect();
 
-    let doc_embs = model.embed_batch(&texts)?;
-    drop(model);
+    // One batch: [query, doc_0, doc_1, ...].
+    let mut texts: Vec<String> = Vec::with_capacity(limit + 1);
+    texts.push(query.to_string());
+    for c in candidates.iter().take(limit) {
+        let abstract_ = c.doc.doc.abstract_.as_deref().unwrap_or("");
+        texts.push(format!("{} {}", c.doc.doc.title, abstract_));
+    }
 
+    let WorkerResponse::Embeddings { vectors } =
+        worker_request(&cache, &WorkerRequest::Embed { texts })?
+    else {
+        anyhow::bail!("embedding worker returned an unexpected response");
+    };
+    if vectors.is_empty() {
+        anyhow::bail!("embedding worker returned no vectors");
+    }
+    LOADED.store(true, Ordering::SeqCst);
+
+    let query_emb = &vectors[0];
+    let doc_embs = &vectors[1..];
     for (i, doc_emb) in doc_embs.iter().enumerate() {
-        let sim = cosine(&query_emb, doc_emb).clamp(0.0, 1.0);
+        let sim = cosine(query_emb, doc_emb).clamp(0.0, 1.0);
         candidates[i].score = 0.6 * candidates[i].score + 0.4 * sim;
     }
 
@@ -267,22 +457,15 @@ mod tests {
     use super::*;
 
     /// Proves fastembed can download + load BGE-Small and produce a 384-dim
-    /// vector. Hits the network and pulls ~33 MB, so it's `#[ignore]`d by
-    /// default — run explicitly with:
+    /// vector. Hits the network (~33 MB), so it's `#[ignore]`d by default:
     /// `cargo test --no-default-features --features=custom-protocol,ai-embeddings -- --ignored`
     #[ignore]
     #[test]
     fn fastembed_downloads_and_embeds() {
         let tmp = std::env::temp_dir().join("df-fastembed-test");
-        let _ = std::fs::create_dir_all(&tmp);
-        let mut model = TextEmbedding::try_new(
-            InitOptions::new(FastEmbedModel::BGESmallENV15Q)
-                .with_cache_dir(tmp)
-                .with_show_download_progress(true),
-        )
-        .expect("fastembed init/download failed");
+        let mut model = EmbeddingModel::init_with_cache_dir(&tmp).expect("init/download failed");
         let out = model
-            .embed(vec!["the quick brown fox"], None)
+            .embed_batch(&["the quick brown fox".to_string()])
             .expect("embedding failed");
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].len(), 384, "BGE-Small-EN-v1.5 is 384-dimensional");

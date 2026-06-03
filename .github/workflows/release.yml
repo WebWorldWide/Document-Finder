@@ -54,10 +54,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Reuse an existing draft if this workflow is re-run on the same tag
-          # (the /releases list includes drafts for authenticated write access).
+          # Reuse an existing DRAFT for this tag if the workflow is re-run, but
+          # NEVER an already-published release: matching a published release here
+          # would let the build matrix silently overwrite shipped installers with
+          # no review gate. Filtering on draft==true means a published tag yields
+          # empty, so a re-release must first delete the published release (a
+          # deliberate act) before this re-creates a fresh draft.
           release_id=$(gh api "repos/$GH_REPO/releases" --paginate \
-            --jq "[.[] | select(.tag_name==\"$GITHUB_REF_NAME\")][0].id // empty")
+            --jq "[.[] | select(.tag_name==\"$GITHUB_REF_NAME\" and .draft==true)][0].id // empty")
           if [ -z "$release_id" ]; then
             printf '%s\n' \
               'Native installers for **macOS** (Apple Silicon `.dmg`), **Windows** (`.exe`, `.msi`), and **Linux** (Flatpak, `.deb`, `.rpm`, `.AppImage`).' \
@@ -236,7 +240,11 @@ jobs:
             echo "::error::Flatpak runtime is missing a shared library the app needs (see 'not found' above) — bump runtime-version or fix the manifest."
             exit 1
           fi
-          flatpak build-bundle repo "Document Finder_${{ github.ref_name }}_x86_64.flatpak" com.webworldwide.DocumentFinder
+          # Use the bare semver (strip the tag's leading `v`) so this asset's
+          # name matches every tauri-action bundle (.dmg/.deb/.exe/…), which are
+          # named from tauri.conf.json's version, not the `v`-prefixed tag.
+          VERSION="${GITHUB_REF_NAME#v}"
+          flatpak build-bundle repo "Document Finder_${VERSION}_x86_64.flatpak" com.webworldwide.DocumentFinder
 
       - name: Upload Flatpak to the draft release
         env:

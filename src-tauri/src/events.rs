@@ -220,7 +220,9 @@ pub struct ModelProgressPayload {
 pub struct ModelStatusPayload {
     pub model_id: String,
     /// One of: "downloading", "verifying", "ready", "failed", "cancelled",
-    /// "embedding", "llm_warming", "llm_expanding", "llm_filtering".
+    /// "embedding", "embedding_failed", "llm_warming", "llm_expanding",
+    /// "llm_filtering". Keep in sync with `ModelStatusPayload` in
+    /// `src/lib/events.ts`.
     pub status: String,
     pub detail: Option<String>,
 }

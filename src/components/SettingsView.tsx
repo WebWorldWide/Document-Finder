@@ -55,13 +55,18 @@ export default function SettingsView() {
       return;
     }
     // warm runs in the background; poll readiness so the row updates live, and
-    // clear the spinner once it's loaded/on-disk (or after ~45s if it fails).
+    // clear the spinner once THIS attempt reaches a terminal state. Stop only on
+    // "loaded" or "failed" (or after ~45s) — NOT on "downloaded", which the
+    // on-disk scan reports immediately when weights are cached, before the
+    // worker has even tried to load: stopping there caused a brief
+    // "trying → ready → failed" flicker when ort then aborted on macOS.
     let tries = 0;
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(() => {
       tries += 1;
       void modelsStore.refresh();
-      if (modelsStore.embeddingState !== "absent" || tries >= 30) {
+      const st = modelsStore.embeddingState;
+      if (st === "loaded" || st === "failed" || tries >= 30) {
         if (pollTimer) clearInterval(pollTimer);
         pollTimer = undefined;
         setWarming(false);
@@ -428,6 +433,24 @@ export default function SettingsView() {
                       <Loader2 size={12} class="spin" />
                     </Show>
                     {warming() ? "Downloading…" : "Download now"}
+                  </button>
+                </Match>
+                <Match when={modelsStore.embeddingState === "failed"}>
+                  <AlertCircle size={12} style={{ color: "var(--bad)" }} />
+                  <span style={{ "font-weight": 500 }}>Embedding model</span>
+                  <span style={{ color: "var(--bad)" }}>
+                    · couldn't load — semantic rerank unavailable (see logs)
+                  </span>
+                  <span style={{ flex: 1 }} />
+                  <button
+                    class="df-btn sm"
+                    disabled={warming()}
+                    onClick={() => void handleWarmEmbedding()}
+                  >
+                    <Show when={warming()} fallback={<RefreshCw size={12} />}>
+                      <Loader2 size={12} class="spin" />
+                    </Show>
+                    {warming() ? "Retrying…" : "Try again"}
                   </button>
                 </Match>
               </Switch>

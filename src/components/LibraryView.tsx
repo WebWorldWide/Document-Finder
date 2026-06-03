@@ -12,7 +12,7 @@ import { ask, save } from "@tauri-apps/plugin-dialog";
 import { api, type LibraryInfo } from "@/lib/tauri";
 import { uiStore } from "@/stores/ui";
 import { settings } from "@/stores/settings";
-import { formatBytes } from "@/lib/utils";
+import { compareLibraryRecency, formatBytes } from "@/lib/utils";
 import Banner from "./Banner";
 
 type SortKey = "updated" | "docs" | "size";
@@ -64,6 +64,10 @@ export default function LibraryView() {
     if (q) xs = xs.filter((l) => (l.query ?? l.name).toLowerCase().includes(q));
     if (sortBy() === "size") xs.sort((a, b) => b.size_bytes - a.size_bytes);
     else if (sortBy() === "docs") xs.sort((a, b) => b.n_docs - a.n_docs);
+    // Default "updated"/Recent: order by the run timestamp embedded in the
+    // folder name — the backend's reverse-name order is slug-dominated and isn't
+    // actually by recency.
+    else xs.sort((a, b) => compareLibraryRecency(a.name, b.name));
     return xs;
   });
 

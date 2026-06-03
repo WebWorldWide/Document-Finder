@@ -366,9 +366,14 @@ async fn compute_llm_extras(
         let prompt = crate::ai::llm::expansion_prompt(&req.query);
         let original = req.query.clone();
         // Race the (blocking) generation against cancel + a hard timeout so Stop
-        // stays responsive and a wedged model can't hang the run.
-        let handle =
-            tokio::task::spawn_blocking(move || llm.blocking_lock().generate(&prompt, 200));
+        // stays responsive and a wedged model can't hang the run. The cancel
+        // token is also passed *into* generate so a Stop/timeout actually ends
+        // the decode and frees the model mutex, rather than detaching a task that
+        // keeps decoding (and holding the lock) to the full token budget.
+        let cancel_gen = cancel.clone();
+        let handle = tokio::task::spawn_blocking(move || {
+            llm.blocking_lock().generate(&prompt, 200, &cancel_gen)
+        });
         let text = tokio::select! {
             biased;
             _ = cancel.cancelled() => {
@@ -422,7 +427,10 @@ async fn compute_llm_extras(
             return Vec::new();
         };
         let prompt = crate::ai::llm::spellfix_prompt(&req.query);
-        let handle = tokio::task::spawn_blocking(move || llm.blocking_lock().generate(&prompt, 32));
+        let cancel_gen = cancel.clone();
+        let handle = tokio::task::spawn_blocking(move || {
+            llm.blocking_lock().generate(&prompt, 32, &cancel_gen)
+        });
         let text = tokio::select! {
             biased;
             _ = cancel.cancelled() => {
@@ -473,13 +481,15 @@ pub async fn run_pipeline(
     });
     // Emit keywords up front so the Sub-queries panel populates at t≈0 instead
     // of waiting on the LLM. Re-emitted with the LLM extras before wave 2.
-    app.emit(
+    // Fire-and-forget (like every other emit here): a failed cosmetic event must
+    // not abort the whole search — it previously used `?` and could.
+    let _ = app.emit(
         EV_KEYWORDS,
         KeywordsPayload {
             query: req.query.clone(),
             sub_queries: base.clone(),
         },
-    )?;
+    );
 
     let folder = PathBuf::from(&req.out_dir).join(safe_folder(&req.query));
     tokio::fs::create_dir_all(&folder).await?;
@@ -776,7 +786,9 @@ pub async fn run_pipeline(
         // First use of semantic rerank: load/download the model in the
         // background so this run doesn't stall on a cold ~60 MB download.
         // Semantic rerank engages automatically on the next search once ready.
-        crate::ai::embeddings::warm_in_background(app.clone());
+        // Use the *implicit* warm so a search never retries a worker that has
+        // already crashed this session (no crash loop).
+        crate::ai::embeddings::warm_in_background_implicit(app.clone());
         emit_stage(
             &app,
             "semantic_rerank",
@@ -844,7 +856,7 @@ pub async fn run_pipeline(
                             out.extend(std::iter::repeat(true).take(prompts.len() - out.len()));
                             break;
                         }
-                        out.push(guard.yes_no(p).unwrap_or(true));
+                        out.push(guard.yes_no(p, &cancel_for_task).unwrap_or(true));
                     }
                     out
                 })

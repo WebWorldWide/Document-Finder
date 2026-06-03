@@ -7,6 +7,23 @@ pub mod util;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Embedding-worker subprocess mode: this same binary, re-invoked with the
+    // worker sentinel, runs ONNX/fastembed in isolation so a native ort abort
+    // can't take down the UI. Intercept BEFORE Tauri / tracing / panic-hook init
+    // so the child never spins up a window or the app runtime. `run_worker`
+    // diverges (`-> !`).
+    #[cfg(feature = "ai-embeddings")]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if args.get(1).map(String::as_str) == Some(crate::ai::embed_worker::WORKER_ARG) {
+            let cache_dir = args
+                .get(2)
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default();
+            crate::ai::embed_worker::run_worker(cache_dir);
+        }
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

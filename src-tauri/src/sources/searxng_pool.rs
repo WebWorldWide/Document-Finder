@@ -25,6 +25,34 @@ const INSTANCES_URL: &str = "https://searx.space/data/instances.json";
 const CACHE_TTL: Duration = Duration::from_secs(24 * 3600);
 const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Max bytes buffered from a public-instance JSON response. The instance list
+/// and per-instance results come from third-party infrastructure (searx.space
+/// mirrors chosen by TLS grade, not trust), so cap the body — a bare
+/// `resp.json()` buffers the whole stream and a hostile/compromised instance
+/// could send a huge one (memory-exhaustion DoS).
+const MAX_JSON_BYTES: usize = 8 * 1024 * 1024;
+
+/// Read a response body up to [`MAX_JSON_BYTES`], then parse it as JSON. Fails
+/// fast on an over-large declared `Content-Length` and hard-stops mid-stream if
+/// an undeclared or under-declared body exceeds the cap.
+async fn json_capped<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> anyhow::Result<T> {
+    if let Some(len) = resp.content_length() {
+        if len as usize > MAX_JSON_BYTES {
+            anyhow::bail!("response body too large: {len} bytes");
+        }
+    }
+    let mut stream = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| anyhow::anyhow!("read body: {e}"))?;
+        if buf.len() + chunk.len() > MAX_JSON_BYTES {
+            anyhow::bail!("response body exceeded {MAX_JSON_BYTES} bytes");
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&buf).map_err(|e| anyhow::anyhow!("parse JSON: {e}"))
+}
+
 #[derive(Clone)]
 struct CachedInstances {
     urls: Vec<String>,
@@ -99,8 +127,7 @@ async fn fetch_instances(client: &reqwest::Client) -> anyhow::Result<Vec<String>
         .map_err(|_| anyhow::anyhow!("timeout fetching instance list"))?
         .map_err(|e| anyhow::anyhow!("fetch failed: {e}"))?;
 
-    let list: InstanceList = resp
-        .json()
+    let list: InstanceList = json_capped(resp)
         .await
         .map_err(|e| anyhow::anyhow!("parse instances.json: {e}"))?;
 
@@ -206,8 +233,7 @@ async fn query_searxng(
         content: Option<String>,
     }
 
-    let body: SearxResp = resp
-        .json()
+    let body: SearxResp = json_capped(resp)
         .await
         .map_err(|e| anyhow::anyhow!("parse SearXNG response from {base_url}: {e}"))?;
 
