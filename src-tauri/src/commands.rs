@@ -25,6 +25,8 @@ fn make_model_download_client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .connect_timeout(std::time::Duration::from_secs(30))
+        .redirect(crate::sources::safe_redirect_policy())
+        .dns_resolver(std::sync::Arc::new(crate::util::url_safety::PublicOnlyResolver))
         // Intentionally NO .timeout — model files take many minutes.
         .build()
         .expect("model http client")
@@ -767,6 +769,26 @@ pub async fn delete_model(
 ///
 /// On success, returns the stage name that succeeded so the caller can log
 /// it. On failure, returns the chain of error messages.
+#[cfg(target_os = "windows")]
+fn clear_readonly_recursive(path: &Path) -> std::io::Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            clear_readonly_recursive(&entry.path())?;
+        }
+    }
+    let mut perms = metadata.permissions();
+    if perms.readonly() {
+        perms.set_readonly(false);
+        std::fs::set_permissions(path, perms)?;
+    }
+    Ok(())
+}
+
 async fn force_remove_dir(path: &Path) -> Result<&'static str, String> {
     // Stage 1: `remove_dir_all` with a short retry/backoff loop.
     //
@@ -804,7 +826,44 @@ async fn force_remove_dir(path: &Path) -> Result<&'static str, String> {
     }
 
     {
-        // Stage 2: strip macOS ACLs + xattrs, then retry. (`chmod +a` ACLs or a
+        // Stage 2 on Windows: clear read-only attributes, then retry.
+        #[cfg(target_os = "windows")]
+        {
+            let path_clone = path.to_path_buf();
+            let clear_res = tokio::task::spawn_blocking(move || {
+                clear_readonly_recursive(&path_clone)
+            })
+            .await
+            .map_err(|e| format!("JoinError: {}", e))
+            .and_then(|res| res.map_err(|e| format!("clear_readonly: {}", e)));
+
+            match clear_res {
+                Ok(()) => {
+                    tracing::info!("Cleared read-only attributes for {}", path.display());
+                    if let Err(e2) = tokio::fs::remove_dir_all(path).await {
+                        let stage2_msg = format!("after-clear remove_dir_all: {}", e2);
+                        tracing::info!(
+                            "force_remove_dir stage 2 failed for {}: {}",
+                            path.display(),
+                            stage2_msg
+                        );
+                        return Err(format!(
+                            "all delete strategies failed. stage 1 (remove_dir_all): {}, stage 2 (after clear_readonly): {}",
+                            stage1_msg, stage2_msg
+                        ));
+                    }
+                    return Ok("clear_readonly + remove_dir_all");
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "failed to clear read-only attributes: {}. stage 1 (remove_dir_all): {}",
+                        e, stage1_msg
+                    ));
+                }
+            }
+        }
+
+        // Stage 2 on macOS: strip macOS ACLs + xattrs, then retry. (`chmod +a` ACLs or a
         // `com.apple.quarantine` xattr can deny `delete` even with no open
         // handle.)
         #[cfg(target_os = "macos")]
@@ -874,8 +933,8 @@ async fn force_remove_dir(path: &Path) -> Result<&'static str, String> {
             Ok("chmod -RN + xattr -rc")
         }
 
-        // Non-macOS: retries exhausted; surface the last error.
-        #[cfg(not(target_os = "macos"))]
+        // Non-macOS, non-Windows: retries exhausted; surface the last error.
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             Err(stage1_msg)
         }

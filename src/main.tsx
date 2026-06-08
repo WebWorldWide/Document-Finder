@@ -6,6 +6,6 @@ import { listenAll } from "./lib/events";
 import { runStore } from "./stores/run";
 
 listenAll((ev) => runStore.apply(ev)).then((fn) => {
-  (window as any).__dfUnlisten = fn;
+  (window as unknown as { __dfUnlisten: () => void }).__dfUnlisten = fn;
 });
 render(() => <App />, document.getElementById("app")!);

@@ -43,14 +43,31 @@ impl LlmModel {
     /// Always called from `spawn_blocking`.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let backend = backend()?;
+        let force_cpu = std::env::var("DF_CPU_ONLY").is_ok() || std::env::var("GGML_NO_ACCEL").is_ok();
+        
+        if force_cpu {
+            tracing::info!("Forcing CPU-only mode for LLM model.");
+            let mut params = LlamaModelParams::default();
+            params = params.with_n_gpu_layers(0);
+            let model = LlamaModel::load_from_file(backend, path, &params)
+                .context("LlamaModel::load_from_file failed in forced CPU mode")?;
+            return Ok(Self { model });
+        }
+
         let mut params = LlamaModelParams::default();
-        // Use all available GPU layers — llama.cpp picks Metal on macOS,
-        // CUDA on NVIDIA, etc., automatically when the binary was compiled
-        // with the relevant backend.
         params = params.with_n_gpu_layers(999);
-        let model = LlamaModel::load_from_file(backend, path, &params)
-            .context("LlamaModel::load_from_file failed")?;
-        Ok(Self { model })
+        tracing::info!("Attempting to load GGUF model with GPU acceleration...");
+        match LlamaModel::load_from_file(backend, path, &params) {
+            Ok(model) => Ok(Self { model }),
+            Err(e) => {
+                tracing::warn!("Failed to load GGUF model with GPU acceleration: {}. Falling back to CPU...", e);
+                let mut cpu_params = LlamaModelParams::default();
+                cpu_params = cpu_params.with_n_gpu_layers(0);
+                let model = LlamaModel::load_from_file(backend, path, &cpu_params)
+                    .context("LlamaModel::load_from_file failed on CPU fallback")?;
+                Ok(Self { model })
+            }
+        }
     }
 
     /// Generate up to `max_tokens` from `prompt`. Stops early on EOS, or when

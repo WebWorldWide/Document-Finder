@@ -89,6 +89,7 @@ export function qualityToFlags(q: Quality): {
   }
 }
 
+// eslint-disable-next-line solid/reactivity
 if (!settings.libraryRoot) {
   api
     .defaultLibraryDir()

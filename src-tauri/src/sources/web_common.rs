@@ -51,8 +51,9 @@ pub fn looks_like_doc(url: &str) -> bool {
     if u.contains("/bitstream/") || u.contains("/download/") || u.contains("getfile") {
         return true;
     }
-    !u.ends_with(".html")
-        && !u.ends_with(".htm")
+    let path = u.split(['?', '#']).next().unwrap_or(&u);
+    !path.ends_with(".html")
+        && !path.ends_with(".htm")
         && !u.contains("/abs/")
         && !u.contains("/article/")
 }
@@ -76,6 +77,8 @@ mod tests {
         assert!(looks_like_doc("https://example.com/book.epub"));
         assert!(looks_like_doc("https://repo.edu/bitstream/123/paper"));
         assert!(!looks_like_doc("https://example.com/page.html"));
+        assert!(!looks_like_doc("https://example.com/page.html?session=123"));
+        assert!(!looks_like_doc("https://example.com/page.htm#top"));
         assert!(!looks_like_doc("https://arxiv.org/abs/1706.03762"));
     }
 }

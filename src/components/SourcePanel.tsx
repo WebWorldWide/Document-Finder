@@ -1,4 +1,4 @@
-import { For, Show, Switch, Match } from "solid-js";
+import { For, Show, Switch, Match, createMemo } from "solid-js";
 import { Check } from "lucide-solid";
 import { SOURCE_LABELS, sourceColor, sourceDesc } from "@/lib/utils";
 import type { SourceStat } from "@/stores/run";
@@ -84,7 +84,13 @@ export default function SourcePanel(props: {
   onInvert: () => void;
 }) {
   const enabledCount = () => props.sources.filter((s) => props.enabled.includes(s)).length;
-  const totalHits = () => props.sources.reduce((n, s) => n + (props.stats[s]?.hits ?? 0), 0);
+  const totalHits = createMemo(() => {
+    let sum = 0;
+    for (const s of props.sources) {
+      sum += props.stats[s]?.hits ?? 0;
+    }
+    return sum;
+  });
   return (
     <div class="df-srcpanel">
       <div class="df-srcpanel-head">

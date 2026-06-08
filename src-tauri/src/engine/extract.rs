@@ -97,9 +97,10 @@ fn extract_epub_inner(path: &Path) -> anyhow::Result<String> {
             break;
         }
         let read_cap = remaining.min(MAX_EPUB_ENTRY_BYTES);
-        let mut buf = String::new();
-        if entry.take(read_cap).read_to_string(&mut buf).is_ok() {
-            let stripped = strip_html(&buf);
+        let mut buf = Vec::new();
+        if entry.take(read_cap).read_to_end(&mut buf).is_ok() {
+            let html_str = String::from_utf8_lossy(&buf);
+            let stripped = strip_html(&html_str);
             total += stripped.len();
             chunks.push(stripped);
         }

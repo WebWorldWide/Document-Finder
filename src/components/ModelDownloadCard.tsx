@@ -1,4 +1,4 @@
-import { Show, createMemo } from "solid-js";
+import { Show, createMemo, Switch, Match } from "solid-js";
 import { Download, CheckCircle2, XCircle, Loader2, Trash2, X, RefreshCw } from "lucide-solid";
 import type { ModelInfo } from "@/lib/tauri";
 import { modelsStore } from "@/stores/models";
@@ -168,17 +168,20 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
 }
 
 function StatusIcon(props: { status: ModelInfo["status"] }) {
-  switch (props.status.kind) {
-    case "ready":
-      return <CheckCircle2 size={11} style={{ color: "var(--color-success)" }} />;
-    case "downloading":
-    case "verifying":
-      return <Loader2 size={11} class="animate-spin" />;
-    case "failed":
-      return <XCircle size={11} style={{ color: "var(--color-destructive)" }} />;
-    case "cancelled":
-      return <X size={11} style={{ color: "var(--color-foreground-muted)" }} />;
-    default:
-      return <Download size={11} style={{ color: "var(--color-foreground-muted)" }} />;
-  }
+  return (
+    <Switch fallback={<Download size={11} style={{ color: "var(--color-foreground-muted)" }} />}>
+      <Match when={props.status.kind === "ready"}>
+        <CheckCircle2 size={11} style={{ color: "var(--color-success)" }} />
+      </Match>
+      <Match when={props.status.kind === "downloading" || props.status.kind === "verifying"}>
+        <Loader2 size={11} class="animate-spin" />
+      </Match>
+      <Match when={props.status.kind === "failed"}>
+        <XCircle size={11} style={{ color: "var(--color-destructive)" }} />
+      </Match>
+      <Match when={props.status.kind === "cancelled"}>
+        <X size={11} style={{ color: "var(--color-foreground-muted)" }} />
+      </Match>
+    </Switch>
+  );
 }

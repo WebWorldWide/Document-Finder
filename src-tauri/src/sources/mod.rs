@@ -182,7 +182,7 @@ pub fn make_download_client() -> reqwest::Client {
 /// covered by [`crate::util::url_safety::PublicOnlyResolver`], installed on both
 /// HTTP clients, which filters private IPs inside reqwest's own resolution path
 /// for every hop. The two layers are complementary defence-in-depth.
-fn safe_redirect_policy() -> reqwest::redirect::Policy {
+pub(crate) fn safe_redirect_policy() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
         if attempt.previous().len() >= 10 {
             return attempt.error("too many redirects");
