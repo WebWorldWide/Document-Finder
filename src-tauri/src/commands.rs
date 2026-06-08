@@ -26,7 +26,9 @@ fn make_model_download_client() -> reqwest::Client {
         .user_agent(USER_AGENT)
         .connect_timeout(std::time::Duration::from_secs(30))
         .redirect(crate::sources::safe_redirect_policy())
-        .dns_resolver(std::sync::Arc::new(crate::util::url_safety::PublicOnlyResolver))
+        .dns_resolver(std::sync::Arc::new(
+            crate::util::url_safety::PublicOnlyResolver,
+        ))
         // Intentionally NO .timeout — model files take many minutes.
         .build()
         .expect("model http client")
@@ -830,12 +832,11 @@ async fn force_remove_dir(path: &Path) -> Result<&'static str, String> {
         #[cfg(target_os = "windows")]
         {
             let path_clone = path.to_path_buf();
-            let clear_res = tokio::task::spawn_blocking(move || {
-                clear_readonly_recursive(&path_clone)
-            })
-            .await
-            .map_err(|e| format!("JoinError: {}", e))
-            .and_then(|res| res.map_err(|e| format!("clear_readonly: {}", e)));
+            let clear_res =
+                tokio::task::spawn_blocking(move || clear_readonly_recursive(&path_clone))
+                    .await
+                    .map_err(|e| format!("JoinError: {}", e))
+                    .and_then(|res| res.map_err(|e| format!("clear_readonly: {}", e)));
 
             match clear_res {
                 Ok(()) => {

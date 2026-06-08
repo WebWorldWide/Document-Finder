@@ -69,4 +69,3 @@ pub fn ensure_free_space(target_dir: &Path, needed_bytes: u64) -> Result<(), Str
     }
     Ok(())
 }
-
