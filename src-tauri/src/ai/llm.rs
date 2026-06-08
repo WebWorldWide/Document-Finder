@@ -43,8 +43,9 @@ impl LlmModel {
     /// Always called from `spawn_blocking`.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let backend = backend()?;
-        let force_cpu = std::env::var("DF_CPU_ONLY").is_ok() || std::env::var("GGML_NO_ACCEL").is_ok();
-        
+        let force_cpu =
+            std::env::var("DF_CPU_ONLY").is_ok() || std::env::var("GGML_NO_ACCEL").is_ok();
+
         if force_cpu {
             tracing::info!("Forcing CPU-only mode for LLM model.");
             let mut params = LlamaModelParams::default();
@@ -60,7 +61,10 @@ impl LlmModel {
         match LlamaModel::load_from_file(backend, path, &params) {
             Ok(model) => Ok(Self { model }),
             Err(e) => {
-                tracing::warn!("Failed to load GGUF model with GPU acceleration: {}. Falling back to CPU...", e);
+                tracing::warn!(
+                    "Failed to load GGUF model with GPU acceleration: {}. Falling back to CPU...",
+                    e
+                );
                 let mut cpu_params = LlamaModelParams::default();
                 cpu_params = cpu_params.with_n_gpu_layers(0);
                 let model = LlamaModel::load_from_file(backend, path, &cpu_params)
