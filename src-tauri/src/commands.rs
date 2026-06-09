@@ -436,7 +436,7 @@ pub struct ExportResult {
 /// Pack a library folder as a single ZIP that's easy to upload to AI tools
 /// (Claude Projects, ChatGPT, etc.). Skips the BM25 index and OS junk.
 #[tauri::command]
-pub fn export_library_zip(
+pub async fn export_library_zip(
     state: State<'_, AppState>,
     args: ExportArgs,
 ) -> Result<ExportResult, String> {
@@ -467,61 +467,70 @@ pub fn export_library_zip(
         return Err("Export destination already exists and isn't a file.".into());
     }
 
-    // Zip into a sibling temp file, then atomically rename to the final dest only
-    // after `finish()` succeeds. This guarantees a failed export (disk-full, a
-    // source file vanishing mid-walk, a permission error) never leaves a corrupt
-    // half-written .zip at the user's chosen path — and never clobbers a prior
-    // good export of the same name. The temp lives in the SAME directory so the
-    // rename stays on one filesystem (atomic).
+    // Zipping a real library (hundreds of MB to several GB of PDFs/EPUBs) is
+    // heavy, blocking I/O + deflate. Run it on the blocking pool — NOT inline —
+    // so it never freezes the main thread / UI event loop (a sync command runs on
+    // the main thread; even an async body would block a tokio worker). The
+    // State-dependent validation above already ran; from here on we only touch
+    // owned values, so they move cleanly into the blocking task.
+    //
+    // Write into a sibling temp file, then atomically rename to the final dest
+    // only after `finish()` succeeds, so a failed export never leaves a corrupt
+    // half-written .zip (or clobbers a prior good one). The temp lives in the
+    // SAME directory so the rename stays on one filesystem (atomic).
     let tmp_path = dest_path.with_extension("zip.partial");
-    let result = (|| -> Result<usize, String> {
-        let file = std::fs::File::create(&tmp_path).map_err(|e| e.to_string())?;
-        let mut zip_writer = zip::ZipWriter::new(file);
-        let options: zip::write::FileOptions<()> = zip::write::FileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .compression_level(Some(6));
+    tauri::async_runtime::spawn_blocking(move || -> Result<ExportResult, String> {
+        let zip_once = || -> Result<usize, String> {
+            let file = std::fs::File::create(&tmp_path).map_err(|e| e.to_string())?;
+            let mut zip_writer = zip::ZipWriter::new(file);
+            let options: zip::write::FileOptions<()> = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated)
+                .compression_level(Some(6));
 
-        let root_name = src
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "library".to_string());
+            let root_name = src
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "library".to_string());
 
-        let mut count = 0usize;
-        write_zip_recursive(
-            &mut zip_writer,
-            &src,
-            &PathBuf::from(&root_name),
-            &options,
-            &mut count,
-            &args,
-        )
-        .map_err(|e| e.to_string())?;
-        // `finish()` returns the inner File; drop it so all bytes are flushed to
-        // disk before we rename.
-        let f = zip_writer.finish().map_err(|e| e.to_string())?;
-        drop(f);
-        Ok(count)
-    })();
+            let mut count = 0usize;
+            write_zip_recursive(
+                &mut zip_writer,
+                &src,
+                &PathBuf::from(&root_name),
+                &options,
+                &mut count,
+                &args,
+            )
+            .map_err(|e| e.to_string())?;
+            // `finish()` returns the inner File; drop it so all bytes are flushed
+            // to disk before we rename.
+            let f = zip_writer.finish().map_err(|e| e.to_string())?;
+            drop(f);
+            Ok(count)
+        };
 
-    let count = match result {
-        Ok(count) => count,
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp_path); // don't leave a broken partial
-            return Err(e);
-        }
-    };
+        let count = match zip_once() {
+            Ok(count) => count,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp_path); // don't leave a broken partial
+                return Err(e);
+            }
+        };
 
-    std::fs::rename(&tmp_path, &dest_path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp_path);
-        format!("could not finalize export: {e}")
-    })?;
+        std::fs::rename(&tmp_path, &dest_path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp_path);
+            format!("could not finalize export: {e}")
+        })?;
 
-    let size_bytes = std::fs::metadata(&dest_path).map(|m| m.len()).unwrap_or(0);
-    Ok(ExportResult {
-        dest: dest_path.to_string_lossy().to_string(),
-        files: count,
-        size_bytes,
+        let size_bytes = std::fs::metadata(&dest_path).map(|m| m.len()).unwrap_or(0);
+        Ok(ExportResult {
+            dest: dest_path.to_string_lossy().to_string(),
+            files: count,
+            size_bytes,
+        })
     })
+    .await
+    .map_err(|e| format!("export task failed: {e}"))?
 }
 
 fn write_zip_recursive(

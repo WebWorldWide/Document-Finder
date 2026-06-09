@@ -66,7 +66,12 @@ export default function SettingsView() {
       tries += 1;
       void modelsStore.refresh();
       const st = modelsStore.embeddingState;
-      if (st === "loaded" || st === "failed" || tries >= 30) {
+      // Keep the spinner until the worker reaches a terminal state (loaded/failed,
+      // which the df:model_status listener flips out-of-band) — capped at ~300s to
+      // match the backend WARM_TIMEOUT. The old 30-tick (~45s) cap cleared the
+      // spinner mid-download on slow connections, so a first-run warm looked
+      // "stuck/failed" and then silently became ready a minute later.
+      if (st === "loaded" || st === "failed" || tries >= 200) {
         if (pollTimer) clearInterval(pollTimer);
         pollTimer = undefined;
         setWarming(false);

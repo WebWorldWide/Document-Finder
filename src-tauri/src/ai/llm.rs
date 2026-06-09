@@ -43,30 +43,39 @@ impl LlmModel {
     /// Always called from `spawn_blocking`.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let backend = backend()?;
+        // Default to CPU-only. The GPU/Metal backend can NATIVE-ABORT (SIGABRT)
+        // during load OR during new_context/decode — NOT a catchable Rust `Err`,
+        // so the panic hook and the `Err -> CPU fallback` below can't see it, and
+        // it takes the whole app down with no recovery. This is especially likely
+        // in a quarantined, ad-hoc-signed macOS .dmg where Metal shader runtime
+        // compilation can fail. The CPU backend avoids that abort surface; the
+        // models this app runs are tiny (0.5–1.5B Q4, used for query expansion +
+        // a yes/no filter, and expansion runs concurrently with discovery), so
+        // CPU is fast enough. Power users can opt back into GPU with `DF_GPU=1`.
+        // `DF_CPU_ONLY` / `GGML_NO_ACCEL` are still honored (force CPU) for
+        // back-compat and override the opt-in.
         let force_cpu =
             std::env::var("DF_CPU_ONLY").is_ok() || std::env::var("GGML_NO_ACCEL").is_ok();
+        let try_gpu = !force_cpu && std::env::var("DF_GPU").is_ok();
 
-        if force_cpu {
-            tracing::info!("Forcing CPU-only mode for LLM model.");
-            let mut params = LlamaModelParams::default();
-            params = params.with_n_gpu_layers(0);
+        if !try_gpu {
+            tracing::info!("Loading GGUF model on CPU (set DF_GPU=1 to opt into GPU/Metal).");
+            let params = LlamaModelParams::default().with_n_gpu_layers(0);
             let model = LlamaModel::load_from_file(backend, path, &params)
-                .context("LlamaModel::load_from_file failed in forced CPU mode")?;
+                .context("LlamaModel::load_from_file failed (CPU)")?;
             return Ok(Self { model });
         }
 
-        let mut params = LlamaModelParams::default();
-        params = params.with_n_gpu_layers(999);
-        tracing::info!("Attempting to load GGUF model with GPU acceleration...");
+        tracing::info!("DF_GPU set — attempting GPU-accelerated LLM load...");
+        let params = LlamaModelParams::default().with_n_gpu_layers(999);
         match LlamaModel::load_from_file(backend, path, &params) {
             Ok(model) => Ok(Self { model }),
             Err(e) => {
                 tracing::warn!(
-                    "Failed to load GGUF model with GPU acceleration: {}. Falling back to CPU...",
+                    "GPU LLM load failed: {}. Falling back to CPU... (a native GPU abort can't be caught here)",
                     e
                 );
-                let mut cpu_params = LlamaModelParams::default();
-                cpu_params = cpu_params.with_n_gpu_layers(0);
+                let cpu_params = LlamaModelParams::default().with_n_gpu_layers(0);
                 let model = LlamaModel::load_from_file(backend, path, &cpu_params)
                     .context("LlamaModel::load_from_file failed on CPU fallback")?;
                 Ok(Self { model })

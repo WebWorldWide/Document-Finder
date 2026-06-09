@@ -1,6 +1,6 @@
 [package]
 name = "document-finder"
-version = "0.1.1"
+version = "0.1.2"
 description = "Find, download, and bundle open-access documents for AI conversational awareness"
 authors = ["Web World Wide"]
 license = "AGPL-3.0-or-later"

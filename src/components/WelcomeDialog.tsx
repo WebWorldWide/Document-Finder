@@ -20,11 +20,16 @@ export default function WelcomeDialog() {
     void modelsStore.ensureSubscribed();
   });
 
-  const open = () =>
-    !settings.aiOnboardingDismissed &&
-    !modelsStore.embeddingReady &&
-    !modelsStore.llmReady &&
-    modelsStore.state.models.length > 0;
+  // Gate ONLY on the explicit one-time dismiss flag (+ the registry having
+  // loaded). Previously this ALSO required !embeddingReady && !llmReady, but the
+  // default "Balanced" preset auto-caches the BGE embedding on the first search
+  // (warm_in_background_implicit), and that cache lives in the bundle-identifier
+  // app-data dir — so after a single search `embeddingReady` is permanently true
+  // and the welcome modal NEVER appears again, even though the user never saw or
+  // dismissed it. The dismiss flag is the real source of truth for "has the user
+  // been through onboarding"; tying visibility to a background cache side-effect
+  // also made the modal vanish out from under the user mid-download.
+  const open = () => !settings.aiOnboardingDismissed && modelsStore.state.models.length > 0;
 
   const totalModelSize = () =>
     modelsStore.state.models
@@ -72,10 +77,15 @@ export default function WelcomeDialog() {
   }
 
   function downloadDefaults() {
+    // The embedding model isn't a registry entry (it's fastembed-managed), so
+    // "Download both" must download the default LLM AND warm the embedding —
+    // otherwise it only fetches the LLM and the default "Balanced" preset (which
+    // needs the embedding for semantic rerank) is never set up.
     const defaults = modelsStore.state.models.filter((m) => m.is_default);
     for (const m of defaults) {
       void modelsStore.download(m.id);
     }
+    void modelsStore.warmEmbedding();
   }
 
   return (

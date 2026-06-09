@@ -608,8 +608,11 @@ export default function FindTab() {
               </div>
             </div>
 
-            {/* SPEED STRIP */}
-            <Show when={rs().running || currentMbps() > 0}>
+            {/* SPEED STRIP — only while a run is live. Previously also shown when
+                `currentMbps() > 0`, which left a frozen throughput number, stale
+                avg, and a static sparkline visible after the run ended (the
+                sampler doesn't zero speedHist on stop). */}
+            <Show when={rs().running}>
               <div class="df-speed">
                 <div class="df-speed-item">
                   <span class="df-speed-num">
