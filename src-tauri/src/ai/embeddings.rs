@@ -382,7 +382,16 @@ fn warm_inner(app: AppHandle) {
     if LOADED.load(Ordering::SeqCst) || WARMING.swap(true, Ordering::SeqCst) {
         return;
     }
-    tokio::task::spawn_blocking(move || {
+    // MUST use Tauri's runtime-agnostic spawner, NOT `tokio::task::spawn_blocking`.
+    // This is reached from the SYNCHRONOUS `warm_embedding` #[tauri::command]
+    // (the Settings "Download" button), which Tauri runs on the main thread with
+    // NO tokio runtime entered. `tokio::task::spawn_blocking` there panics ("must
+    // be called from the context of a Tokio runtime"), and that panic unwinding
+    // back across the C++/WebKit FFI boundary aborts the whole app (observed as a
+    // SIGABRT on macOS). `tauri::async_runtime::spawn_blocking` uses Tauri's global
+    // runtime handle, so it works from the main thread AND from the in-search
+    // (already-in-runtime) caller.
+    tauri::async_runtime::spawn_blocking(move || {
         let cache = match cache_dir(&app) {
             Ok(c) => c,
             Err(e) => {
