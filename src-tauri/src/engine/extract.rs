@@ -129,7 +129,12 @@ static BLOCK_CLOSE: Lazy<Regex> = Lazy::new(|| {
         .unwrap()
 });
 static ANY_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").unwrap());
-static ENTITY: Lazy<Regex> = Lazy::new(|| Regex::new(r"&(amp|lt|gt|quot|nbsp|#39|apos);").unwrap());
+// Named entities plus generic numeric (`&#8217;`) and hex (`&#x2019;`) forms.
+// Publisher EPUB/HTML encodes most punctuation and accented characters
+// numerically, so only handling a fixed named set left literal `&#8217;` tokens
+// polluting the extracted text (and degrading TF-IDF / embedding ranking).
+static ENTITY: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"&(amp|lt|gt|quot|nbsp|apos|#[xX][0-9a-fA-F]+|#[0-9]+);").unwrap());
 
 pub fn strip_html(html: &str) -> String {
     let s = SCRIPT_RE.replace_all(html, "");
@@ -139,16 +144,35 @@ pub fn strip_html(html: &str) -> String {
     let with_breaks = BLOCK_CLOSE.replace_all(&with_breaks, "\n");
     let no_tags = ANY_TAG.replace_all(&with_breaks, "");
     let decoded = ENTITY.replace_all(&no_tags, |caps: &regex::Captures| {
-        match &caps[1] {
-            "amp" => "&",
-            "lt" => "<",
-            "gt" => ">",
-            "quot" => "\"",
-            "nbsp" => " ",
-            "#39" | "apos" => "'",
-            _ => "",
+        let body = &caps[1];
+        match body {
+            "amp" => "&".to_string(),
+            "lt" => "<".to_string(),
+            "gt" => ">".to_string(),
+            "quot" => "\"".to_string(),
+            "nbsp" => " ".to_string(),
+            "apos" => "'".to_string(),
+            _ => {
+                // Numeric `#NNN` / hex `#xHH` entity → map the codepoint to a
+                // char. `char::from_u32` rejects surrogates / out-of-range values
+                // (e.g. `&#xD800;`); we also drop NUL (`&#0;`), which is a valid
+                // Rust char but must never land in extracted text. Drop rather
+                // than panic on anything invalid.
+                let cp = if let Some(hex) =
+                    body.strip_prefix("#x").or_else(|| body.strip_prefix("#X"))
+                {
+                    u32::from_str_radix(hex, 16).ok()
+                } else if let Some(dec) = body.strip_prefix('#') {
+                    dec.parse::<u32>().ok()
+                } else {
+                    None
+                };
+                cp.and_then(char::from_u32)
+                    .filter(|&c| c != '\0')
+                    .map(|c| c.to_string())
+                    .unwrap_or_default()
+            }
         }
-        .to_string()
     });
     decoded.into_owned()
 }
@@ -169,5 +193,16 @@ mod tests {
     #[test]
     fn strip_html_decodes_entities() {
         assert_eq!(strip_html("<p>foo &amp; bar</p>").trim(), "foo & bar");
+    }
+
+    #[test]
+    fn strip_html_decodes_numeric_and_hex_entities() {
+        // &#8217; = ’ (curly apostrophe), &#x2019; = ’, &#233; = é, &#39; = '
+        assert_eq!(
+            strip_html("<p>it&#8217;s caf&#233; &#x2014; ok&#39;s</p>").trim(),
+            "it’s café — ok's"
+        );
+        // Invalid/surrogate codepoints are dropped, not panicked on.
+        assert_eq!(strip_html("<p>a&#xD800;b&#0;c</p>").trim(), "abc");
     }
 }

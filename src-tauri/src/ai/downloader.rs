@@ -68,6 +68,22 @@ pub async fn download(
         let _ = tokio::fs::remove_file(&final_path).await;
     }
 
+    // Complete-but-unrenamed `.partial` recovery: if the process was killed
+    // between SHA verification and the atomic rename, a fully-downloaded partial
+    // is sitting on disk. For SHA-pinned entries, verify it and just promote it
+    // rather than resuming (which would 416) or re-downloading ~2 GB.
+    if !final_path.exists()
+        && !entry.sha256.is_empty()
+        && partial_path.exists()
+        && verify_sha256(&partial_path, entry.sha256)
+            .await
+            .unwrap_or(false)
+    {
+        tokio::fs::rename(&partial_path, &final_path).await?;
+        emit_status(&app, entry.id, "ready", Some("resumed from cache".into()));
+        return Ok(final_path);
+    }
+
     // Disk-space precheck before we commit to writing 2 GB. Subtract anything
     // already on disk in the partial so resume of a 90%-done file doesn't
     // false-positive on a near-full disk.
@@ -89,25 +105,45 @@ pub async fn download(
     let mut start = already_partial;
 
     let url = entry.download_url();
-    let mut req = client.get(&url);
-    if start > 0 {
-        req = req.header("Range", format!("bytes={}-", start));
-    }
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            // Distinguish connect/DNS errors from generic transport errors so
-            // the user sees something they can act on.
-            let detail = if e.is_connect() {
-                format!("could not connect to huggingface.co: {}", e)
-            } else if e.is_timeout() {
-                format!("connection timed out: {}", e)
-            } else {
-                format!("network error: {}", e)
-            };
-            emit_status(&app, entry.id, "failed", Some(detail.clone()));
-            return Err(anyhow::anyhow!(detail));
+    // Issue the (possibly ranged) request, retrying once from byte 0 if the
+    // server answers 416 Range Not Satisfiable. A 416 means our `.partial` is at
+    // or past EOF (a complete-but-unrenamed partial that failed the SHA check
+    // above, a non-pinned complete partial, or a stale oversized one). Without
+    // this, the partial is never cleared and every retry repeats the same opaque
+    // "HTTP 416", permanently bricking the download until the user hand-deletes
+    // the file.
+    let resp = loop {
+        let mut req = client.get(&url);
+        if start > 0 {
+            req = req.header("Range", format!("bytes={}-", start));
         }
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                // Distinguish connect/DNS errors from generic transport errors so
+                // the user sees something they can act on.
+                let detail = if e.is_connect() {
+                    format!("could not connect to huggingface.co: {}", e)
+                } else if e.is_timeout() {
+                    format!("connection timed out: {}", e)
+                } else {
+                    format!("network error: {}", e)
+                };
+                emit_status(&app, entry.id, "failed", Some(detail.clone()));
+                return Err(anyhow::anyhow!(detail));
+            }
+        };
+        if resp.status().as_u16() == 416 && start > 0 {
+            tracing::warn!(
+                "model {} download: 416 resuming from byte {} — discarding stale .partial and restarting from 0",
+                entry.id,
+                start
+            );
+            let _ = tokio::fs::remove_file(&partial_path).await;
+            start = 0;
+            continue;
+        }
+        break resp;
     };
 
     let status = resp.status();

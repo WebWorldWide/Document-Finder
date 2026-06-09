@@ -152,9 +152,23 @@ fn is_private_v6(v6: &Ipv6Addr) -> bool {
         || (v6.segments()[0] & 0xFE00 == 0xFC00)
         // Link-local fe80::/10
         || (v6.segments()[0] & 0xFFC0 == 0xFE80)
-        // NAT64 well-known prefix 64:ff9b::/96 — can translate to an internal
-        // IPv4 on a NAT64 network.
-        || (v6.segments()[0..6] == [0x0064, 0xFF9B, 0, 0, 0, 0])
+        // NAT64 well-known prefix 64:ff9b::/96. On IPv6-only / NAT64 networks
+        // (common on mobile carriers) the OS synthesizes these to reach PUBLIC
+        // IPv4 hosts — that's the normal path to the internet, so blocking the
+        // whole prefix would make legitimate sources unreachable. Judge it by the
+        // EMBEDDED IPv4 (low 32 bits, RFC 6052 /96 layout) instead: block only
+        // when that resolves to a private address. `to_ipv4()` can't extract it
+        // here (the high 96 bits are non-zero), so pull it from segments [6]/[7].
+        || {
+            let s = v6.segments();
+            s[0..6] == [0x0064, 0xFF9B, 0, 0, 0, 0]
+                && is_private_v4(&Ipv4Addr::new(
+                    (s[6] >> 8) as u8,
+                    (s[6] & 0xff) as u8,
+                    (s[7] >> 8) as u8,
+                    (s[7] & 0xff) as u8,
+                ))
+        }
         // Embedded IPv4 — judge by the embedded address so neither the modern
         // ::ffff:a.b.c.d (IPv4-mapped) NOR the deprecated-but-parseable
         // ::a.b.c.d (IPv4-compatible) form can smuggle 127.0.0.1 /
@@ -206,6 +220,17 @@ mod tests {
         // smuggle loopback / metadata past the v6 classifier.
         assert!(is_private_ip(&"::127.0.0.1".parse().unwrap()));
         assert!(is_private_ip(&"::169.254.169.254".parse().unwrap()));
+    }
+
+    #[test]
+    fn nat64_is_judged_by_embedded_v4() {
+        // 64:ff9b::/96 to a PUBLIC IPv4 is the normal path on NAT64 networks —
+        // must be allowed; only a private-embedded address is blocked.
+        assert!(!is_private_ip(&"64:ff9b::1.1.1.1".parse().unwrap()));
+        assert!(!is_private_ip(&"64:ff9b::8.8.8.8".parse().unwrap()));
+        assert!(is_private_ip(&"64:ff9b::127.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"64:ff9b::10.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"64:ff9b::169.254.169.254".parse().unwrap()));
     }
 
     #[test]

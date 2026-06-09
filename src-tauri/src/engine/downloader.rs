@@ -431,7 +431,14 @@ where
         ));
     }
 
-    let mut file = match File::create(&out).await {
+    // Stream into a sibling `.part` temp, then atomically rename to `out` only
+    // after the bytes pass every validation. This guarantees the FINAL path never
+    // holds a truncated body, so the resume-skip check above (which trusts a
+    // 4-byte magic header) can never accept a half-written file left behind by a
+    // crash / kill / power-loss mid-stream. One temp per doc-slug, in the same
+    // dir, so the rename stays on one filesystem (atomic on all target OSes).
+    let tmp = out.with_extension("part");
+    let mut file = match File::create(&tmp).await {
         Ok(f) => f,
         Err(e) => return DownloadOutcome::Failed(format!("Couldn't create the file on disk: {e}")),
     };
@@ -443,7 +450,7 @@ where
             c = stream.next() => c,
             _ = cancel.cancelled() => {
                 drop(file);
-                let _ = tokio::fs::remove_file(&out).await;
+                let _ = tokio::fs::remove_file(&tmp).await;
                 return DownloadOutcome::Cancelled;
             }
         };
@@ -452,7 +459,7 @@ where
             Ok(c) => c,
             Err(e) => {
                 drop(file);
-                let _ = tokio::fs::remove_file(&out).await;
+                let _ = tokio::fs::remove_file(&tmp).await;
                 return DownloadOutcome::Failed(network_error_message(&e));
             }
         };
@@ -461,13 +468,13 @@ where
         }
         if let Err(e) = file.write_all(&chunk).await {
             drop(file);
-            let _ = tokio::fs::remove_file(&out).await;
+            let _ = tokio::fs::remove_file(&tmp).await;
             return DownloadOutcome::Failed(format!("Couldn't save the file to disk: {e}"));
         }
         downloaded += chunk.len() as u64;
         if downloaded > MAX_FILE_BYTES {
             drop(file);
-            let _ = tokio::fs::remove_file(&out).await;
+            let _ = tokio::fs::remove_file(&tmp).await;
             return DownloadOutcome::Failed(format!(
                 "This file is too large to download (over {} MB).",
                 MAX_FILE_BYTES / 1024 / 1024
@@ -490,29 +497,45 @@ where
         force: true,
     });
 
+    // fsync before rename so a power loss right after the rename can't surface a
+    // metadata-but-no-data file; flush alone doesn't reach the disk.
     if let Err(e) = file.flush().await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return DownloadOutcome::Failed(format!("Couldn't finish saving the file to disk: {e}"));
+    }
+    if let Err(e) = file.sync_all().await {
+        let _ = tokio::fs::remove_file(&tmp).await;
         return DownloadOutcome::Failed(format!("Couldn't finish saving the file to disk: {e}"));
     }
     drop(file);
 
-    let size = match tokio::fs::metadata(&out).await {
+    // Validate the TEMP file before promoting it.
+    let size = match tokio::fs::metadata(&tmp).await {
         Ok(m) => m.len(),
-        Err(e) => return DownloadOutcome::Failed(format!("Couldn't read the saved file: {e}")),
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return DownloadOutcome::Failed(format!("Couldn't read the saved file: {e}"));
+        }
     };
     if size == 0 {
-        let _ = tokio::fs::remove_file(&out).await;
+        let _ = tokio::fs::remove_file(&tmp).await;
         return DownloadOutcome::Failed("The server returned no data.".to_string());
     }
     if size < MIN_DOC_BYTES {
-        let _ = tokio::fs::remove_file(&out).await;
+        let _ = tokio::fs::remove_file(&tmp).await;
         return DownloadOutcome::Failed(format!(
             "The server returned only {size} bytes — likely an error page, not the document."
         ));
     }
-
-    if let Some(reason) = check_magic_bytes(&out).await {
-        let _ = tokio::fs::remove_file(&out).await;
+    if let Some(reason) = check_magic_bytes(&tmp).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
         return DownloadOutcome::Failed(reason);
+    }
+
+    // All checks passed — atomically publish the complete file.
+    if let Err(e) = tokio::fs::rename(&tmp, &out).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return DownloadOutcome::Failed(format!("Couldn't finalize the download: {e}"));
     }
 
     DownloadOutcome::Saved(out)

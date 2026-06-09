@@ -45,15 +45,27 @@ impl MergedDoc {
 /// when embedded in URLs (e.g. `.full`, `.pdf`, `.html`).
 pub fn extract_doi(s: &str) -> Option<String> {
     let raw = DOI_RE.find(s)?.as_str().to_lowercase();
-    let trimmed = raw.trim_end_matches(['.', ',', ')', ';']);
-    let stripped = trimmed
-        .trim_end_matches(".full")
-        .trim_end_matches(".abstract")
-        .trim_end_matches(".pdf")
-        .trim_end_matches(".html")
-        .trim_end_matches(".xml")
-        .trim_end_matches('.');
-    Some(stripped.to_string())
+    let mut cur = raw.trim_end_matches(['.', ',', ')', ';']).to_string();
+    // Strip the known trailing resource suffixes to a FIXED POINT. A single pass
+    // is order-dependent: `10.1234/abc.full.pdf` would only lose `.pdf` (`.full`
+    // is checked while `.pdf` is still attached), yielding `...abc.full`, while a
+    // source linking `...abc.full` directly normalizes to `...abc` — the same DOI
+    // ends up with two different dedup keys and the duplicate survives. Looping
+    // collapses every stacked ordering to the same key. We keep the suffix set
+    // EXPLICIT (not a generic `.<ext>` strip) because DOIs legitimately contain
+    // dots (e.g. `10.1234/journal.pone.0012345`).
+    const SUFFIXES: &[&str] = &[".full", ".abstract", ".pdf", ".html", ".xml"];
+    loop {
+        let before = cur.len();
+        for suf in SUFFIXES {
+            cur = cur.trim_end_matches(suf).to_string();
+        }
+        cur = cur.trim_end_matches('.').to_string();
+        if cur.len() == before {
+            break;
+        }
+    }
+    Some(cur)
 }
 
 /// Title normalization for fuzzy matching. Lowercases, strips punctuation,
@@ -181,7 +193,14 @@ impl Deduplicator {
                         .source_ranks
                         .push((source_id.to_string(), rank));
                     self.by_url.insert(doc.url.clone(), idx);
-                    self.by_title.insert(norm, idx);
+                    // Deliberately do NOT bind this doc's normalized title to the
+                    // bucket. This merge was justified by author+year+prefix
+                    // corroboration, NOT full-title equality, and `norm` differs
+                    // from the anchor's title by construction (step 3 already
+                    // failed). Inserting it would let a later, genuinely-distinct
+                    // paper whose real title normalizes to `norm` get wrongly
+                    // merged here via step 3 and silently dropped. `by_url` (above)
+                    // and the `by_author_year` anchor already capture this doc.
                     return AddOutcome::Merged(idx);
                 }
             }
@@ -245,6 +264,25 @@ mod tests {
             Some("10.1038/nature12373".to_string())
         );
         assert_eq!(extract_doi("https://example.com/article.html"), None);
+    }
+
+    #[test]
+    fn extract_doi_collapses_stacked_suffixes_order_independently() {
+        let want = Some("10.1234/abc".to_string());
+        for url in [
+            "https://doi.org/10.1234/abc.full.pdf",
+            "https://doi.org/10.1234/abc.pdf.full",
+            "https://doi.org/10.1234/abc.full.abstract.xml",
+            "https://doi.org/10.1234/abc.full",
+            "https://doi.org/10.1234/abc",
+        ] {
+            assert_eq!(extract_doi(url), want, "failed for {url}");
+        }
+        // Interior dots that are part of the DOI must be preserved.
+        assert_eq!(
+            extract_doi("https://doi.org/10.1234/journal.pone.0012345.pdf"),
+            Some("10.1234/journal.pone.0012345".to_string())
+        );
     }
 
     #[test]

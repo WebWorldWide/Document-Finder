@@ -78,12 +78,13 @@ impl Source for GutenbergSource {
                 if yielded >= limit {
                     return None;
                 }
-                let resp = match client.get(&url).send().await {
-                    Ok(r) => match r.error_for_status() {
-                        Ok(r) => r,
-                        Err(e) => return Some((Err(e.into()), (None, yielded))),
-                    },
-                    Err(e) => return Some((Err(e.into()), (None, yielded))),
+                // gutendex rate-limits; route through the shared retry helper so a
+                // single transient 429/5xx backs off and retries instead of ending
+                // the whole Gutenberg stream. It paginates by absolute `next` URL
+                // (query already embedded), so we pass an empty query slice.
+                let resp = match super::get_with_retry(&client, &url, &[]).await {
+                    Ok(r) => r,
+                    Err(e) => return Some((Err(e), (None, yielded))),
                 };
                 let data: Resp = match resp.json().await {
                     Ok(d) => d,

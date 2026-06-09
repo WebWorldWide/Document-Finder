@@ -25,11 +25,18 @@ fn make_model_download_client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .connect_timeout(std::time::Duration::from_secs(30))
+        // Per-read (idle) timeout: a half-open connection that stalls mid-stream
+        // (peer sends no bytes and no FIN — common on flaky mobile/VPN links)
+        // would otherwise hang `stream.next()` forever, freezing the download at a
+        // stale byte count until the user cancels. Each received chunk resets this
+        // window, so slow-but-progressing downloads are unaffected. Mirrors
+        // `make_download_client` in sources/mod.rs.
+        .read_timeout(std::time::Duration::from_secs(60))
         .redirect(crate::sources::safe_redirect_policy())
         .dns_resolver(std::sync::Arc::new(
             crate::util::url_safety::PublicOnlyResolver,
         ))
-        // Intentionally NO .timeout — model files take many minutes.
+        // Intentionally NO overall .timeout — model files take many minutes.
         .build()
         .expect("model http client")
 }
@@ -171,15 +178,27 @@ pub async fn start_run(
         let app2 = app.clone();
         tokio::spawn(async move {
             use tauri::Emitter;
-            let result = run_pipeline(app2.clone(), req, token).await;
-            // Clear token regardless of outcome.
-            if let Some(state) = app2.try_state::<AppState>() {
-                let mut cur = state
-                    .current_cancel
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                *cur = None;
+            // RAII guard: clears the run's cancel token on EVERY exit of this
+            // task — including a panic unwind from deep inside run_pipeline. Without
+            // it, a single pipeline panic would leave `current_cancel` stuck as
+            // `Some`, so every future `start_run` returns "a run is already in
+            // progress" until the app restarts. The guard re-acquires AppState via
+            // the AppHandle (State<'_> can't cross the spawn boundary).
+            struct ClearTokenOnDrop(AppHandle);
+            impl Drop for ClearTokenOnDrop {
+                fn drop(&mut self) {
+                    if let Some(state) = self.0.try_state::<AppState>() {
+                        let mut cur = state
+                            .current_cancel
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        *cur = None;
+                    }
+                }
             }
+            let _clear_guard = ClearTokenOnDrop(app2.clone());
+
+            let result = run_pipeline(app2.clone(), req, token).await;
             if let Err(e) = result {
                 let _ = app2.emit(
                     EV_ERROR,
@@ -321,8 +340,26 @@ pub async fn list_libraries(
                 size_bytes: folder_size_bytes(&path_clone),
             }))
         })
-        .await
-        .map_err(|e| e.to_string())??;
+        .await;
+        // A single corrupt, locked (Windows AV / SQLITE_BUSY), or partially-written
+        // `library.db` must NOT take down the whole scan — that would make EVERY
+        // healthy library vanish from the UI. Log it and skip the bad folder,
+        // matching the tolerant migration block above.
+        let info = match info {
+            Ok(Ok(info)) => info,
+            Ok(Err(e)) => {
+                tracing::warn!("list_libraries: skipping {}: {}", path.display(), e);
+                continue;
+            }
+            Err(join_err) => {
+                tracing::warn!(
+                    "list_libraries: skipping {} (worker panicked): {}",
+                    path.display(),
+                    join_err
+                );
+                continue;
+            }
+        };
         if let Some(info) = info {
             out.push(info);
         }
@@ -429,28 +466,55 @@ pub fn export_library_zip(
     if dest_path.exists() && !dest_path.is_file() {
         return Err("Export destination already exists and isn't a file.".into());
     }
-    let file = std::fs::File::create(&dest_path).map_err(|e| e.to_string())?;
-    let mut zip_writer = zip::ZipWriter::new(file);
-    let options: zip::write::FileOptions<()> = zip::write::FileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .compression_level(Some(6));
 
-    let root_name = src
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "library".to_string());
+    // Zip into a sibling temp file, then atomically rename to the final dest only
+    // after `finish()` succeeds. This guarantees a failed export (disk-full, a
+    // source file vanishing mid-walk, a permission error) never leaves a corrupt
+    // half-written .zip at the user's chosen path — and never clobbers a prior
+    // good export of the same name. The temp lives in the SAME directory so the
+    // rename stays on one filesystem (atomic).
+    let tmp_path = dest_path.with_extension("zip.partial");
+    let result = (|| -> Result<usize, String> {
+        let file = std::fs::File::create(&tmp_path).map_err(|e| e.to_string())?;
+        let mut zip_writer = zip::ZipWriter::new(file);
+        let options: zip::write::FileOptions<()> = zip::write::FileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .compression_level(Some(6));
 
-    let mut count = 0usize;
-    write_zip_recursive(
-        &mut zip_writer,
-        &src,
-        &PathBuf::from(&root_name),
-        &options,
-        &mut count,
-        &args,
-    )
-    .map_err(|e| e.to_string())?;
-    zip_writer.finish().map_err(|e| e.to_string())?;
+        let root_name = src
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "library".to_string());
+
+        let mut count = 0usize;
+        write_zip_recursive(
+            &mut zip_writer,
+            &src,
+            &PathBuf::from(&root_name),
+            &options,
+            &mut count,
+            &args,
+        )
+        .map_err(|e| e.to_string())?;
+        // `finish()` returns the inner File; drop it so all bytes are flushed to
+        // disk before we rename.
+        let f = zip_writer.finish().map_err(|e| e.to_string())?;
+        drop(f);
+        Ok(count)
+    })();
+
+    let count = match result {
+        Ok(count) => count,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp_path); // don't leave a broken partial
+            return Err(e);
+        }
+    };
+
+    std::fs::rename(&tmp_path, &dest_path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path);
+        format!("could not finalize export: {e}")
+    })?;
 
     let size_bytes = std::fs::metadata(&dest_path).map(|m| m.len()).unwrap_or(0);
     Ok(ExportResult {
@@ -588,11 +652,56 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
     }
     #[cfg(target_os = "linux")]
     {
-        let parent = p.parent().unwrap_or(std::path::Path::new("/"));
-        std::process::Command::new("xdg-open")
-            .arg(parent)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        use std::process::Command;
+        // A percent-encoded file:// URI for the D-Bus call below (encode every
+        // byte that isn't an RFC 3986 unreserved char, so spaces / unicode / etc.
+        // survive intact).
+        fn file_uri(p: &std::path::Path) -> String {
+            use std::os::unix::ffi::OsStrExt;
+            let mut s = String::from("file://");
+            for &b in p.as_os_str().as_bytes() {
+                match b {
+                    b'/' | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                        s.push(b as char)
+                    }
+                    _ => s.push_str(&format!("%{b:02X}")),
+                }
+            }
+            s
+        }
+
+        // A directory target: open the folder itself (not its parent).
+        if p.is_dir() {
+            Command::new("xdg-open")
+                .arg(&p)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+        // A file target: ask the freedesktop file manager to SELECT it (xdg-open
+        // has no select semantics — it would just open the containing folder with
+        // nothing highlighted). Fall back to opening the parent folder if D-Bus /
+        // a FileManager1 implementation isn't available (no session bus, sandbox).
+        let dbus_ok = Command::new("dbus-send")
+            .args([
+                "--session",
+                "--dest=org.freedesktop.FileManager1",
+                "--type=method_call",
+                "/org/freedesktop/FileManager1",
+                "org.freedesktop.FileManager1.ShowItems",
+                &format!("array:string:{}", file_uri(&p)),
+                "string:",
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !dbus_ok {
+            let parent = p.parent().unwrap_or(std::path::Path::new("/"));
+            Command::new("xdg-open")
+                .arg(parent)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 }
@@ -934,10 +1043,40 @@ async fn force_remove_dir(path: &Path) -> Result<&'static str, String> {
             Ok("chmod -RN + xattr -rc")
         }
 
-        // Non-macOS, non-Windows: retries exhausted; surface the last error.
+        // Stage 2 on Linux/other Unix: grant the owner rwx on the whole subtree,
+        // then retry. A library folder synced from another machine or restored
+        // from backup can be missing its write/execute bits, which blocks
+        // `remove_dir_all` even though the user owns the files. We use a recursive
+        // `chmod -R u+rwx` because it adds the directory execute bit TOP-DOWN — a
+        // hand-rolled bottom-up walk can't `read_dir` into a directory that is
+        // missing its own execute bit, i.e. it gets blocked by the very condition
+        // it's trying to fix. The path is already confined to the library root by
+        // the caller (`safe_within_root`), so loosening perms here is safe.
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
-            Err(stage1_msg)
+            let chmod_out = tokio::process::Command::new("chmod")
+                .arg("-R")
+                .arg("u+rwx")
+                .arg(path)
+                .output()
+                .await;
+            let chmod_ok = chmod_out
+                .as_ref()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            tracing::info!(
+                "force_remove_dir stage 2 (chmod -R u+rwx ok={}) for {}",
+                chmod_ok,
+                path.display()
+            );
+            match tokio::fs::remove_dir_all(path).await {
+                Ok(()) => Ok("chmod -R u+rwx + remove_dir_all"),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("already gone"),
+                Err(e2) => Err(format!(
+                    "all delete strategies failed. stage 1 (remove_dir_all): {}, stage 2 (after chmod -R u+rwx): {}",
+                    stage1_msg, e2
+                )),
+            }
         }
     }
 }
@@ -946,10 +1085,6 @@ async fn force_remove_dir(path: &Path) -> Result<&'static str, String> {
 // AI state reset
 // =============================================================================
 
-/// Drop loaded AI singletons so the next search re-initializes them from
-/// scratch. Called automatically by the frontend when an EV_ERROR event
-/// fires, so users can retry without restarting the app after an inference
-/// crash.
 /// Returns the bound port of the in-process SearXNG-compatible server.
 /// `None` if the server failed to bind on startup.
 #[tauri::command]
@@ -957,10 +1092,18 @@ pub fn local_searxng_port() -> Option<u16> {
     crate::sources::local_searxng::local_port()
 }
 
+/// Drop loaded AI singletons so the next search re-initializes them from
+/// scratch. Called automatically by the frontend when an EV_ERROR event
+/// fires, so users can retry without restarting the app after an inference
+/// crash.
 #[tauri::command]
 pub async fn reset_ai_state() -> Result<(), String> {
+    // Offload the embedding reset: it kill+wait()s the worker child process, a
+    // blocking syscall that must not run on the async runtime thread.
     #[cfg(feature = "ai-embeddings")]
-    crate::ai::embeddings::reset_embedding_model();
+    {
+        let _ = tokio::task::spawn_blocking(crate::ai::embeddings::reset_embedding_model).await;
+    }
     #[cfg(feature = "ai-llm")]
     crate::ai::llm::reset_llm_model();
     tracing::info!("AI state reset by user");

@@ -29,14 +29,16 @@ impl BraveHtmlSource {
 }
 
 // Brave wraps each result in a `<a class="result-header" href="...">` anchor
-// containing the title. The class set has shifted occasionally; this regex
-// tolerates additional classes around `result-header`.
-static RESULT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r#"(?is)<a\s+[^>]*class="[^"]*\bresult-header\b[^"]*"\s+[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>"#,
-    )
-    .unwrap()
-});
+// containing the title. We match in TWO stages — capture each anchor's attribute
+// blob + inner HTML, then test for the class and extract href SEPARATELY — so the
+// attribute ORDER doesn't matter. A single regex requiring class-before-href
+// silently matches nothing whenever the engine emits `href` first (HTML
+// attribute order is not guaranteed), making the whole engine contribute zero
+// without ever tripping the circuit breaker.
+static ANCHOR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?is)<a\s+([^>]*)>(.*?)</a>"#).unwrap());
+static HEADER_CLASS_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)class="[^"]*\bresult-header\b[^"]*""#).unwrap());
+static HREF_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)href="(https?://[^"]+)""#).unwrap());
 
 #[async_trait]
 impl Source for BraveHtmlSource {
@@ -93,11 +95,25 @@ impl Source for BraveHtmlSource {
 
                 let mut docs: Vec<Document> = Vec::new();
                 let mut count = 0usize;
-                for cap in RESULT_RE.captures_iter(&body) {
+                // Count RAW result rows separately from filtered `docs` so we only
+                // stop paginating on a genuinely empty page, not a page whose
+                // results all failed `looks_like_doc`.
+                let mut raw = 0usize;
+                for cap in ANCHOR_RE.captures_iter(&body) {
+                    let attrs = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                    if !HEADER_CLASS_RE.is_match(attrs) {
+                        continue; // not a result anchor at all
+                    }
+                    raw += 1;
                     if yielded + count >= limit {
                         break;
                     }
-                    let url = cap.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
+                    let url = HREF_RE
+                        .captures(attrs)
+                        .and_then(|c| c.get(1))
+                        .map(|m| m.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let title_html = cap.get(2).map(|m| m.as_str()).unwrap_or("");
                     if url.is_empty() || !looks_like_doc(&url) {
                         continue;
@@ -118,8 +134,8 @@ impl Source for BraveHtmlSource {
                     count += 1;
                 }
 
-                if docs.is_empty() {
-                    return None;
+                if raw == 0 {
+                    return None; // zero raw results on this page → end of results
                 }
                 Some((Ok(docs), (page + 1, yielded + count, false)))
             }
@@ -137,20 +153,32 @@ impl Source for BraveHtmlSource {
 mod tests {
     use super::*;
 
+    /// Extract (url, title) pairs exactly as the search loop does.
+    fn extract(html: &str) -> Vec<(String, String)> {
+        ANCHOR_RE
+            .captures_iter(html)
+            .filter_map(|cap| {
+                let attrs = cap.get(1)?.as_str();
+                if !HEADER_CLASS_RE.is_match(attrs) {
+                    return None;
+                }
+                let url = HREF_RE.captures(attrs)?.get(1)?.as_str().to_string();
+                let title = clean_title(cap.get(2)?.as_str());
+                Some((url, title))
+            })
+            .collect()
+    }
+
     #[test]
-    fn extracts_brave_result_anchor() {
-        let html = r#"
-            <div>
-              <a class="result-header svelte-xyz" href="https://example.edu/paper.pdf" tabindex="0">
-                Quantum <em>Entanglement</em> Survey
-              </a>
-            </div>
-        "#;
-        let cap = RESULT_RE.captures(html).expect("matches");
-        assert_eq!(&cap[1], "https://example.edu/paper.pdf");
-        assert_eq!(
-            clean_title(cap.get(2).unwrap().as_str()),
-            "Quantum Entanglement Survey"
-        );
+    fn extracts_brave_result_anchor_either_attribute_order() {
+        // HTML attribute order is not guaranteed — both must parse.
+        let class_first = r#"<a class="result-header svelte-xyz" href="https://example.edu/paper.pdf" tabindex="0">Quantum <em>Entanglement</em> Survey</a>"#;
+        let href_first = r#"<a href="https://example.edu/paper.pdf" class="result-header svelte-xyz" tabindex="0">Quantum <em>Entanglement</em> Survey</a>"#;
+        for html in [class_first, href_first] {
+            let got = extract(html);
+            assert_eq!(got.len(), 1, "failed to match: {html}");
+            assert_eq!(got[0].0, "https://example.edu/paper.pdf");
+            assert_eq!(got[0].1, "Quantum Entanglement Survey");
+        }
     }
 }

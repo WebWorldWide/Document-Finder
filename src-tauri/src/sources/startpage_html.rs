@@ -31,13 +31,14 @@ impl StartpageHtmlSource {
     }
 }
 
-// Startpage's main result link. Class names have been stable for ~3 years.
-static RESULT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r#"(?is)<a\s+[^>]*class="[^"]*\bw-gl__result-title\b[^"]*"\s+[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>"#,
-    )
-    .unwrap()
-});
+// Startpage's main result link (`class="w-gl__result-title"`). Two-stage match —
+// capture each anchor's attribute blob + inner HTML, then test the class and
+// extract href SEPARATELY — so attribute order doesn't matter (a class-before-href
+// regex silently matches nothing whenever `href` comes first).
+static ANCHOR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?is)<a\s+([^>]*)>(.*?)</a>"#).unwrap());
+static TITLE_CLASS_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)class="[^"]*\bw-gl__result-title\b[^"]*""#).unwrap());
+static HREF_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)href="(https?://[^"]+)""#).unwrap());
 
 #[async_trait]
 impl Source for StartpageHtmlSource {
@@ -96,11 +97,24 @@ impl Source for StartpageHtmlSource {
 
                 let mut docs: Vec<Document> = Vec::new();
                 let mut count = 0usize;
-                for cap in RESULT_RE.captures_iter(&body) {
+                // Raw result rows, counted separately from filtered `docs` so we
+                // only stop paginating on a genuinely empty page.
+                let mut raw = 0usize;
+                for cap in ANCHOR_RE.captures_iter(&body) {
+                    let attrs = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                    if !TITLE_CLASS_RE.is_match(attrs) {
+                        continue; // not a result anchor
+                    }
+                    raw += 1;
                     if yielded + count >= limit {
                         break;
                     }
-                    let url = cap.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
+                    let url = HREF_RE
+                        .captures(attrs)
+                        .and_then(|c| c.get(1))
+                        .map(|m| m.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let title_html = cap.get(2).map(|m| m.as_str()).unwrap_or("");
                     if url.is_empty() || !looks_like_doc(&url) {
                         continue;
@@ -121,8 +135,8 @@ impl Source for StartpageHtmlSource {
                     count += 1;
                 }
 
-                if docs.is_empty() {
-                    return None;
+                if raw == 0 {
+                    return None; // zero raw results on this page → end of results
                 }
                 let _ = PAGE_SIZE;
                 Some((Ok(docs), (page + 1, yielded + count, false)))
@@ -141,20 +155,30 @@ impl Source for StartpageHtmlSource {
 mod tests {
     use super::*;
 
+    fn extract(html: &str) -> Vec<(String, String)> {
+        ANCHOR_RE
+            .captures_iter(html)
+            .filter_map(|cap| {
+                let attrs = cap.get(1)?.as_str();
+                if !TITLE_CLASS_RE.is_match(attrs) {
+                    return None;
+                }
+                let url = HREF_RE.captures(attrs)?.get(1)?.as_str().to_string();
+                let title = clean_title(cap.get(2)?.as_str());
+                Some((url, title))
+            })
+            .collect()
+    }
+
     #[test]
-    fn extracts_startpage_anchor() {
-        let html = r#"
-            <div class="w-gl__result">
-              <a class="w-gl__result-title result-link" href="https://mit.edu/papers/quantum.pdf">
-                Quantum Mechanics Lecture Notes
-              </a>
-            </div>
-        "#;
-        let cap = RESULT_RE.captures(html).expect("matches");
-        assert_eq!(&cap[1], "https://mit.edu/papers/quantum.pdf");
-        assert_eq!(
-            clean_title(cap.get(2).unwrap().as_str()),
-            "Quantum Mechanics Lecture Notes"
-        );
+    fn extracts_startpage_anchor_either_attribute_order() {
+        let class_first = r#"<a class="w-gl__result-title result-link" href="https://mit.edu/papers/quantum.pdf">Quantum Mechanics Lecture Notes</a>"#;
+        let href_first = r#"<a href="https://mit.edu/papers/quantum.pdf" class="w-gl__result-title result-link">Quantum Mechanics Lecture Notes</a>"#;
+        for html in [class_first, href_first] {
+            let got = extract(html);
+            assert_eq!(got.len(), 1, "failed to match: {html}");
+            assert_eq!(got[0].0, "https://mit.edu/papers/quantum.pdf");
+            assert_eq!(got[0].1, "Quantum Mechanics Lecture Notes");
+        }
     }
 }

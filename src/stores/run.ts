@@ -204,6 +204,20 @@ function apply(ev: DfEvent) {
 
     case "found_total":
       setState("total", ev.payload.count);
+      // Discovery is over (both waves drained or hit their deadline). Resolve any
+      // source still showing "querying": when a slow source's task is aborted on
+      // the wave deadline it never emits source_done, which would otherwise leave
+      // its card spinning through the rank/download/extract phases. (Wider LLM
+      // fan-out makes more tasks hit the deadline, so this is now common.)
+      setState(
+        produce((s) => {
+          for (const id of Object.keys(s.sourceStats)) {
+            if (s.sourceStats[id]?.status === "querying") {
+              s.sourceStats[id] = { status: "done", hits: s.sourceStats[id].hits };
+            }
+          }
+        }),
+      );
       addLog("info", `Discovery complete — ${ev.payload.count} candidate(s)`);
       break;
 

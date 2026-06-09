@@ -11,7 +11,7 @@ use percent_encoding::percent_decode_str;
 use regex::Regex;
 use std::sync::Arc;
 
-use super::web_common::looks_like_doc;
+use super::web_common::{clean_title, looks_like_doc};
 use super::{Document, Source, USER_AGENT};
 
 const ENDPOINT: &str = "https://html.duckduckgo.com/html/";
@@ -33,9 +33,6 @@ static RESULT_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(?is)<a\s+rel="nofollow"\s+class="result__a"\s+href="([^"]+)"[^>]*>(.*?)</a>"#)
         .unwrap()
 });
-static TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").unwrap());
-static WS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+").unwrap());
-
 fn unwrap_ddg_redirect(href: &str) -> String {
     // DDG wraps results as //duckduckgo.com/l/?uddg=<percent-encoded-url>&...
     let h = href.trim_start_matches("//");
@@ -49,18 +46,6 @@ fn unwrap_ddg_redirect(href: &str) -> String {
     } else {
         format!("https://{h}")
     }
-}
-
-fn clean_title(html_chunk: &str) -> String {
-    let no_tags = TAG_RE.replace_all(html_chunk, "");
-    let collapsed = WS_RE.replace_all(&no_tags, " ");
-    let s = collapsed.trim();
-    s.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&apos;", "'")
 }
 
 #[async_trait]
@@ -116,7 +101,13 @@ impl Source for DuckDuckGoSource {
 
                 let mut docs: Vec<Document> = Vec::new();
                 let mut count = 0usize;
+                // Count RAW result matches separately from the filtered `docs`, so
+                // we only stop paginating when a page parsed zero results — not
+                // when a full page happened to be all landing pages that failed
+                // `looks_like_doc` (the real docs may be on page 2/3).
+                let mut raw = 0usize;
                 for cap in RESULT_RE.captures_iter(&body) {
+                    raw += 1;
                     if yielded + count >= limit {
                         break;
                     }
@@ -142,8 +133,8 @@ impl Source for DuckDuckGoSource {
                     count += 1;
                 }
 
-                if docs.is_empty() {
-                    return None;
+                if raw == 0 {
+                    return None; // zero raw results on this page → end of results
                 }
                 Some((Ok(docs), (page + 1, yielded + count, false)))
             }

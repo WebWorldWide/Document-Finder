@@ -105,7 +105,10 @@ async fn search(
         return (StatusCode::OK, Json(empty_response(params.q)));
     }
 
-    let stream = ctx.backend.search(keywords, 30).await;
+    // Match the orchestrator's default `per_source` (100) so the in-process
+    // fallback doesn't silently cap web breadth at 30 — the pool caller only
+    // `.take(limit)`s afterward, so it can never get back more than we fetch here.
+    let stream = ctx.backend.search(keywords, 100).await;
     tokio::pin!(stream);
 
     let mut results: Vec<SearchResult> = Vec::new();

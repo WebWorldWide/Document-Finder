@@ -345,8 +345,15 @@ fn contains_onnx(dir: &std::path::Path) -> bool {
 /// Drop the worker so the next call re-spawns/re-loads it. Clears the crash
 /// latch so the user can retry after `reset_ai_state`.
 pub fn reset_embedding_model() {
-    let mut guard = client_lock().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(mut c) = guard.take() {
+    // Take the worker OUT of the lock, then DROP the guard before the blocking
+    // kill+wait — never hold `client_lock` across a syscall, or a concurrent
+    // `worker_request` could stall acquiring it. `reset_ai_state` offloads this
+    // whole fn to `spawn_blocking` so the wait doesn't pin an async runtime thread.
+    let taken = {
+        let mut guard = client_lock().lock().unwrap_or_else(|e| e.into_inner());
+        guard.take()
+    };
+    if let Some(mut c) = taken {
         let _ = c.child.kill();
         let _ = c.child.wait();
     }
@@ -438,12 +445,36 @@ pub fn rerank_blocking(
 
     let query_emb = &vectors[0];
     let doc_embs = &vectors[1..];
-    for (i, doc_emb) in doc_embs.iter().enumerate() {
+    // The reranked head == the candidates we actually embedded (the top `limit`).
+    let head = doc_embs.len().min(candidates.len());
+
+    // Normalize the head's lexical scores to [0,1] BEFORE blending. Raw lexical
+    // scores are an unbounded product `(tfidf+eps) * (rrf+eps) * authority` that
+    // realistically lands in ~0.001–0.5, while cosine `sim` is already [0,1].
+    // Blending them directly let the `0.4*sim` term dominate `0.6*lexical`,
+    // collapsing the intended 60/40 weighting to ~95% semantic. Min-max over the
+    // head makes the weights meaningful again.
+    let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+    for c in candidates.iter().take(head) {
+        lo = lo.min(c.score);
+        hi = hi.max(c.score);
+    }
+    let range = hi - lo;
+    for (i, doc_emb) in doc_embs.iter().enumerate().take(head) {
         let sim = cosine(query_emb, doc_emb).clamp(0.0, 1.0);
-        candidates[i].score = 0.6 * candidates[i].score + 0.4 * sim;
+        let norm_lex = if range > f32::EPSILON {
+            (candidates[i].score - lo) / range
+        } else {
+            1.0 // all head scores equal → lexical carries no signal; rank by sim
+        };
+        candidates[i].score = 0.6 * norm_lex + 0.4 * sim;
     }
 
-    candidates.sort_by(|a, b| {
+    // Sort ONLY the reranked head. The un-reranked tail keeps its raw lexical
+    // scores and stays positionally below the head (it was already the lower-
+    // lexical remainder), so a normalized head score is never compared against an
+    // unscaled tail score.
+    candidates[..head].sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)

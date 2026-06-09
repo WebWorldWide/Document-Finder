@@ -51,9 +51,13 @@ impl Source for MarginaliaHtmlSource {
         limit: usize,
     ) -> BoxStream<'static, anyhow::Result<Document>> {
         let client = self.client.clone();
-        // Marginalia doesn't really support `filetype:`, but the keyword
-        // narrows results toward documents and doesn't hurt either way.
-        let q = format!("{} pdf OR epub", keywords.join(" "));
+        // Marginalia doesn't support `filetype:` or boolean `OR` — the bare words
+        // `pdf`, `OR`, `epub` would just become ordinary search terms, biasing
+        // results toward pages that literally contain the word "OR" and down-
+        // ranking the real targets. Query plain keywords (matching Brave / Mojeek
+        // / Startpage) and let `looks_like_doc` + the downloader's landing-page→PDF
+        // resolution filter for documents instead.
+        let q = keywords.join(" ");
 
         stream::unfold((0usize, 0usize, false), move |(page, yielded, done)| {
             let client = client.clone();
@@ -91,7 +95,11 @@ impl Source for MarginaliaHtmlSource {
 
                 let mut docs: Vec<Document> = Vec::new();
                 let mut count = 0usize;
+                // Raw result rows, counted separately from filtered `docs` so we
+                // only stop on a genuinely empty page.
+                let mut raw = 0usize;
                 for cap in RESULT_RE.captures_iter(&body) {
+                    raw += 1;
                     if yielded + count >= limit {
                         break;
                     }
@@ -116,8 +124,8 @@ impl Source for MarginaliaHtmlSource {
                     count += 1;
                 }
 
-                if docs.is_empty() {
-                    return None;
+                if raw == 0 {
+                    return None; // zero raw results on this page → end of results
                 }
                 // Marginalia only paginates via re-querying; for now we
                 // bail after one page (most queries return < PAGE_SIZE).
