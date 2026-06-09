@@ -332,7 +332,11 @@ export default function SettingsView() {
                 q="balanced"
                 label="Balanced"
                 caption={
-                  modelsStore.embeddingReady ? "+ semantic rerank · ~5s" : "needs embedding model"
+                  !modelsStore.embeddingReady
+                    ? "needs embedding model"
+                    : modelsStore.llmReady
+                      ? "+ rerank & broad sub-queries"
+                      : "+ semantic rerank · ~5s"
                 }
                 active={settings.quality === "balanced"}
                 disabled={!modelsStore.embeddingReady}
@@ -340,7 +344,7 @@ export default function SettingsView() {
               <QualityTab
                 q="thorough"
                 label="Thorough"
-                caption={modelsStore.llmReady ? "+ LLM expand & filter" : "needs LLM model"}
+                caption={modelsStore.llmReady ? "+ widest expand & filter" : "needs LLM model"}
                 active={settings.quality === "thorough"}
                 disabled={!modelsStore.llmReady}
               />
@@ -356,9 +360,9 @@ export default function SettingsView() {
               {settings.quality === "fast" &&
                 "Keyword scoring across all sources. Returns immediately. No models needed."}
               {settings.quality === "balanced" &&
-                "Adds semantic reranking via the embedding model — the top results are re-scored by query meaning, not just keyword overlap."}
+                "Adds semantic reranking via the embedding model — top results are re-scored by query meaning, not just keyword overlap. When the local LLM is installed, it also fans your search out into many related sub-queries for much broader coverage (no slowdown — it runs alongside discovery)."}
               {settings.quality === "thorough" &&
-                "Full AI pipeline: the LLM generates extra sub-queries, then semantic reranking, then an LLM pass that judges borderline results. Several seconds slower."}
+                "Full AI pipeline: the LLM fans your search into many sub-queries for the widest reach, then semantic reranking, then an LLM pass that judges borderline results. Broadest and most precise; several seconds slower."}
             </p>
             <RankingToggle
               checked={settings.useCitationGraph}

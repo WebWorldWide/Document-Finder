@@ -10,10 +10,10 @@ describe("qualityToFlags", () => {
     });
   });
 
-  it("balanced enables only semantic rerank", () => {
+  it("balanced enables semantic rerank and broad LLM expansion (no filter)", () => {
     expect(qualityToFlags("balanced")).toEqual({
       use_semantic_rerank: true,
-      use_llm_expansion: false,
+      use_llm_expansion: true,
       use_llm_filter: false,
     });
   });

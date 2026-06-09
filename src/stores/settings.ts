@@ -83,7 +83,12 @@ export function qualityToFlags(q: Quality): {
     case "fast":
       return { use_semantic_rerank: false, use_llm_expansion: false, use_llm_filter: false };
     case "balanced":
-      return { use_semantic_rerank: true, use_llm_expansion: false, use_llm_filter: false };
+      // Expansion is enabled here so the DEFAULT preset fans a search out into
+      // many related sub-queries (broad reach out-of-the-box). It runs
+      // concurrently with discovery and is a silent no-op when the local LLM
+      // model isn't installed, so Balanced still only *requires* the embedding
+      // model. The LLM relevance filter stays off (that's Thorough's extra).
+      return { use_semantic_rerank: true, use_llm_expansion: true, use_llm_filter: false };
     case "thorough":
       return { use_semantic_rerank: true, use_llm_expansion: true, use_llm_filter: true };
   }

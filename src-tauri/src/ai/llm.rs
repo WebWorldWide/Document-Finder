@@ -248,17 +248,45 @@ pub fn is_loaded() -> bool {
 // =============================================================================
 
 pub fn expansion_prompt(query: &str) -> String {
+    // Few-shot, raw-completion prompt (the model is fed un-templated — see
+    // `generate`). The worked example teaches the breadth we want: take ONE
+    // topic and fan it out into many search phrases that each hit a different
+    // facet (causes, effects, treatment, demographics, prevention, statistics,
+    // history, comparisons, …). The "Topic:/Queries:" structure lets
+    // `parse_expansion` cleanly cut the model off if it rolls into a second
+    // hallucinated example. We want WIDE reach, so we ask for many lines.
     format!(
-        "You are an expert research librarian. The user is searching for documents about: \"{}\"\n\
+        "You are an expert research librarian. Given a topic, you generate a broad set of search \
+        queries that approach it from many different angles, so a search engine surfaces the \
+        widest possible range of relevant documents. First silently fix any spelling mistakes, \
+        then output the corrected topic itself followed by many varied queries — one per line, no \
+        numbering, no quotes, no commentary. Cover whichever of these angles fit the topic: causes \
+        and risk factors; effects and consequences; treatments, solutions, and how-to; specific \
+        groups (children, teenagers, adults, by country); prevention; statistics and prevalence; \
+        history and background; definitions and overviews; symptoms or warning signs; comparisons \
+        with related topics; controversies and debates; and academic or technical framings. Do not \
+        copy the example below verbatim — it only shows the style.\n\
         \n\
-        First, silently correct any spelling mistakes or typos in the query. Then generate 5 \
-        alternative search queries — using the corrected spelling — that would surface documents \
-        about this topic from different angles. Include domain synonyms, formal/informal terms, \
-        and historical or contemporary phrasings. Put the spelling-corrected query first, then the \
-        alternatives. Output each query on its own line. No numbering, no preamble, no quotes.\n\
+        Topic: gaming addiction\n\
+        Queries:\n\
+        gaming addiction\n\
+        what causes gaming addiction\n\
+        how to overcome gaming addiction\n\
+        gaming addiction in adults\n\
+        gaming addiction in teenagers and children\n\
+        gaming addiction symptoms and warning signs\n\
+        video game addiction treatment options\n\
+        gaming addiction statistics and prevalence\n\
+        effects of gaming addiction on mental health\n\
+        preventing video game addiction\n\
+        internet gaming disorder diagnosis criteria\n\
+        gaming addiction versus gambling addiction\n\
+        online gaming addiction and social isolation\n\
+        psychology of compulsive video gaming\n\
         \n\
+        Topic: {q}\n\
         Queries:\n",
-        query
+        q = query
     )
 }
 
@@ -281,8 +309,18 @@ pub fn filter_prompt(query: &str, title: &str, abstract_: &str) -> String {
     )
 }
 
+/// How many LLM-generated sub-queries we keep, at most. Kept high on purpose:
+/// the product's value is broad reach, and discovery is throttled per-source
+/// (see `orchestrator::discover_wave`) so a wide fan-out doesn't rate-limit any
+/// single source.
+pub const MAX_EXPANSION_SUBQUERIES: usize = 24;
+
 /// Parse the LLM's expansion output into a clean Vec of unique sub-queries.
-/// Drops empty lines, common preambles, and duplicates of the original query.
+///
+/// Drops numbering/bullets/quotes, blank lines, and duplicates of the original
+/// query. The expansion prompt is few-shot with `Topic:`/`Queries:` headers, so
+/// if the model rolls past our topic into a fresh (hallucinated) example we stop
+/// at its `Topic:` line rather than ingesting that example's queries.
 pub fn parse_expansion(raw: &str, original: &str) -> Vec<String> {
     let original_lc = original.trim().to_lowercase();
     let mut out: Vec<String> = Vec::new();
@@ -290,12 +328,26 @@ pub fn parse_expansion(raw: &str, original: &str) -> Vec<String> {
     seen.insert(original_lc.clone());
 
     for line in raw.lines() {
+        let line = line.trim();
+        let lower = line.to_lowercase();
+        // A new few-shot example block begins — everything after belongs to a
+        // different topic, so cut the model off here.
+        if lower.starts_with("topic:") {
+            break;
+        }
+        // Skip the echoed section header and blank lines (don't stop on blanks:
+        // some models put a stray blank inside the list).
+        if line.is_empty() || lower.starts_with("queries:") {
+            continue;
+        }
         let trimmed = line
-            .trim()
-            .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')' || c == '-')
+            .trim_start_matches(|c: char| {
+                c.is_ascii_digit() || c == '.' || c == ')' || c == '-' || c == '*' || c == '•'
+            })
             .trim()
             .trim_matches('"')
             .trim_matches('\'')
+            .trim()
             .to_string();
         if trimmed.is_empty() || trimmed.len() < 3 || trimmed.len() > 200 {
             continue;
@@ -304,7 +356,7 @@ pub fn parse_expansion(raw: &str, original: &str) -> Vec<String> {
         if seen.insert(key) {
             out.push(trimmed);
         }
-        if out.len() >= 8 {
+        if out.len() >= MAX_EXPANSION_SUBQUERIES {
             break;
         }
     }
@@ -372,6 +424,41 @@ mod tests {
         assert!(out.contains(&"antebellum political documents".to_string()));
         assert!(out.contains(&"Reconstruction era papers".to_string()));
         assert!(!out.iter().any(|s| s.to_lowercase() == "civil war"));
+    }
+
+    #[test]
+    fn parse_expansion_stops_at_next_topic_header() {
+        // The few-shot model rolled into a second, unrelated example. We must
+        // keep only our topic's queries and drop the hallucinated continuation.
+        let raw = "gaming addiction\n\
+                   what causes gaming addiction\n\
+                   gaming addiction in adults\n\
+                   \n\
+                   Topic: climate change\n\
+                   Queries:\n\
+                   causes of climate change\n";
+        let out = parse_expansion(raw, "gaming addiction");
+        assert!(out.contains(&"what causes gaming addiction".to_string()));
+        assert!(out.contains(&"gaming addiction in adults".to_string()));
+        assert!(
+            !out.iter().any(|s| s.to_lowercase().contains("climate")),
+            "leaked a query from the next example: {out:?}"
+        );
+        // The echoed original is dropped; "Queries:" header is skipped.
+        assert!(!out
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case("gaming addiction")));
+        assert!(!out.iter().any(|s| s.to_lowercase().starts_with("queries")));
+    }
+
+    #[test]
+    fn parse_expansion_caps_output() {
+        let mut raw = String::new();
+        for i in 0..60 {
+            raw.push_str(&format!("unique sub query number {i}\n"));
+        }
+        let out = parse_expansion(&raw, "orig");
+        assert_eq!(out.len(), MAX_EXPANSION_SUBQUERIES);
     }
 
     #[test]

@@ -87,6 +87,25 @@ fn default_extract() -> bool {
     true
 }
 
+/// Max concurrent in-flight requests allowed against a single source, across
+/// ALL sub-queries in a discovery wave. With broad LLM expansion a wave can
+/// carry ~24 sub-queries; without this cap that would fire ~24 simultaneous
+/// requests at every source, instantly tripping rate limits (429), circuit
+/// breakers, and shared-pool limits — making results *worse*, not broader.
+/// Different sources still run fully in parallel with each other; this only
+/// serializes the sub-queries hitting the *same* source into small batches.
+fn source_concurrency(name: &str) -> usize {
+    match name {
+        // Each internally fans out to several engines, or rate-limits hard.
+        "meta_search" | "searxng" | "web" => 2,
+        // Semantic Scholar's public API 429s aggressively and shares a global
+        // rate pool; keep it gentle so it doesn't lock us out for the session.
+        "semantic_scholar" => 2,
+        // Structured APIs tolerate a handful of concurrent requests fine.
+        _ => 4,
+    }
+}
+
 /// Emit a stage transition. State strings: "started" | "progress" | "done"
 /// | "skipped". Helper so callsites stay tidy.
 fn emit_stage(
@@ -125,6 +144,7 @@ async fn discover_wave(
     effective_sources: &[String],
     req: &RunRequest,
     deadline: std::time::Duration,
+    source_sems: &HashMap<String, Arc<Semaphore>>,
 ) -> bool {
     let mut tasks: JoinSet<()> = JoinSet::new();
 
@@ -172,8 +192,25 @@ async fn discover_wave(
             let keywords_t = keywords.clone();
             let per_source = req.per_source;
             let max_total = req.max_total;
+            // Per-source throttle: this task holds one permit for the lifetime of
+            // its source stream, bounding concurrent requests to this source
+            // regardless of how many sub-queries the wave carries.
+            let sem = source_sems.get(sname).cloned();
 
             tasks.spawn(async move {
+                // Acquire the source permit before opening the stream. Released
+                // when `_permit` drops at the end of the task. If the semaphore
+                // is somehow missing/closed, fall through unthrottled rather than
+                // dropping the sub-query.
+                let _permit = match sem {
+                    Some(s) => s.acquire_owned().await.ok(),
+                    None => None,
+                };
+                // A cancel that arrived while we were queued on the permit: bail
+                // before spending a request.
+                if cancel_t.is_cancelled() {
+                    return;
+                }
                 let _ = app_t.emit(
                     EV_SOURCE_START,
                     SourceStartPayload {
@@ -308,10 +345,12 @@ async fn discover_wave(
     stop_early
 }
 
-/// Run the optional LLM query-expansion (Thorough) or spell-fix (Balanced) and
-/// return any extra sub-queries it produced. Built to run CONCURRENTLY with the
-/// first discovery wave so a cold model load never blocks first results. No-op
-/// (and a "skipped" stage) when the LLM feature is off or no model is on disk.
+/// Run the optional LLM query-expansion (Balanced & Thorough both enable it via
+/// `use_llm_expansion`) and return the extra sub-queries it produced. A request
+/// that asks for semantic rerank but NOT expansion falls back to a lightweight
+/// spell-fix. Built to run CONCURRENTLY with the first discovery wave so a cold
+/// model load never blocks first results. No-op (and a "skipped" stage) when the
+/// LLM feature is off or no model is on disk.
 #[cfg(not(feature = "ai-llm"))]
 async fn compute_llm_extras(
     app: &AppHandle,
@@ -366,13 +405,21 @@ async fn compute_llm_extras(
         let prompt = crate::ai::llm::expansion_prompt(&req.query);
         let original = req.query.clone();
         // Race the (blocking) generation against cancel + a hard timeout so Stop
-        // stays responsive and a wedged model can't hang the run. The cancel
-        // token is also passed *into* generate so a Stop/timeout actually ends
-        // the decode and frees the model mutex, rather than detaching a task that
-        // keeps decoding (and holding the lock) to the full token budget.
-        let cancel_gen = cancel.clone();
+        // stays responsive and a wedged model can't hang the run. We pass a CHILD
+        // of the run cancel token into generate(): a parent Stop still propagates
+        // (cancelling the decode), and on the timeout branch we cancel the child
+        // ourselves so the detached decode bails at its next per-token check and
+        // releases the model mutex — instead of running to the full token budget
+        // and blocking the next LLM stage (the filter) on the held lock. Cancelling
+        // the child leaves the run-level token untouched so the pipeline proceeds.
+        let gen_cancel = cancel.child_token();
+        let cancel_gen = gen_cancel.clone();
+        // Budget enough tokens for a wide fan-out (~24 short queries, one per
+        // line) plus the corrected-spelling original. 384 ≈ 24 lines × ~8
+        // tokens + slack; the per-token cancel check + the timeout below keep a
+        // slow CPU decode from stalling the run.
         let handle = tokio::task::spawn_blocking(move || {
-            llm.blocking_lock().generate(&prompt, 200, &cancel_gen)
+            llm.blocking_lock().generate(&prompt, 384, &cancel_gen)
         });
         let text = tokio::select! {
             biased;
@@ -380,7 +427,8 @@ async fn compute_llm_extras(
                 emit_stage(app, "llm_expand", "skipped", None, None, None);
                 return Vec::new();
             }
-            _ = tokio::time::sleep(std::time::Duration::from_secs(90)) => {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(120)) => {
+                gen_cancel.cancel(); // free the model lock from the runaway decode
                 emit_stage(app, "llm_expand", "done", None, None, Some("expansion timed out".into()));
                 return Vec::new();
             }
@@ -411,9 +459,11 @@ async fn compute_llm_extras(
         );
         extras
     } else if req.use_semantic_rerank {
-        // Balanced: lightweight spell correction (Thorough's expansion prompt
-        // already corrects spelling). Previously fully silent — now a visible
-        // stage. Loads the model on demand; no-op when none is on disk.
+        // Fallback for a custom request that wants rerank but explicitly NOT
+        // expansion: lightweight spell correction only (the expansion prompt
+        // already corrects spelling). The standard Balanced/Thorough presets
+        // both enable expansion and take the branch above; this keeps a sane
+        // behavior for anyone hand-building a RunRequest. No-op without a model.
         emit_stage(
             app,
             "llm_expand",
@@ -427,7 +477,10 @@ async fn compute_llm_extras(
             return Vec::new();
         };
         let prompt = crate::ai::llm::spellfix_prompt(&req.query);
-        let cancel_gen = cancel.clone();
+        // Same child-token pattern as the expansion branch: cancel only the decode
+        // on timeout so it releases the model mutex without aborting the run.
+        let gen_cancel = cancel.child_token();
+        let cancel_gen = gen_cancel.clone();
         let handle = tokio::task::spawn_blocking(move || {
             llm.blocking_lock().generate(&prompt, 32, &cancel_gen)
         });
@@ -438,6 +491,7 @@ async fn compute_llm_extras(
                 return Vec::new();
             }
             _ = tokio::time::sleep(std::time::Duration::from_secs(45)) => {
+                gen_cancel.cancel(); // free the model lock from the runaway decode
                 emit_stage(app, "llm_expand", "done", None, None, None);
                 return Vec::new();
             }
@@ -558,6 +612,14 @@ pub async fn run_pipeline(
     // Aggregate keyword set for ranking later — accumulated across both waves.
     let mut all_keywords: Vec<String> = Vec::new();
 
+    // One throttle per source, SHARED across both discovery waves so a wide
+    // wave-2 fan-out can't burst a source that wave 1 (or a prior cap) already
+    // had in flight. See `source_concurrency`.
+    let source_sems: HashMap<String, Arc<Semaphore>> = effective_sources
+        .iter()
+        .map(|s| (s.clone(), Arc::new(Semaphore::new(source_concurrency(s)))))
+        .collect();
+
     // Wave 1 (base sub-queries) and the LLM expansion run CONCURRENTLY: the
     // expansion's cold model load / generation happens on the blocking pool
     // while discovery streams over the network, so the user sees `found` climb
@@ -573,6 +635,7 @@ pub async fn run_pipeline(
             &effective_sources,
             &req,
             std::time::Duration::from_secs(60),
+            &source_sems,
         ),
         compute_llm_extras(&app, &req, &cancel),
     );
@@ -604,7 +667,10 @@ pub async fn run_pipeline(
                 &extras,
                 &effective_sources,
                 &req,
-                std::time::Duration::from_secs(30),
+                // A wider fan-out needs a little more wall-clock to drain through
+                // the per-source throttle; still bounded so Stop stays snappy.
+                std::time::Duration::from_secs(45),
+                &source_sems,
             )
             .await;
         }
