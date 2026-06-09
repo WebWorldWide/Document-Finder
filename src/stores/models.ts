@@ -159,6 +159,9 @@ async function ensureSubscribed() {
 
 async function download(modelId: string) {
   await ensureSubscribed();
+  // Clear any speed left over from a prior (cancelled/failed) attempt so a fresh
+  // download never briefly shows a stale ETA before the first progress event.
+  setState("bytesPerSec", modelId, 0);
   patchStatus(modelId, (m) => {
     m.status = { kind: "downloading", downloaded: 0, total: m.approx_bytes };
   });
@@ -182,6 +185,7 @@ async function cancel(modelId: string) {
 async function remove(modelId: string) {
   try {
     await api.deleteModel(modelId);
+    setState("bytesPerSec", modelId, 0);
     patchStatus(modelId, (m) => {
       m.status = { kind: "not_downloaded" };
       m.on_disk_bytes = 0;

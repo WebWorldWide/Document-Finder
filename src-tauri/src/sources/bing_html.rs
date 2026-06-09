@@ -83,7 +83,12 @@ impl Source for BingHtmlSource {
 
                 let mut docs: Vec<Document> = Vec::new();
                 let mut count = 0usize;
+                // Raw result rows, counted separately from filtered `docs` so we
+                // only stop paginating on a genuinely empty page — not a page whose
+                // results all happened to fail `looks_like_doc`.
+                let mut raw = 0usize;
                 for cap in RESULT_RE.captures_iter(&body) {
+                    raw += 1;
                     if yielded + count >= limit {
                         break;
                     }
@@ -108,8 +113,8 @@ impl Source for BingHtmlSource {
                     count += 1;
                 }
 
-                if docs.is_empty() {
-                    return None;
+                if raw == 0 {
+                    return None; // zero raw results on this page → end of results
                 }
                 Some((Ok(docs), (page + 1, yielded + count, false)))
             }

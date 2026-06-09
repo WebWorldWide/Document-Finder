@@ -14,6 +14,19 @@ use std::time::Duration;
 use super::{Document, Source};
 
 const BASE: &str = "https://export.arxiv.org/api/query";
+
+/// Build the arXiv `search_query` value (un-encoded). Terms are joined with a
+/// SPACE-delimited boolean, NOT a literal "+AND+": this string is passed to
+/// reqwest's `.query()`, which form-encodes it. A literal '+' would encode to
+/// '%2B' and arXiv would read the whole thing as one literal token (breaking the
+/// AND search); a space encodes to '+', the delimiter arXiv actually wants.
+fn search_query(keywords: &[String]) -> String {
+    keywords
+        .iter()
+        .map(|k| format!("all:{}", k))
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
 const PAGINATION_DELAY: Duration = Duration::from_secs(3);
 
 pub struct ArxivSource {
@@ -253,11 +266,7 @@ impl Source for ArxivSource {
                     return None;
                 }
                 let per_page = 100.min(limit.saturating_sub(yielded).max(1));
-                let q = keywords
-                    .iter()
-                    .map(|k| format!("all:{}", k))
-                    .collect::<Vec<_>>()
-                    .join("+AND+");
+                let q = search_query(&keywords);
                 let body = match client
                     .get(BASE)
                     .query(&[
@@ -360,5 +369,17 @@ mod tests {
         let entries =
             parse_feed("<?xml version=\"1.0\"?><feed xmlns=\"http://www.w3.org/2005/Atom\"/>");
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn search_query_joins_with_space_delimited_boolean() {
+        // Must NOT contain a literal '+' (which reqwest would encode to %2B and
+        // break arXiv's AND search). A space is what reqwest turns into the '+'
+        // delimiter arXiv expects.
+        let q = search_query(&["foo".to_string(), "bar".to_string()]);
+        assert_eq!(q, "all:foo AND all:bar");
+        assert!(!q.contains('+'), "must not pre-encode the delimiter: {q}");
+        // Single keyword: no delimiter at all.
+        assert_eq!(search_query(&["solo".to_string()]), "all:solo");
     }
 }

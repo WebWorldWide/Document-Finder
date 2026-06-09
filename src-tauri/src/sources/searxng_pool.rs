@@ -222,6 +222,18 @@ async fn query_searxng(
     .map_err(|_| anyhow::anyhow!("timeout querying {base_url}"))?
     .map_err(|e| anyhow::anyhow!("request to {base_url}: {e}"))?;
 
+    // Inspect the HTTP status BEFORE parsing. Otherwise a 429 (rate-limited) or
+    // 5xx with an HTML/Cloudflare body surfaces as a generic "parse SearXNG
+    // response" error, masking a temporarily-throttled-but-healthy instance as a
+    // broken one.
+    let status = resp.status();
+    if !status.is_success() {
+        anyhow::bail!(
+            "SearXNG instance {base_url} returned HTTP {}",
+            status.as_u16()
+        );
+    }
+
     #[derive(Deserialize)]
     struct SearxResp {
         results: Vec<SearxResult>,
@@ -325,9 +337,14 @@ impl Source for SearxngPoolSource {
         let selected: Vec<String> = {
             let n = instances.len();
             let first = seed % n;
-            let second = (seed / n.max(1) + 1) % n;
             let mut picks = vec![instances[first].clone()];
-            if n > 1 && second != first {
+            if n > 1 {
+                // Pick a GUARANTEED-distinct second instance for redundancy. The
+                // old `(seed / n + 1) % n` could alias to `first` for many
+                // seed/n pairs (e.g. n=2, even seed), silently halving coverage on
+                // the fallback path. Offsetting `first` by 1..=n-1 can never equal
+                // `first` (mod n).
+                let second = (first + 1 + (seed >> 8) % (n - 1)) % n;
                 picks.push(instances[second].clone());
             }
             picks

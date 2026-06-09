@@ -28,14 +28,14 @@ impl MojeekHtmlSource {
     }
 }
 
-// Mojeek's main result anchor. The `class="ob"` opens the result card; the
-// title is plain text inside the anchor.
-static RESULT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r#"(?is)<a\s+[^>]*class="[^"]*\bob\b[^"]*"[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>"#,
-    )
-    .unwrap()
-});
+// Mojeek's main result anchor (`class="ob"`). Two-stage match — capture each
+// anchor's attribute blob + inner HTML, then test the class and extract href
+// SEPARATELY — so attribute order doesn't matter. A class-before-href regex
+// silently matches nothing whenever Mojeek emits `href` first.
+static ANCHOR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?is)<a\s+([^>]*)>(.*?)</a>"#).unwrap());
+static OB_CLASS_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)class="[^"]*\bob\b[^"]*""#).unwrap());
+static HREF_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)href="(https?://[^"]+)""#).unwrap());
 
 #[async_trait]
 impl Source for MojeekHtmlSource {
@@ -88,11 +88,24 @@ impl Source for MojeekHtmlSource {
 
                 let mut docs: Vec<Document> = Vec::new();
                 let mut count = 0usize;
-                for cap in RESULT_RE.captures_iter(&body) {
+                // Raw result rows, counted separately from filtered `docs` so we
+                // only stop paginating on a genuinely empty page.
+                let mut raw = 0usize;
+                for cap in ANCHOR_RE.captures_iter(&body) {
+                    let attrs = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                    if !OB_CLASS_RE.is_match(attrs) {
+                        continue; // not a result anchor
+                    }
+                    raw += 1;
                     if yielded + count >= limit {
                         break;
                     }
-                    let url = cap.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
+                    let url = HREF_RE
+                        .captures(attrs)
+                        .and_then(|c| c.get(1))
+                        .map(|m| m.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let title_html = cap.get(2).map(|m| m.as_str()).unwrap_or("");
                     if url.is_empty() || !looks_like_doc(&url) {
                         continue;
@@ -113,8 +126,8 @@ impl Source for MojeekHtmlSource {
                     count += 1;
                 }
 
-                if docs.is_empty() {
-                    return None;
+                if raw == 0 {
+                    return None; // zero raw results on this page → end of results
                 }
                 Some((Ok(docs), (page + 1, yielded + count, false)))
             }
@@ -132,20 +145,30 @@ impl Source for MojeekHtmlSource {
 mod tests {
     use super::*;
 
+    fn extract(html: &str) -> Vec<(String, String)> {
+        ANCHOR_RE
+            .captures_iter(html)
+            .filter_map(|cap| {
+                let attrs = cap.get(1)?.as_str();
+                if !OB_CLASS_RE.is_match(attrs) {
+                    return None;
+                }
+                let url = HREF_RE.captures(attrs)?.get(1)?.as_str().to_string();
+                let title = clean_title(cap.get(2)?.as_str());
+                Some((url, title))
+            })
+            .collect()
+    }
+
     #[test]
-    fn extracts_mojeek_anchor() {
-        let html = r#"
-            <div>
-              <a class="ob" href="https://example.edu/papers/x.pdf" data-rank="1">
-                Example Paper Title
-              </a>
-            </div>
-        "#;
-        let cap = RESULT_RE.captures(html).expect("matches");
-        assert_eq!(&cap[1], "https://example.edu/papers/x.pdf");
-        assert_eq!(
-            clean_title(cap.get(2).unwrap().as_str()),
-            "Example Paper Title"
-        );
+    fn extracts_mojeek_anchor_either_attribute_order() {
+        let class_first = r#"<a class="ob" href="https://example.edu/papers/x.pdf" data-rank="1">Example Paper Title</a>"#;
+        let href_first = r#"<a href="https://example.edu/papers/x.pdf" class="ob" data-rank="1">Example Paper Title</a>"#;
+        for html in [class_first, href_first] {
+            let got = extract(html);
+            assert_eq!(got.len(), 1, "failed to match: {html}");
+            assert_eq!(got[0].0, "https://example.edu/papers/x.pdf");
+            assert_eq!(got[0].1, "Example Paper Title");
+        }
     }
 }
