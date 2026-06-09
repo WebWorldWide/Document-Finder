@@ -44,6 +44,12 @@ const [state, setState] = createStore<ModelsState>({
 
 let unsubProgress: UnlistenFn | null = null;
 let unsubStatus: UnlistenFn | null = null;
+// In-flight subscription promise. App.onMount + WelcomeDialog.onMount (+ Settings)
+// all call ensureSubscribed() in the same tick; without this, each passes the
+// synchronous `unsubProgress && unsubStatus` guard BEFORE the first `await listen`
+// resolves, so every model event ends up with 2-3 live listeners (leaked) and
+// fires multiple times. Sharing one promise collapses them to a single subscribe.
+let subscribing: Promise<void> | null = null;
 
 async function refresh() {
   setState("loading", true);
@@ -86,6 +92,16 @@ function patchStatus(modelId: string, mut: (m: ModelInfo) => void) {
 
 async function ensureSubscribed() {
   if (unsubProgress && unsubStatus) return;
+  if (!subscribing) {
+    subscribing = subscribeNow().catch((e) => {
+      subscribing = null; // allow a later retry if the listen() calls failed
+      throw e;
+    });
+  }
+  return subscribing;
+}
+
+async function subscribeNow() {
   unsubProgress = await listen<ModelProgressPayload>("df:model_progress", (ev) => {
     const { model_id, downloaded, total, bytes_per_sec } = ev.payload;
     setState("bytesPerSec", model_id, bytes_per_sec);
