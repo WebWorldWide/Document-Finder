@@ -1501,3 +1501,27 @@ async fn ensure_llm_loaded(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::wave_deadlines;
+
+    #[test]
+    fn wave_deadlines_scale_with_depth_and_clamp() {
+        // Light (max_total 75): just above the 60/45 floor.
+        let (w1, w2) = wave_deadlines(75);
+        assert_eq!((w1.as_secs(), w2.as_secs()), (63, 48));
+        // Balanced (500).
+        let (w1, w2) = wave_deadlines(500);
+        assert_eq!((w1.as_secs(), w2.as_secs()), (85, 65));
+        // Deep (1500).
+        let (w1, w2) = wave_deadlines(1500);
+        assert_eq!((w1.as_secs(), w2.as_secs()), (135, 105));
+        // Exhaustive (4000): clamps at the 150/120 ceiling.
+        let (w1, w2) = wave_deadlines(4000);
+        assert_eq!((w1.as_secs(), w2.as_secs()), (150, 120));
+        // Degenerate tiny cap never drops below the floor.
+        let (w1, w2) = wave_deadlines(0);
+        assert_eq!((w1.as_secs(), w2.as_secs()), (60, 45));
+    }
+}
