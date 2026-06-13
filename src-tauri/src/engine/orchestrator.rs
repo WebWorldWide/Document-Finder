@@ -446,7 +446,8 @@ async fn compute_llm_extras(
         let gen_cancel = cancel.child_token();
         let cancel_gen = gen_cancel.clone();
         let handle = tokio::task::spawn_blocking(move || {
-            llm.blocking_lock().generate(&prompt, tok_budget, &cancel_gen)
+            llm.blocking_lock()
+                .generate(&prompt, tok_budget, &cancel_gen)
         });
         let text = tokio::select! {
             biased;
