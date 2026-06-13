@@ -78,6 +78,19 @@ impl Source for GutenbergSource {
                 if yielded >= limit {
                     return None;
                 }
+                // Defense-in-depth: `data.next` is supplied by the (remote) response
+                // body, and we feed it straight back into a GET. The shared client's
+                // PublicOnlyResolver already blocks private-IP targets, but pin the
+                // host to gutendex.com too so a compromised/MITM'd response can't
+                // redirect our pagination fetch to an arbitrary public server. The
+                // initial URL is gutendex.com by construction, so this only ever
+                // rejects a tampered `next`.
+                if url::Url::parse(&url).ok().and_then(|u| u.host_str().map(str::to_owned))
+                    != Some("gutendex.com".to_string())
+                {
+                    tracing::warn!("gutenberg: refusing off-host pagination URL: {url}");
+                    return None;
+                }
                 // gutendex rate-limits; route through the shared retry helper so a
                 // single transient 429/5xx backs off and retries instead of ending
                 // the whole Gutenberg stream. It paginates by absolute `next` URL
