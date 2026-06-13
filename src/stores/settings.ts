@@ -173,18 +173,20 @@ export const INTENSITY_PRESETS: Record<DownloadIntensity, IntensityPreset> = {
     blurb: "Good for most searches — ~100/source, 500 max, 8 at a time.",
   },
   deep: {
-    perSource: 200,
-    maxTotal: 1200,
+    perSource: 250,
+    maxTotal: 1500,
     concurrency: 12,
     label: "Deep",
-    blurb: "More thorough — more results, faster, more rate-limits.",
+    blurb:
+      "More thorough — wider per-source pull, longer source deadlines, and (with the LLM) more sub-queries. Slower, more rate-limits.",
   },
   exhaustive: {
-    perSource: 400,
-    maxTotal: 3000,
+    perSource: 500,
+    maxTotal: 4000,
     concurrency: 16,
     label: "Exhaustive",
-    blurb: "Everything we can find — slowest, heaviest on sources.",
+    blurb:
+      "Widest possible reach — biggest caps, longest deadlines, most sub-queries and the largest semantic-rerank pool. Slowest, heaviest on sources.",
   },
 };
 

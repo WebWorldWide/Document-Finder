@@ -330,7 +330,7 @@ export default function SettingsView() {
               <QualityTab
                 q="fast"
                 label="Fast"
-                caption="Lexical only · instant"
+                caption="Broad search · instant"
                 active={settings.quality === "fast"}
               />
               <QualityTab
@@ -363,11 +363,11 @@ export default function SettingsView() {
               }}
             >
               {settings.quality === "fast" &&
-                "Keyword scoring across all sources. Returns immediately. No models needed."}
+                "Casts a wide net with no AI models needed: every search automatically fans out into several related sub-queries across all sources, then ranks by keyword relevance. Returns immediately."}
               {settings.quality === "balanced" &&
-                "Adds semantic reranking via the embedding model — top results are re-scored by query meaning, not just keyword overlap. When the local LLM is installed, it also fans your search out into many related sub-queries for much broader coverage (no slowdown — it runs alongside discovery)."}
+                "Everything in Fast's broad sub-query fan-out, plus semantic reranking via the embedding model — top results are re-scored by query meaning, not just keyword overlap. When the local LLM is installed, it widens the fan-out even further with AI-generated sub-queries (no slowdown — it runs alongside discovery)."}
               {settings.quality === "thorough" &&
-                "Full AI pipeline: the LLM fans your search into many sub-queries for the widest reach, then semantic reranking, then an LLM pass that judges borderline results. Broadest and most precise; several seconds slower."}
+                "Full AI pipeline: the LLM fans your search into the widest set of sub-queries, then semantic reranking, then an LLM pass that judges borderline results. Broadest and most precise; several seconds slower."}
             </p>
             <RankingToggle
               checked={settings.useCitationGraph}
