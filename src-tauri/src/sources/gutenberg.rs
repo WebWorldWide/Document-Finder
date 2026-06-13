@@ -85,7 +85,9 @@ impl Source for GutenbergSource {
                 // redirect our pagination fetch to an arbitrary public server. The
                 // initial URL is gutendex.com by construction, so this only ever
                 // rejects a tampered `next`.
-                if url::Url::parse(&url).ok().and_then(|u| u.host_str().map(str::to_owned))
+                if url::Url::parse(&url)
+                    .ok()
+                    .and_then(|u| u.host_str().map(str::to_owned))
                     != Some("gutendex.com".to_string())
                 {
                     tracing::warn!("gutenberg: refusing off-host pagination URL: {url}");

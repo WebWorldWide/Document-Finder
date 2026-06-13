@@ -263,7 +263,10 @@ mod tests {
     fn broad_covers_every_topic_first() {
         let r = expand_query_broad("Christian bibles, scholarly texts, and patristic writings");
         // Each topic's focused phrase appears before any relaxation.
-        assert_eq!(&r[0..3], &["Christian bibles", "scholarly texts", "patristic writings"]);
+        assert_eq!(
+            &r[0..3],
+            &["Christian bibles", "scholarly texts", "patristic writings"]
+        );
     }
 
     #[test]
