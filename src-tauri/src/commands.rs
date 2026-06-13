@@ -798,12 +798,14 @@ pub async fn download_model(
     let entry =
         registry::find(&model_id).ok_or_else(|| format!("unknown model id: {}", model_id))?;
 
-    if state.is_downloading(&model_id) {
+    let token = tokio_util::sync::CancellationToken::new();
+    // Atomically reserve the slot AND register the cancel token in one locked
+    // step. The old check-then-register left a TOCTOU window where two concurrent
+    // download_model calls for the same id could both pass `is_downloading` and
+    // race onto the same `.partial` file, corrupting it.
+    if !state.try_begin_download(&model_id, token.clone()) {
         return Err(format!("model {} is already downloading", model_id));
     }
-
-    let token = tokio_util::sync::CancellationToken::new();
-    state.register_cancel(&model_id, token.clone());
     state.set_status(
         &model_id,
         ModelStatus::Downloading {
@@ -820,7 +822,49 @@ pub async fn download_model(
 
     // Spawn so the command returns immediately; progress streams via events.
     tokio::spawn(async move {
+        // RAII guard: if this task UNWINDS (a panic deep in the download path)
+        // before reaching a terminal status, flip the model out of "downloading"
+        // and emit a `failed` status event — otherwise the UI card would spin
+        // forever with no event to unstick it. Disarmed on normal completion,
+        // which records the real terminal status just below.
+        struct FailOnPanic {
+            app: AppHandle,
+            model_id: String,
+            armed: bool,
+        }
+        impl Drop for FailOnPanic {
+            fn drop(&mut self) {
+                if !self.armed {
+                    return;
+                }
+                use tauri::Emitter;
+                if let Some(state) = self.app.try_state::<AiState>() {
+                    state.clear_cancel(&self.model_id);
+                    state.set_status(
+                        &self.model_id,
+                        ModelStatus::Failed {
+                            msg: "download task crashed".to_string(),
+                        },
+                    );
+                }
+                let _ = self.app.emit(
+                    crate::events::EV_MODEL_STATUS,
+                    crate::events::ModelStatusPayload {
+                        model_id: self.model_id.clone(),
+                        status: "failed".to_string(),
+                        detail: Some("download task crashed".to_string()),
+                    },
+                );
+            }
+        }
+        let mut panic_guard = FailOnPanic {
+            app: app_for_task.clone(),
+            model_id: model_id_for_task.clone(),
+            armed: true,
+        };
+
         let result = ai::downloader::download(app_for_task.clone(), client, entry, token).await;
+        panic_guard.armed = false; // reached a normal terminal state; record it below
         if let Some(state) = app_for_task.try_state::<AiState>() {
             state.clear_cancel(&model_id_for_task);
             match &result {

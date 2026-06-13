@@ -54,32 +54,33 @@ impl AiState {
             .unwrap_or(ModelStatus::NotDownloaded)
     }
 
-    pub fn register_cancel(&self, model_id: &str, token: CancellationToken) {
-        if let Ok(mut c) = self.cancels.lock() {
-            c.insert(model_id.to_string(), token);
+    /// Atomically reserve the download slot for `model_id`: registers `token` and
+    /// returns `true` only if no download was already in flight for that id.
+    /// Combining the contains-check and the insert under a single lock acquisition
+    /// closes a TOCTOU window where two concurrent `download_model` calls for the
+    /// same id could both pass a separate `is_downloading` check and then race
+    /// onto the same `.partial` file, corrupting it.
+    pub fn try_begin_download(&self, model_id: &str, token: CancellationToken) -> bool {
+        let mut c = self.cancels.lock().unwrap_or_else(|e| e.into_inner());
+        if c.contains_key(model_id) {
+            return false;
         }
+        c.insert(model_id.to_string(), token);
+        true
     }
 
     pub fn cancel_download(&self, model_id: &str) {
-        if let Ok(mut c) = self.cancels.lock() {
-            if let Some(t) = c.remove(model_id) {
-                t.cancel();
-            }
+        // Recover from a poisoned lock (matches set_status) so a prior panic in a
+        // cancel-map holder can't silently disable cancellation for the session.
+        let mut c = self.cancels.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(t) = c.remove(model_id) {
+            t.cancel();
         }
     }
 
     pub fn clear_cancel(&self, model_id: &str) {
-        if let Ok(mut c) = self.cancels.lock() {
-            c.remove(model_id);
-        }
-    }
-
-    pub fn is_downloading(&self, model_id: &str) -> bool {
-        self.cancels
-            .lock()
-            .ok()
-            .map(|c| c.contains_key(model_id))
-            .unwrap_or(false)
+        let mut c = self.cancels.lock().unwrap_or_else(|e| e.into_inner());
+        c.remove(model_id);
     }
 }
 
