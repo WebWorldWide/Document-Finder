@@ -44,6 +44,9 @@ const [state, setState] = createStore<ModelsState>({
 
 let unsubProgress: UnlistenFn | null = null;
 let unsubStatus: UnlistenFn | null = null;
+// Per-model auto-clear timers for the activity badge, so a fresh event can cancel
+// the previous one (see the activity handler).
+const activityTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 // In-flight subscription promise. App.onMount + WelcomeDialog.onMount (+ Settings)
 // all call ensureSubscribed() in the same tick; without this, each passes the
 // synchronous `unsubProgress && unsubStatus` guard BEFORE the first `await listen`
@@ -135,17 +138,19 @@ async function subscribeNow() {
         setState("embeddingError", null);
       }
       setState("activity", model_id, { status, detail });
-      // Auto-clear activity after 5s of silence.
-      setTimeout(() => {
-        const cur = state.activity[model_id];
-        if (cur?.status === status && cur?.detail === detail) {
-          setState(
-            "activity",
-            produce((a) => {
-              delete a[model_id];
-            }),
-          );
-        }
+      // Auto-clear after 5s of silence. Cancel any prior timer for this model so a
+      // fresh event always restarts the window — otherwise a stale timer from an
+      // earlier (identical) event could clear a still-active badge early, and rapid
+      // repeats would stack uncancelled timers.
+      if (activityTimers[model_id]) clearTimeout(activityTimers[model_id]);
+      activityTimers[model_id] = setTimeout(() => {
+        delete activityTimers[model_id];
+        setState(
+          "activity",
+          produce((a) => {
+            delete a[model_id];
+          }),
+        );
       }, 5000);
       return;
     }

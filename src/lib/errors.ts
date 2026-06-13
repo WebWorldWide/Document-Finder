@@ -9,7 +9,10 @@ import { SOURCE_LABELS } from "./utils";
 export function humanizeDownloadError(raw: string | undefined | null): string {
   if (!raw) return "The download didn't complete.";
   const r = raw.toLowerCase();
-  const code = raw.match(/\b(4\d\d|5\d\d)\b/)?.[1];
+  // Match an ACTUAL HTTP status (the backend formats these as "(HTTP 404)"), not
+  // any stray 3-digit number — otherwise a message like "only 500 bytes — likely
+  // an error page" gets misread as a 5xx server problem.
+  const code = raw.match(/\bHTTP\s*(\d{3})\b/i)?.[1];
   if (code === "400")
     return "The download link was rejected by the server — it may have expired or need a login. Skipped.";
   if (code === "401" || code === "403")
