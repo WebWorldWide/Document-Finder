@@ -318,11 +318,13 @@ pub fn filter_prompt(query: &str, title: &str, abstract_: &str) -> String {
     )
 }
 
-/// How many LLM-generated sub-queries we keep, at most. Kept high on purpose:
-/// the product's value is broad reach, and discovery is throttled per-source
-/// (see `orchestrator::discover_wave`) so a wide fan-out doesn't rate-limit any
-/// single source.
-pub const MAX_EXPANSION_SUBQUERIES: usize = 24;
+/// Hard ceiling on LLM-generated sub-queries `parse_expansion` will return. The
+/// orchestrator applies a *depth-scaled* cap below this (24 on Balanced, up to 40
+/// on Exhaustive); this const is the absolute upper bound so a runaway model
+/// can't flood discovery. Kept high on purpose: the product's value is broad
+/// reach, and discovery is throttled per-source (see `orchestrator::discover_wave`)
+/// so a wide fan-out doesn't rate-limit any single source.
+pub const MAX_EXPANSION_SUBQUERIES: usize = 48;
 
 /// Parse the LLM's expansion output into a clean Vec of unique sub-queries.
 ///

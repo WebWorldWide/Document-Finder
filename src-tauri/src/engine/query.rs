@@ -95,6 +95,107 @@ pub fn expand_query(q: &str) -> Vec<String> {
     }
 }
 
+/// Push `phrase` into `out` unless an equivalent search (same keyword *set*,
+/// order-independent) was already added. Two phrasings that reduce to the same
+/// keywords collapse to a single sub-query so the fan-out never fires redundant
+/// requests at a source.
+fn push_unique_subquery(
+    phrase: String,
+    keywords: &[String],
+    out: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+) {
+    if keywords.is_empty() {
+        return;
+    }
+    let mut sig: Vec<String> = keywords.iter().map(|k| k.to_lowercase()).collect();
+    sig.sort();
+    let key = sig.join(" ");
+    if seen.insert(key) {
+        out.push(phrase);
+    }
+}
+
+/// Model-free breadth expansion. Widens a query into several recall-biased
+/// sub-queries WITHOUT needing the optional local LLM, so a fresh install (no
+/// models) still fans out from the very first search.
+///
+/// `expand_query` only *splits* a multi-topic query on conjunctions, so a normal
+/// single-topic query ("machine learning in healthcare") collapses to ONE
+/// sub-query and discovery stays narrow. This adds "drop one keyword"
+/// relaxations: fewer ANDed terms → more matches, while still staying on-topic
+/// (each relaxation keeps all-but-one of the salient terms). Downstream ranking
+/// re-tightens precision, so broadening here only raises recall. The output is
+/// capped so the per-source throttle in `orchestrator::discover_wave` isn't
+/// overwhelmed by a wide wave-1 fan-out.
+///
+/// Examples:
+/// - "machine learning in healthcare" → the full phrase + "learning healthcare",
+///   "machine healthcare", "machine learning".
+/// - "climate change" (2 terms) → just the phrase (dropping one of two leaves a
+///   lone generic word, which would pull off-topic noise).
+/// - "bibles, scholarly texts, and patristic writings" → each topic's focused
+///   phrase first, then per-topic relaxations.
+pub fn expand_query_broad(q: &str) -> Vec<String> {
+    /// Upper bound on wave-1 sub-queries. Each one fans out across every enabled
+    /// source (subject to the per-source concurrency throttle), so this trades
+    /// recall against per-source request volume.
+    const MAX_SUBQUERIES: usize = 8;
+
+    // Pre-tokenize each topical part once. Fall back to raw whitespace tokens if
+    // stopword-stripping leaves nothing, so we always search *something*.
+    let parsed: Vec<(String, Vec<String>)> = expand_query(q)
+        .iter()
+        .map(|part| {
+            let kws = parse_query(part);
+            let kws = if kws.is_empty() {
+                part.split_whitespace().map(String::from).collect()
+            } else {
+                kws
+            };
+            (part.trim().to_string(), kws)
+        })
+        .collect();
+
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    // Pass 1: the focused full phrase for every topic (precision first, so a
+    // truncation only ever drops relaxations — never a whole topic).
+    for (phrase, kws) in &parsed {
+        push_unique_subquery(phrase.clone(), kws, &mut out, &mut seen);
+    }
+
+    // Pass 2: drop-one relaxations. Only worthwhile with >= 3 terms.
+    for (_, kws) in &parsed {
+        if out.len() >= MAX_SUBQUERIES {
+            break;
+        }
+        if kws.len() < 3 {
+            continue;
+        }
+        for i in 0..kws.len() {
+            if out.len() >= MAX_SUBQUERIES {
+                break;
+            }
+            let subset: Vec<String> = kws
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, k)| k.clone())
+                .collect();
+            push_unique_subquery(subset.join(" "), &subset, &mut out, &mut seen);
+        }
+    }
+
+    if out.is_empty() {
+        // Mirror expand_query's never-empty contract.
+        out.push(q.to_string());
+    }
+    out.truncate(MAX_SUBQUERIES);
+    out
+}
+
 /// Folder-safe slug derived from a query string.
 /// A short Unix timestamp suffix is appended so concurrent or repeated runs
 /// with similar queries never collide on the same output directory.
@@ -137,6 +238,46 @@ mod tests {
     fn expand_ampersand() {
         let r = expand_query("foo & bar");
         assert_eq!(r, vec!["foo", "bar"]);
+    }
+
+    #[test]
+    fn broad_expands_single_topic_with_drop_one() {
+        let r = expand_query_broad("machine learning in healthcare");
+        // Focused phrase is first.
+        assert_eq!(r[0], "machine learning in healthcare");
+        // Drop-one relaxations are present (keyword-joined, "in" is a stopword).
+        assert!(r.iter().any(|s| s == "learning healthcare"));
+        assert!(r.iter().any(|s| s == "machine healthcare"));
+        assert!(r.iter().any(|s| s == "machine learning"));
+        assert_eq!(r.len(), 4);
+    }
+
+    #[test]
+    fn broad_keeps_two_term_query_focused() {
+        // Dropping one of two terms leaves a lone generic word — don't broaden.
+        let r = expand_query_broad("climate change");
+        assert_eq!(r, vec!["climate change"]);
+    }
+
+    #[test]
+    fn broad_covers_every_topic_first() {
+        let r = expand_query_broad("Christian bibles, scholarly texts, and patristic writings");
+        // Each topic's focused phrase appears before any relaxation.
+        assert_eq!(&r[0..3], &["Christian bibles", "scholarly texts", "patristic writings"]);
+    }
+
+    #[test]
+    fn broad_is_capped_and_never_empty() {
+        let r = expand_query_broad("alpha beta gamma delta epsilon zeta eta theta");
+        assert!(r.len() <= 8, "exceeded cap: {}", r.len());
+        assert!(!expand_query_broad("the of and a").is_empty());
+    }
+
+    #[test]
+    fn broad_dedups_equivalent_searches() {
+        // Single keyword after stopword-strip → exactly one sub-query, no dup.
+        let r = expand_query_broad("the therapy");
+        assert_eq!(r, vec!["the therapy"]);
     }
 
     #[test]

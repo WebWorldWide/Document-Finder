@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 use tokio::task::JoinSet;
@@ -15,7 +16,7 @@ use super::db::DbManager;
 use super::dedup::Deduplicator;
 use super::downloader::{download, DownloadOutcome};
 use super::extract::extract_text;
-use super::query::{expand_query, parse_query, safe_folder};
+use super::query::{expand_query_broad, parse_query, safe_folder};
 use super::ranking::{flag_rejects, rank_candidates, RankedDoc};
 use super::runlog;
 use crate::events::*;
@@ -104,6 +105,24 @@ fn source_concurrency(name: &str) -> usize {
         // Structured APIs tolerate a handful of concurrent requests fine.
         _ => 4,
     }
+}
+
+/// Wave deadlines derived from the run's discovery cap (`max_total`). The
+/// user-facing "Download depth" slider only moves per_source/max_total/
+/// concurrency; deriving the wave deadlines from `max_total` here lets that one
+/// slider also grant slow sources (Internet Archive's per-item metadata
+/// lookups, arXiv's mandatory 3s page delay, multi-page web scraping) more time
+/// to drain before a wave is force-stopped — without ever unbounding Stop/abort
+/// (a user cancel still races the deadline and wins within ~1s).
+///
+///   max_total   75 (Light)       → 60s / 45s
+///   max_total  500 (Balanced)    → 85s / 65s
+///   max_total 1200 (Deep)        → 120s / 93s
+///   max_total 3000+ (Exhaustive) → 150s / 120s (clamped)
+fn wave_deadlines(max_total: usize) -> (Duration, Duration) {
+    let w1 = (60 + max_total / 20).clamp(60, 150) as u64;
+    let w2 = (45 + max_total / 25).clamp(45, 120) as u64;
+    (Duration::from_secs(w1), Duration::from_secs(w2))
 }
 
 /// Emit a stage transition. State strings: "started" | "progress" | "done"
@@ -412,14 +431,22 @@ async fn compute_llm_extras(
         // releases the model mutex — instead of running to the full token budget
         // and blocking the next LLM stage (the filter) on the held lock. Cancelling
         // the child leaves the run-level token untouched so the pipeline proceeds.
+        // Breadth scales the LLM fan-out: deeper runs ask for more sub-queries and
+        // a proportionally larger token budget. Balanced keeps the historical
+        // ~24 lines / 384 tokens. The per-token cancel check + the timeout below
+        // keep a slow CPU decode from stalling the run regardless of the budget.
+        let max_expansions = if req.max_total >= 2000 {
+            40
+        } else if req.max_total >= 1000 {
+            32
+        } else {
+            24
+        };
+        let tok_budget = (max_expansions * 14 + 96).clamp(384, 700);
         let gen_cancel = cancel.child_token();
         let cancel_gen = gen_cancel.clone();
-        // Budget enough tokens for a wide fan-out (~24 short queries, one per
-        // line) plus the corrected-spelling original. 384 ≈ 24 lines × ~8
-        // tokens + slack; the per-token cancel check + the timeout below keep a
-        // slow CPU decode from stalling the run.
         let handle = tokio::task::spawn_blocking(move || {
-            llm.blocking_lock().generate(&prompt, 384, &cancel_gen)
+            llm.blocking_lock().generate(&prompt, tok_budget, &cancel_gen)
         });
         let text = tokio::select! {
             biased;
@@ -440,7 +467,10 @@ async fn compute_llm_extras(
                 }
             }
         };
-        let extras = crate::ai::llm::parse_expansion(&text, &original);
+        let mut extras = crate::ai::llm::parse_expansion(&text, &original);
+        // Enforce the depth-scaled cap (parse_expansion only applies the hard
+        // ceiling); Balanced keeps 24, deeper runs allow more.
+        extras.truncate(max_expansions);
         let n = extras.len() as u64;
         if n > 0 {
             tracing::info!("LLM expanded query into {} extras", n);
@@ -526,7 +556,12 @@ pub async fn run_pipeline(
     // loading — LLM expansion runs concurrently and folds its extra sub-queries
     // in as wave 2. (Previously the LLM ran *before* discovery, so the whole run
     // sat at 0 found / 0 saved until the model finished loading + generating.)
-    let base = expand_query(&req.query);
+    //
+    // `expand_query_broad` (not the plain split) gives wave 1 a model-free
+    // fan-out — drop-one keyword relaxations — so a fresh install with no LLM
+    // still casts a wide net from the first search instead of running a single
+    // narrow sub-query.
+    let base = expand_query_broad(&req.query);
 
     runlog::log(runlog::Event::RunStart {
         query: &req.query,
@@ -620,11 +655,17 @@ pub async fn run_pipeline(
         .map(|s| (s.clone(), Arc::new(Semaphore::new(source_concurrency(s)))))
         .collect();
 
+    // Depth-scaled wave deadlines: a deeper run gives slow sources more time to
+    // drain before the wave is force-stopped. See `wave_deadlines`.
+    let (wave1_deadline, wave2_deadline) = wave_deadlines(req.max_total);
+
     // Wave 1 (base sub-queries) and the LLM expansion run CONCURRENTLY: the
     // expansion's cold model load / generation happens on the blocking pool
     // while discovery streams over the network, so the user sees `found` climb
     // immediately instead of staring at a frozen 0/0 card during the load.
-    let (stop_early, llm_extras) = tokio::join!(
+    // `_stop_early` (wave 1 hit its deadline / drained naturally) no longer gates
+    // wave 2 — see the wave-2 comment below. A user cancel is handled separately.
+    let (_stop_early, llm_extras) = tokio::join!(
         discover_wave(
             &app,
             &client,
@@ -634,15 +675,21 @@ pub async fn run_pipeline(
             &base,
             &effective_sources,
             &req,
-            std::time::Duration::from_secs(60),
+            wave1_deadline,
             &source_sems,
         ),
         compute_llm_extras(&app, &req, &cancel),
     );
 
     // Wave 2: fold in any LLM-derived sub-queries we don't already have, merging
-    // into the same dedup. Skipped if wave 1 was cancelled or hit its deadline.
-    if !stop_early && !cancel.is_cancelled() {
+    // into the same dedup. Gated ONLY on the user not having cancelled and there
+    // still being room under max_total — deliberately NOT on whether wave 1 hit
+    // its deadline. Previously a slow wave 1 that hit its deadline discarded the
+    // entire LLM expansion, which is exactly backwards for a deep/thorough run
+    // (the LLM fan-out is the main breadth multiplier). Skipping only when the
+    // dedup is already full avoids spawning a wave that can add nothing.
+    let room_left = dedup.lock().await.len() < req.max_total;
+    if !cancel.is_cancelled() && room_left {
         let extras: Vec<String> = llm_extras
             .into_iter()
             .filter(|q| !base.iter().any(|b| b.eq_ignore_ascii_case(q)))
@@ -668,8 +715,9 @@ pub async fn run_pipeline(
                 &effective_sources,
                 &req,
                 // A wider fan-out needs a little more wall-clock to drain through
-                // the per-source throttle; still bounded so Stop stays snappy.
-                std::time::Duration::from_secs(45),
+                // the per-source throttle; depth-scaled but still bounded so Stop
+                // stays snappy.
+                wave2_deadline,
                 &source_sems,
             )
             .await;
@@ -759,7 +807,12 @@ pub async fn run_pipeline(
     // user gets no error, just lexical-only ranking.
     #[cfg(feature = "ai-embeddings")]
     if req.use_semantic_rerank && !cancel.is_cancelled() && crate::ai::embeddings::is_loaded() {
-        let to_rerank = ranked.len().min(100) as u64;
+        // Depth-scaled rerank pool: re-embed up to a quarter of the discovery cap
+        // (was a hardcoded 100), so a deep run semantically re-scores far more
+        // than just the top 100. Clamped at 400 to keep the single embedding
+        // batch (and its memory) bounded.
+        let rerank_pool = (req.max_total / 4).clamp(100, 400);
+        let to_rerank = ranked.len().min(rerank_pool) as u64;
         emit_stage(
             &app,
             "semantic_rerank",
@@ -790,7 +843,7 @@ pub async fn run_pipeline(
                 &app_for_rerank,
                 &query_for_rerank,
                 &mut taken,
-                100,
+                rerank_pool,
             );
             (taken, res)
         })
