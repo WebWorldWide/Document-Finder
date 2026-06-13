@@ -26,7 +26,16 @@ use super::startpage_html::StartpageHtmlSource;
 use super::{Document, Source};
 use crate::events::{MetaSearchHealthPayload, EV_META_SEARCH_HEALTH};
 
-const BACKEND_TIMEOUT: Duration = Duration::from_secs(8);
+/// Per-engine wall-clock budget within one fan-out, scaled with the requested
+/// `limit` (per_source) so a deeper run lets each scraper paginate further before
+/// it's cut off. Bounded at 20s so one slow engine can't stall the aggregator
+/// (which itself runs under the orchestrator's depth-scaled wave deadline).
+///   limit  25 (Light)      →  10s
+///   limit 100 (Balanced)   →  16s
+///   limit 200+ (Deep/Exh.) →  20s (clamped)
+fn backend_timeout(limit: usize) -> Duration {
+    Duration::from_secs((8 + limit / 12).clamp(8, 20) as u64)
+}
 const CIRCUIT_OPEN_FAILURES: u32 = 3;
 const CIRCUIT_OPEN_DURATION: Duration = Duration::from_secs(300);
 
@@ -161,6 +170,7 @@ impl Source for MetaSearchSource {
         limit: usize,
     ) -> BoxStream<'static, anyhow::Result<Document>> {
         let per_engine_limit = limit.max(8);
+        let engine_budget = backend_timeout(per_engine_limit);
         let (tx, rx) = mpsc::channel::<anyhow::Result<Document>>(64);
 
         // Determine active engines after circuit-breaker check.
@@ -192,7 +202,7 @@ impl Source for MetaSearchSource {
 
                 let stream = stream.take(per_engine_limit);
                 tokio::pin!(stream);
-                let result = tokio::time::timeout(BACKEND_TIMEOUT, async {
+                let result = tokio::time::timeout(engine_budget, async {
                     while let Some(item) = stream.next().await {
                         if item.is_ok() {
                             count += 1;

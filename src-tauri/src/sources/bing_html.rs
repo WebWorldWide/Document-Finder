@@ -14,7 +14,7 @@ use super::web_common::{clean_title, looks_like_doc};
 use super::{Document, Source, USER_AGENT};
 
 const ENDPOINT: &str = "https://www.bing.com/search";
-const MAX_PAGES: usize = 4;
+const MAX_PAGES: usize = 6;
 const PAGE_SIZE: usize = 10; // Bing's `first` param uses 1, 11, 21, 31 …
 
 pub struct BingHtmlSource {

@@ -135,7 +135,12 @@ impl Source for InternetArchiveSource {
                 if done || yielded >= limit {
                     return None;
                 }
-                let per_page: usize = 50;
+                // Constant across pages (depends only on `limit`, not `yielded`):
+                // IA paginates by page *number* with a fixed `rows`, so a per-page
+                // size that shrank as `yielded` grew would misalign the offsets and
+                // skip results. Raised from a flat 50 so deep runs pull more per
+                // page (bounded by `.take(limit)` downstream).
+                let per_page: usize = limit.clamp(50, 100);
                 let params = [
                     ("q", q),
                     ("fl[]", "identifier".to_string()),
