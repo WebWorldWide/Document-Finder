@@ -1,4 +1,4 @@
-import { Show, createMemo } from "solid-js";
+import { Show, For, createMemo } from "solid-js";
 import { Brain, Sparkles, Loader2 } from "lucide-solid";
 import { modelsStore } from "@/stores/models";
 
@@ -14,30 +14,32 @@ export default function ModelStatusBadge() {
   return (
     <Show when={activities().length > 0}>
       <div class="flex items-center gap-1.5">
-        {activities().map((a) => (
-          <span
-            class="surface-pressed-sm animate-pulse-soft inline-flex items-center gap-1 px-2.5 py-0.5 text-[10px] font-medium"
-            style={{ "border-radius": "var(--radius-pill)" }}
-          >
-            <Show
-              when={a.status === "embedding"}
-              fallback={
-                <Show
-                  when={a.status === "llm_warming"}
-                  fallback={<Brain size={10} class="text-amber-500" />}
-                >
-                  <Loader2 size={10} class="animate-spin text-amber-500" />
-                </Show>
-              }
+        <For each={activities()}>
+          {(a) => (
+            <span
+              class="surface-pressed-sm animate-pulse-soft inline-flex items-center gap-1 px-2.5 py-0.5 text-[10px] font-medium"
+              style={{ "border-radius": "var(--radius-pill)" }}
             >
-              <Sparkles size={10} class="text-[var(--color-primary)]" />
-            </Show>
-            <span class="text-[var(--color-foreground)]">{labelFor(a.status)}</span>
-            <Show when={a.detail}>
-              <span class="text-[var(--color-muted-foreground)]">{a.detail}</span>
-            </Show>
-          </span>
-        ))}
+              <Show
+                when={a.status === "embedding"}
+                fallback={
+                  <Show
+                    when={a.status === "llm_warming"}
+                    fallback={<Brain size={10} class="text-amber-500" />}
+                  >
+                    <Loader2 size={10} class="animate-spin text-amber-500" />
+                  </Show>
+                }
+              >
+                <Sparkles size={10} class="text-[var(--color-primary)]" />
+              </Show>
+              <span class="text-[var(--color-foreground)]">{labelFor(a.status)}</span>
+              <Show when={a.detail}>
+                <span class="text-[var(--color-muted-foreground)]">{a.detail}</span>
+              </Show>
+            </span>
+          )}
+        </For>
       </div>
     </Show>
   );
