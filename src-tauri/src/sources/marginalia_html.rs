@@ -127,10 +127,12 @@ impl Source for MarginaliaHtmlSource {
                 if raw == 0 {
                     return None; // zero raw results on this page → end of results
                 }
-                // Marginalia only paginates via re-querying; for now we
-                // bail after one page (most queries return < PAGE_SIZE).
+                // Marginalia has no stable offset/page parameter on this endpoint,
+                // so a second request would just refetch the identical first page
+                // (every doc then deduped away — a wasted round-trip). Stop after
+                // one page. PAGE_SIZE is retained only as documentation.
                 let _ = PAGE_SIZE;
-                Some((Ok(docs), (page + 1, yielded + count, page >= 1)))
+                Some((Ok(docs), (page + 1, yielded + count, true)))
             }
         })
         .flat_map(|res: anyhow::Result<Vec<Document>>| match res {

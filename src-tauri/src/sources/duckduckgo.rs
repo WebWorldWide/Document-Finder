@@ -15,7 +15,7 @@ use super::web_common::{clean_title, looks_like_doc};
 use super::{Document, Source, USER_AGENT};
 
 const ENDPOINT: &str = "https://html.duckduckgo.com/html/";
-const MAX_PAGES: usize = 5;
+const MAX_PAGES: usize = 8;
 const PAGE_SIZE: usize = 30;
 
 pub struct DuckDuckGoSource {
