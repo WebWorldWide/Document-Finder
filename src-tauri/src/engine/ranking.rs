@@ -161,8 +161,12 @@ pub fn flag_rejects(mut ranked: Vec<RankedDoc>) -> Vec<RankedDoc> {
     if top_tfidf == 0.0 {
         return ranked;
     }
-    let absolute_floor = 0.10f32;
-    let relative_floor = top_tfidf * 0.05;
+    // Floors kept deliberately permissive so the gate removes only true
+    // zero/near-zero-overlap noise — a rejected doc is excluded from downloads
+    // entirely (orchestrator filters reject_reason before the download phase),
+    // so over-aggressive floors directly cost relevant papers on broad queries.
+    let absolute_floor = 0.05f32;
+    let relative_floor = top_tfidf * 0.02;
     let cutoff = absolute_floor.max(relative_floor);
 
     for r in &mut ranked {
