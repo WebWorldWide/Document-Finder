@@ -12,10 +12,14 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::{get_with_retry, Document, Source};
+use super::{send_with_retry, Document, Source};
 
 const BASE: &str = "https://zenodo.org/api/records";
 const PAGE_SIZE: usize = 100;
+/// Zenodo's CDN/WAF returns 403 Forbidden for the shared browser User-Agent
+/// (an anti-scraping measure that flags fake-browser UAs). An honest tool UA +
+/// `Accept: application/json` is served normally. See `search` below.
+const ZENODO_UA: &str = "DocumentFinder/0.1 (open-access research tool)";
 
 pub struct ZenodoSource {
     client: Arc<reqwest::Client>,
@@ -125,7 +129,15 @@ impl Source for ZenodoSource {
                     ("type", "publication".to_string()),
                     ("type", "preprint".to_string()),
                 ];
-                let resp = match get_with_retry(&client, BASE, &params).await {
+                let resp = match send_with_retry(BASE, || {
+                    client
+                        .get(BASE)
+                        .query(&params)
+                        .header(reqwest::header::USER_AGENT, ZENODO_UA)
+                        .header(reqwest::header::ACCEPT, "application/json")
+                })
+                .await
+                {
                     Ok(r) => r,
                     Err(e) => return Some((Err(e), (page, yielded, true))),
                 };

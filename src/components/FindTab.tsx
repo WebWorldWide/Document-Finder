@@ -1,4 +1,13 @@
-import { createSignal, createMemo, createEffect, onCleanup, untrack, Show, For } from "solid-js";
+import {
+  createSignal,
+  createMemo,
+  createEffect,
+  onCleanup,
+  untrack,
+  Show,
+  For,
+  Index,
+} from "solid-js";
 import {
   Search,
   Square,
@@ -828,7 +837,9 @@ export default function FindTab() {
                           {inFlightDocs().length}
                         </span>
                       </div>
-                      <For each={inFlightDocs()}>{(d) => <DocRow doc={d} kind="in-flight" />}</For>
+                      <Index each={inFlightDocs()}>
+                        {(d) => <DocRow doc={d()} kind="in-flight" />}
+                      </Index>
                     </div>
                   </Show>
                   <div class="df-stream-section">
@@ -836,7 +847,7 @@ export default function FindTab() {
                       Saved{" "}
                       <span style={{ color: "var(--ok)", "font-weight": 700 }}>{rs().done}</span>
                     </div>
-                    <For each={savedDocs()}>{(d) => <DocRow doc={d} kind="saved" />}</For>
+                    <Index each={savedDocs()}>{(d) => <DocRow doc={d()} kind="saved" />}</Index>
                   </div>
                 </div>
               }
@@ -859,7 +870,9 @@ export default function FindTab() {
                       </div>
                     }
                   >
-                    <For each={inFlightDocs()}>{(d) => <DocRow doc={d} kind="in-flight" />}</For>
+                    <Index each={inFlightDocs()}>
+                      {(d) => <DocRow doc={d()} kind="in-flight" />}
+                    </Index>
                   </Show>
                 </section>
                 <section
@@ -870,7 +883,7 @@ export default function FindTab() {
                     <span style={{ color: "var(--ok)", "font-weight": 700 }}>{rs().done}</span>
                   </div>
                   <div style={{ "max-height": "360px", "overflow-y": "auto" }}>
-                    <For each={savedDocs()}>{(d) => <DocRow doc={d} kind="saved" />}</For>
+                    <Index each={savedDocs()}>{(d) => <DocRow doc={d()} kind="saved" />}</Index>
                   </div>
                 </section>
               </div>
