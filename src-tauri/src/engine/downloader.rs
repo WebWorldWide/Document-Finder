@@ -728,9 +728,16 @@ pub async fn reuse_from_siblings(doc: &Document, dest_dir: &Path, root: &Path) -
         }
         for ext in EXTS {
             let candidate = dir.join(format!("{slug}{ext}"));
-            let Ok(meta) = tokio::fs::metadata(&candidate).await else {
+            // Use symlink_metadata (NOT metadata) and skip symlinks, so a symlink
+            // planted in a sibling folder can't redirect the copy to a file
+            // OUTSIDE the library root. Mirrors the symlink discipline in
+            // commands.rs (folder_size_bytes / the zip writer).
+            let Ok(meta) = tokio::fs::symlink_metadata(&candidate).await else {
                 continue;
             };
+            if meta.file_type().is_symlink() {
+                continue;
+            }
             // Only reuse a file that still passes the same validation a fresh
             // download would (size floor + magic bytes), so we never propagate a
             // stale junk/error-page file saved by an older, laxer downloader.
@@ -955,6 +962,32 @@ mod tests {
         assert!(reuse_from_siblings(&doc, &lib_b, root.path())
             .await
             .is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reuse_skips_a_symlinked_sibling_file() {
+        let root = tempfile::tempdir().unwrap();
+        let lib_a = root.path().join("query-a");
+        let lib_b = root.path().join("query-b");
+        tokio::fs::create_dir_all(&lib_a).await.unwrap();
+        tokio::fs::create_dir_all(&lib_b).await.unwrap();
+        let doc = test_doc("Linked", "https://example.org/linked.pdf");
+        // A valid PDF the symlink points to — if symlinks were followed, it would
+        // be copied and the assert below would fail.
+        let mut pdf = b"%PDF-1.7\n".to_vec();
+        pdf.resize(9000, b' ');
+        let target = root.path().join("real-target.pdf");
+        tokio::fs::write(&target, &pdf).await.unwrap();
+        let link = lib_a.join(format!("{}.pdf", doc.slug()));
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        assert!(
+            reuse_from_siblings(&doc, &lib_b, root.path())
+                .await
+                .is_none(),
+            "a symlinked sibling file must not be followed/copied"
+        );
     }
 
     #[tokio::test]
