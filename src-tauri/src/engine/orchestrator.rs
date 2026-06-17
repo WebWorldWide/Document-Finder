@@ -109,21 +109,21 @@ fn source_concurrency(name: &str) -> usize {
     }
 }
 
-/// Wave deadlines derived from the run's discovery cap (`max_total`). The
-/// user-facing "Download depth" slider only moves per_source/max_total/
-/// concurrency; deriving the wave deadlines from `max_total` here lets that one
-/// slider also grant slow sources (Internet Archive's per-item metadata
-/// lookups, arXiv's mandatory 3s page delay, multi-page web scraping) more time
-/// to drain before a wave is force-stopped — without ever unbounding Stop/abort
-/// (a user cancel still races the deadline and wins within ~1s).
+/// Wave deadlines derived from the run's discovery cap (`max_total`). These are
+/// the *worst-case* caps that force-stop a wave when a source hangs — a wave
+/// normally ends far sooner, either when all source tasks drain naturally or
+/// when `discover_wave`'s early-exit fires once `max_total` unique docs are in
+/// (see the `tokio::select!` there). The deadlines were cut to an interactive
+/// range so a slow/rate-limited source can no longer hold the whole run open
+/// for minutes; a user cancel still races the deadline and wins within ~1s.
 ///
-///   max_total   75 (Light)       → 63s / 48s
-///   max_total  500 (Balanced)    → 85s / 65s
-///   max_total 1500 (Deep)        → 135s / 105s
-///   max_total 4000+ (Exhaustive) → 150s / 120s (clamped)
+///   max_total   75 (Light)       → 16s / 13s
+///   max_total  500 (Balanced)    → 27s / 22s
+///   max_total 1500 (Deep)        → 52s / 42s
+///   max_total 4000+ (Exhaustive) → 60s / 45s (clamped)
 fn wave_deadlines(max_total: usize) -> (Duration, Duration) {
-    let w1 = (60 + max_total / 20).clamp(60, 150) as u64;
-    let w2 = (45 + max_total / 25).clamp(45, 120) as u64;
+    let w1 = (15 + max_total / 40).clamp(15, 60) as u64;
+    let w2 = (12 + max_total / 50).clamp(12, 45) as u64;
     (Duration::from_secs(w1), Duration::from_secs(w2))
 }
 
@@ -367,6 +367,18 @@ async fn discover_wave(
         biased;
         _ = cancel.cancelled() => true,
         _ = tokio::time::sleep(deadline) => true,
+        // Early-exit: the moment the shared dedup already holds `max_total`
+        // unique docs, stop the wave instead of idling to the deadline while
+        // slow/rate-limited sources keep streaming results we'd only discard.
+        // Cheap poll; the hard cap inside each task also breaks its stream.
+        _ = async {
+            loop {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                if dedup.lock().await.len() >= req.max_total {
+                    break;
+                }
+            }
+        } => true,
         _ = async {
             while let Some(res) = tasks.join_next().await {
                 if let Err(e) = res {
@@ -379,7 +391,9 @@ async fn discover_wave(
         if cancel.is_cancelled() {
             tracing::info!("discovery cancelled by user — aborting in-flight tasks");
         } else {
-            tracing::warn!("discovery deadline reached — proceeding with partial results");
+            tracing::info!(
+                "discovery wave stopped early (cap reached or deadline) — proceeding with partial results"
+            );
         }
         tasks.shutdown().await;
     }
@@ -477,7 +491,7 @@ async fn compute_llm_extras(
                 emit_stage(app, "llm_expand", "skipped", None, None, None);
                 return Vec::new();
             }
-            _ = tokio::time::sleep(std::time::Duration::from_secs(120)) => {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
                 gen_cancel.cancel(); // free the model lock from the runaway decode
                 emit_stage(app, "llm_expand", "done", None, None, Some("expansion timed out".into()));
                 return Vec::new();
@@ -543,7 +557,7 @@ async fn compute_llm_extras(
                 emit_stage(app, "llm_expand", "skipped", None, None, None);
                 return Vec::new();
             }
-            _ = tokio::time::sleep(std::time::Duration::from_secs(45)) => {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(20)) => {
                 gen_cancel.cancel(); // free the model lock from the runaway decode
                 emit_stage(app, "llm_expand", "done", None, None, None);
                 return Vec::new();
@@ -1597,20 +1611,20 @@ mod tests {
 
     #[test]
     fn wave_deadlines_scale_with_depth_and_clamp() {
-        // Light (max_total 75): just above the 60/45 floor.
+        // Light (max_total 75): just above the 15/12 floor.
         let (w1, w2) = wave_deadlines(75);
-        assert_eq!((w1.as_secs(), w2.as_secs()), (63, 48));
+        assert_eq!((w1.as_secs(), w2.as_secs()), (16, 13));
         // Balanced (500).
         let (w1, w2) = wave_deadlines(500);
-        assert_eq!((w1.as_secs(), w2.as_secs()), (85, 65));
+        assert_eq!((w1.as_secs(), w2.as_secs()), (27, 22));
         // Deep (1500).
         let (w1, w2) = wave_deadlines(1500);
-        assert_eq!((w1.as_secs(), w2.as_secs()), (135, 105));
-        // Exhaustive (4000): clamps at the 150/120 ceiling.
+        assert_eq!((w1.as_secs(), w2.as_secs()), (52, 42));
+        // Exhaustive (4000): clamps at the 60/45 ceiling.
         let (w1, w2) = wave_deadlines(4000);
-        assert_eq!((w1.as_secs(), w2.as_secs()), (150, 120));
+        assert_eq!((w1.as_secs(), w2.as_secs()), (60, 45));
         // Degenerate tiny cap never drops below the floor.
         let (w1, w2) = wave_deadlines(0);
-        assert_eq!((w1.as_secs(), w2.as_secs()), (60, 45));
+        assert_eq!((w1.as_secs(), w2.as_secs()), (15, 12));
     }
 }
