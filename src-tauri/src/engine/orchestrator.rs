@@ -76,10 +76,10 @@ fn default_use_llm_filter() -> bool {
 }
 
 fn default_per_source() -> usize {
-    150
+    100
 }
 fn default_max_total() -> usize {
-    900
+    500
 }
 fn default_concurrency() -> usize {
     8
@@ -117,18 +117,13 @@ fn source_concurrency(name: &str) -> usize {
 /// to drain before a wave is force-stopped — without ever unbounding Stop/abort
 /// (a user cancel still races the deadline and wins within ~1s).
 ///
-///   max_total   75 (Light)       → 63s / 64s
-///   max_total  500 (Balanced)    → 85s / 87s
-///   max_total 1500 (Deep)        → 135s / 130s (w2 clamped)
-///   max_total 4000+ (Exhaustive) → 150s / 130s (clamped)
-///
-/// Wave 2 (LLM-expanded sub-queries) is deadline-bound, not request-rate-bound:
-/// raising its floor/slope lets more sub-queries finish at the SAME per-source
-/// rate (no added 429 risk), so slow distinct corpora (Internet Archive,
-/// rate-limited Semantic Scholar) drain more fully on deep runs.
+///   max_total   75 (Light)       → 63s / 48s
+///   max_total  500 (Balanced)    → 85s / 65s
+///   max_total 1500 (Deep)        → 135s / 105s
+///   max_total 4000+ (Exhaustive) → 150s / 120s (clamped)
 fn wave_deadlines(max_total: usize) -> (Duration, Duration) {
     let w1 = (60 + max_total / 20).clamp(60, 150) as u64;
-    let w2 = (60 + max_total / 18).clamp(60, 130) as u64;
+    let w2 = (45 + max_total / 25).clamp(45, 120) as u64;
     (Duration::from_secs(w1), Duration::from_secs(w2))
 }
 
@@ -1602,20 +1597,20 @@ mod tests {
 
     #[test]
     fn wave_deadlines_scale_with_depth_and_clamp() {
-        // Light (max_total 75): just above the 60/60 floor.
+        // Light (max_total 75): just above the 60/45 floor.
         let (w1, w2) = wave_deadlines(75);
-        assert_eq!((w1.as_secs(), w2.as_secs()), (63, 64));
+        assert_eq!((w1.as_secs(), w2.as_secs()), (63, 48));
         // Balanced (500).
         let (w1, w2) = wave_deadlines(500);
-        assert_eq!((w1.as_secs(), w2.as_secs()), (85, 87));
-        // Deep (1500): w2 clamps at its 130 ceiling.
+        assert_eq!((w1.as_secs(), w2.as_secs()), (85, 65));
+        // Deep (1500).
         let (w1, w2) = wave_deadlines(1500);
-        assert_eq!((w1.as_secs(), w2.as_secs()), (135, 130));
-        // Exhaustive (4000): clamps at the 150/130 ceiling.
+        assert_eq!((w1.as_secs(), w2.as_secs()), (135, 105));
+        // Exhaustive (4000): clamps at the 150/120 ceiling.
         let (w1, w2) = wave_deadlines(4000);
-        assert_eq!((w1.as_secs(), w2.as_secs()), (150, 130));
+        assert_eq!((w1.as_secs(), w2.as_secs()), (150, 120));
         // Degenerate tiny cap never drops below the floor.
         let (w1, w2) = wave_deadlines(0);
-        assert_eq!((w1.as_secs(), w2.as_secs()), (60, 60));
+        assert_eq!((w1.as_secs(), w2.as_secs()), (60, 45));
     }
 }

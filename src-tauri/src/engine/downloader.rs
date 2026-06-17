@@ -114,15 +114,23 @@ pub async fn resolve_oa_pdf_via_unpaywall(client: &reqwest::Client, doi: &str) -
         url_for_pdf: Option<String>,
     }
     let url = format!("https://api.unpaywall.org/v2/{doi}");
-    let resp = client
-        .get(&url)
-        .query(&[("email", UNPAYWALL_CONTACT)])
-        .send()
+    // The download client has no overall timeout (for large PDFs), so bound this
+    // lookup tightly — it's only a small JSON fetch, and a slow/hung Unpaywall
+    // must never stall the download task it runs inside.
+    let fetch = async {
+        let resp = client
+            .get(&url)
+            .query(&[("email", UNPAYWALL_CONTACT)])
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?;
+        resp.json::<UpResp>().await.ok()
+    };
+    let body = tokio::time::timeout(std::time::Duration::from_secs(8), fetch)
         .await
-        .ok()?
-        .error_for_status()
-        .ok()?;
-    let body: UpResp = resp.json().await.ok()?;
+        .ok()??;
     body.best_oa_location
         .and_then(|l| l.url_for_pdf)
         .filter(|u| !u.is_empty())
