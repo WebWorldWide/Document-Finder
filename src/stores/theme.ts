@@ -40,8 +40,28 @@ const DENSITIES = ["compact", "regular"] as const;
 const STREAMS = ["stacked", "split"] as const;
 
 function load<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
-  const v = localStorage.getItem(key);
+  // Guard the read: localStorage access can THROW (not just return null) when
+  // storage is disabled (private mode / blocked). This runs at module load,
+  // before first paint — an uncaught throw here would white-screen the app.
+  let v: string | null = null;
+  try {
+    v = localStorage.getItem(key);
+  } catch {
+    return fallback;
+  }
   return v && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
+}
+
+/// Persist a preference, tolerating a disabled/quota-exceeded store. The DOM +
+/// signal are updated by the caller regardless, so a failed write only means the
+/// choice doesn't survive a restart — it must not throw out of the (synchronous)
+/// onClick handler and skip the signal update, leaving DOM and state divergent.
+function persist(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    console.error("theme: preference not persisted (storage disabled/quota):", e);
+  }
 }
 
 const initTheme = load<Theme>(LS.theme, THEMES, "slate");
@@ -63,21 +83,21 @@ export { theme, accent, density, streamLayout };
 
 export function setTheme(t: Theme) {
   root.dataset.theme = t;
-  localStorage.setItem(LS.theme, t);
+  persist(LS.theme, t);
   setThemeSignal(t);
 }
 export function setAccent(a: Accent) {
   root.dataset.accent = a;
-  localStorage.setItem(LS.accent, a);
+  persist(LS.accent, a);
   setAccentSignal(a);
 }
 export function setDensity(d: Density) {
   root.dataset.density = d;
-  localStorage.setItem(LS.density, d);
+  persist(LS.density, d);
   setDensitySignal(d);
 }
 export function setStreamLayout(s: StreamLayout) {
-  localStorage.setItem(LS.stream, s);
+  persist(LS.stream, s);
   setStreamSignal(s);
 }
 
