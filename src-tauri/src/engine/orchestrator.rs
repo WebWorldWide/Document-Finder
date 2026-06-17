@@ -1220,12 +1220,18 @@ pub async fn run_pipeline(
         let handle = tokio::spawn(async move {
             let download_permit = match download_sem.acquire_owned().await {
                 Ok(p) => p,
-                Err(_) => return,
+                Err(e) => {
+                    // The download semaphore should never close mid-run; if it
+                    // somehow does, log it rather than letting the doc silently
+                    // disappear from the counts with no trace.
+                    tracing::error!("download semaphore closed, skipping {}: {e}", doc.url);
+                    return;
+                }
             };
-            if cancel.is_cancelled() {
-                return;
-            }
-
+            // Announce the attempt BEFORE the cancel check so a download skipped
+            // by a just-arrived Stop still shows up in the UI stream (instead of
+            // the task vanishing silently). The terminal EV_CANCELLED clears any
+            // leftover in-flight row.
             let _ = app.emit(
                 EV_DOWNLOAD_STARTED,
                 DownloadStartedPayload {
@@ -1234,6 +1240,9 @@ pub async fn run_pipeline(
                     source: doc.source.clone(),
                 },
             );
+            if cancel.is_cancelled() {
+                return;
+            }
 
             let app_for_progress = app.clone();
             let url_for_progress = doc.url.clone();

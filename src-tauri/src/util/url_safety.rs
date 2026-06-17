@@ -56,8 +56,12 @@ async fn validate_url_inner(raw: &str, allowed_schemes: &[&str]) -> Result<Url, 
     // Resolve against the URL's effective port so default-port hosts still
     // resolve; the port itself doesn't affect the privacy decision.
     let port = url.port_or_known_default().unwrap_or(443);
-    let addrs: Vec<_> = tokio::net::lookup_host(format!("{host}:{port}"))
+    // Bound the pre-flight lookup so a host with a slow/hung resolver can't stall
+    // the task that calls this (a download task has no overall request timeout).
+    let lookup = tokio::net::lookup_host(format!("{host}:{port}"));
+    let addrs: Vec<_> = tokio::time::timeout(std::time::Duration::from_secs(5), lookup)
         .await
+        .map_err(|_| format!("DNS resolution timed out for '{host}'"))?
         .map_err(|e| format!("DNS resolution failed for '{host}': {e}"))?
         .collect();
 
