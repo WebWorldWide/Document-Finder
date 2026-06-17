@@ -60,6 +60,11 @@ pub struct SourceStartPayload {
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceDonePayload {
     pub source: String,
+    /// Count of UNIQUE-NEW docs this source contributed to the shared dedup for
+    /// this (sub_query, source) task — NOT the raw number of results returned
+    /// (cross-source duplicates that merged are excluded). The frontend now
+    /// accumulates per-source hits live from EV_FOUND instead, so this field is
+    /// informational (logging/validation) rather than the source of the count.
     pub count: usize,
 }
 
@@ -155,6 +160,12 @@ pub struct DownloadDonePayload {
     /// True when the file was reused from a previous run (no bytes hit the
     /// network). The frontend excludes cached bytes from network throughput.
     pub cached: bool,
+    /// Set when the file saved to disk but its SQLite index row failed to write
+    /// (e.g. SQLITE_BUSY): the doc is counted `done` but won't show in the
+    /// Library view, so the UI surfaces this as a warning instead of a silent
+    /// miss. `None` on the normal success path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index_error: Option<String>,
     pub done: usize,
     pub failed: usize,
     pub total: usize,

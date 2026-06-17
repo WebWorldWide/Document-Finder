@@ -317,8 +317,20 @@ pub async fn list_libraries(
                             extract_error: e.extract_error,
                         })
                         .collect();
-                    let tmp = path.join("library.db.tmp");
-                    let _ = std::fs::remove_file(&tmp);
+                    // Unique temp name per attempt (pid + nanos) so two
+                    // concurrent list_libraries scans can't write the SAME temp
+                    // DB and corrupt each other's migration. Each builds a
+                    // complete DB independently; the atomic rename below means
+                    // `library.db` is only ever a finished file (last writer wins).
+                    let nonce = format!(
+                        "{}-{}",
+                        std::process::id(),
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_nanos())
+                            .unwrap_or(0)
+                    );
+                    let tmp = path.join(format!("library.db.{nonce}.tmp"));
                     let migrated = crate::engine::db::DbManager::open_for_migration(&tmp)
                         .and_then(|mut mgr| mgr.migrate(&m.query, &path.to_string_lossy(), &docs));
                     match migrated {

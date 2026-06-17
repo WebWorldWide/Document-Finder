@@ -27,6 +27,9 @@ export interface CompletedItem {
   bytes?: number;
   /** True when the file was reused from a previous run (no network transfer). */
   cached?: boolean;
+  /** Set when the file saved but its library index row failed to write — the
+   *  file is on disk but won't appear in the Library view. */
+  indexError?: string;
 }
 
 export interface SourceIssue {
@@ -326,6 +329,7 @@ function apply(ev: DfEvent) {
         text_path: ev.payload.text_path,
         bytes: ev.payload.bytes,
         cached: ev.payload.cached,
+        indexError: ev.payload.index_error,
       };
       setState(
         produce((s) => {

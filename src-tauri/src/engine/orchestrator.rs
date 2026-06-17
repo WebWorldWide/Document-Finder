@@ -1447,12 +1447,12 @@ pub async fn run_pipeline(
                         Ok(Err(e)) => Some(e.to_string()),
                         Err(join_err) => Some(format!("db task panicked: {join_err}")),
                     };
-                    if let Some(err) = db_err {
+                    if let Some(err) = &db_err {
                         tracing::error!("failed to persist document row for {}: {}", doc.url, err);
                         runlog::log(runlog::Event::DbError {
                             title: &doc.title,
                             url: &doc.url,
-                            error: &err,
+                            error: err,
                         });
                     }
 
@@ -1471,6 +1471,12 @@ pub async fn run_pipeline(
                             text_path,
                             bytes,
                             cached,
+                            // The bytes are on disk so the doc still counts as
+                            // `done`, but if the SQLite index row failed it won't
+                            // appear in the Library view — surface that to the UI
+                            // instead of leaving the miss invisible (a log line
+                            // the user never sees).
+                            index_error: db_err,
                             done,
                             failed,
                             total,
