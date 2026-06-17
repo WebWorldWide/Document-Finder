@@ -19,19 +19,28 @@ use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 use std::path::Path;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::CancellationToken;
 
-/// One backend per process — initializing twice is undefined behavior.
+/// One backend per process — `LlamaBackend::init()` MUST run at most once
+/// (initializing twice is undefined behavior). The previous check-then-set was
+/// racy: two threads could both observe an empty cell and both call `init()`.
+/// Serialize init behind a lock and double-check the cell, so exactly one
+/// `init()` ever runs regardless of caller concurrency.
 fn backend() -> anyhow::Result<&'static LlamaBackend> {
     static BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
+    static INIT_LOCK: Mutex<()> = Mutex::new(());
     if let Some(b) = BACKEND.get() {
         return Ok(b);
     }
+    let _guard = INIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(b) = BACKEND.get() {
+        return Ok(b); // another thread initialized while we waited
+    }
     let b = LlamaBackend::init().context("LlamaBackend::init failed")?;
     let _ = BACKEND.set(b);
-    Ok(BACKEND.get().expect("just set"))
+    Ok(BACKEND.get().expect("just set under init lock"))
 }
 
 pub struct LlmModel {

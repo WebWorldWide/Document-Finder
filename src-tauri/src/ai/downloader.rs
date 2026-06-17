@@ -253,7 +253,7 @@ pub async fn download(
 /// Stream the file through SHA256. Done on a blocking thread because file I/O
 /// at this size hits the disk hard and we don't want to monopolize the
 /// async runtime.
-async fn verify_sha256(path: &Path, expected: &str) -> anyhow::Result<bool> {
+pub(crate) async fn verify_sha256(path: &Path, expected: &str) -> anyhow::Result<bool> {
     let path = path.to_path_buf();
     let expected = expected.to_lowercase();
     tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
