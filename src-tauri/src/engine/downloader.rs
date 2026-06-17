@@ -51,6 +51,19 @@ const HTML_RESOLVE_CAP: usize = 2 * 1024 * 1024;
 const DOC_ACCEPT: &str =
     "application/pdf,application/epub+zip,application/octet-stream;q=0.9,text/html;q=0.5,*/*;q=0.4";
 
+/// Honest tool User-Agent for hosts whose WAF blocks the browser UA. The shared
+/// download client sends a browser UA (publisher PDF hosts like Sage/OUP/Brill
+/// 403 generic crawlers), but some OPEN repositories do the opposite and 403 the
+/// browser UA as a suspected scraper — Zenodo is the confirmed case.
+const REPO_UA: &str = "DocumentFinder/0.1 (open-access research tool)";
+
+/// True if `url`'s host is a repository known to reject the browser User-Agent
+/// (and serve normally for an honest one). Checked per-request in the downloader.
+fn host_needs_honest_ua(url: &str) -> bool {
+    let u = url.to_lowercase();
+    u.contains("://zenodo.org/") || u.contains(".zenodo.org/")
+}
+
 /// A plain-language explanation for an HTTP error status, written for a
 /// non-technical reader. The numeric code is appended separately (for logs).
 fn http_status_message(status: u16) -> &'static str {
@@ -425,6 +438,11 @@ async fn get_document_response(
             .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9");
         if let Some(r) = &referer {
             req = req.header(reqwest::header::REFERER, r.clone());
+        }
+        // Per-host UA override: Zenodo's WAF 403s the client's default browser
+        // UA but serves an honest tool UA normally (search + file downloads).
+        if host_needs_honest_ua(url) {
+            req = req.header(reqwest::header::USER_AGENT, REPO_UA);
         }
         match req.send().await {
             Ok(r) => match r.error_for_status() {

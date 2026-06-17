@@ -15,7 +15,10 @@ use std::sync::Arc;
 use super::{send_with_retry, Document, Source};
 
 const BASE: &str = "https://zenodo.org/api/records";
-const PAGE_SIZE: usize = 100;
+// Zenodo's (InvenioRDM) public API now caps the page size at 25 for
+// unauthenticated requests — a `size` over 25 is a hard 400 ("Page size cannot
+// be greater than 25"). Paginate in 25s instead; the source already walks pages.
+const PAGE_SIZE: usize = 25;
 /// Zenodo's CDN/WAF returns 403 Forbidden for the shared browser User-Agent
 /// (an anti-scraping measure that flags fake-browser UAs). An honest tool UA +
 /// `Accept: application/json` is served normally. See `search` below.

@@ -8,7 +8,10 @@ use std::sync::Arc;
 
 use super::{get_with_retry, Document, Source};
 
-const BASE: &str = "https://api.doaj.org/api/search/articles";
+// DOAJ's public API lives on the main host. The old `api.doaj.org` subdomain
+// no longer resolves (NXDOMAIN), which surfaced as a connection error for every
+// DOAJ sub-query. The query stays a URL path segment (DOAJ's documented shape).
+const BASE: &str = "https://doaj.org/api/search/articles";
 
 pub struct DOAJSource {
     client: Arc<reqwest::Client>,
