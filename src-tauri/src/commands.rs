@@ -15,7 +15,9 @@ use crate::engine::runlog;
 use crate::engine::{run_pipeline, RunRequest};
 use crate::events::{ErrorPayload, EV_ERROR};
 use crate::sources::USER_AGENT;
-use crate::util::path_safety::{library_root as default_library_root, safe_within_root};
+use crate::util::path_safety::{
+    library_root as default_library_root, safe_creatable_within_root, safe_within_root,
+};
 
 /// HTTP client tuned for huge model downloads — connect_timeout fails fast on
 /// dead URLs but there is NO overall .timeout, because the default
@@ -156,12 +158,21 @@ pub async fn start_run(
     // without this a compromised/buggy renderer could redirect every downloaded
     // file outside the library (e.g. into C:\Windows or /etc). The per-query
     // subfolder is already slugged (`safe_folder`), making `out_dir` the only
-    // traversal vector. The normal flow always pre-creates this folder
-    // (`default_library_dir` / `set_library_root`), so the canonicalizing check
-    // succeeds for legitimate runs and rejects anything outside the root.
+    // traversal vector.
+    //
+    // The library folder may not exist yet — first run, or after the in-app
+    // "Erase app data" deleted it. `safe_creatable_within_root` confines it
+    // WITHOUT requiring it to exist (plain `canonicalize` fails with ENOENT on
+    // every OS), so we then create it instead of refusing the run.
     let root = confinement_root(&state)?;
-    safe_within_root(Path::new(&req.out_dir), &root).map_err(|e| {
+    let out_dir = safe_creatable_within_root(Path::new(&req.out_dir), &root).map_err(|e| {
         format!("Refusing to run: the library folder is outside the allowed root. {e}")
+    })?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| {
+        format!(
+            "Couldn't create the library folder '{}': {e}",
+            out_dir.display()
+        )
     })?;
 
     {
