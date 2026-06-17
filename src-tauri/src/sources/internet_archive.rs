@@ -71,14 +71,36 @@ struct MetaFile {
     format: Option<String>,
 }
 
-/// Resolve the real downloadable PDF URL for an Internet Archive item via its
-/// metadata API. The bulk-search API only returns the item *identifier*; the
+/// Find the first file of a given document type (`ext`, e.g. "pdf"/"epub") in an
+/// IA item's file list — by format string first, then by filename suffix.
+fn find_file<'a>(files: &'a [MetaFile], ext: &str) -> Option<&'a str> {
+    let suffix = format!(".{ext}");
+    files
+        .iter()
+        .find(|f| {
+            f.format
+                .as_deref()
+                .is_some_and(|s| s.to_lowercase().contains(ext))
+        })
+        .or_else(|| {
+            files.iter().find(|f| {
+                f.name
+                    .as_deref()
+                    .is_some_and(|n| n.to_lowercase().ends_with(&suffix))
+            })
+        })
+        .and_then(|f| f.name.as_deref())
+}
+
+/// Resolve the real downloadable document URL for an Internet Archive item via
+/// its metadata API. The bulk-search API only returns the item *identifier*; the
 /// old guess of `{ident}/{ident}.pdf` 404s for the many items (arXiv/PubMed
-/// mirrors, scanned books) whose primary PDF is named something else. We ask
-/// `/metadata/{ident}` for the actual file list and build the URL from the
-/// first PDF file. Returns `None` (item dropped) on any error or if no PDF
-/// file exists, so a flaky lookup never blocks discovery.
-async fn resolve_pdf_url(client: &reqwest::Client, ident: &str) -> Option<String> {
+/// mirrors, scanned books) whose primary file is named something else. We ask
+/// `/metadata/{ident}` for the actual file list and prefer a PDF, falling back
+/// to an EPUB (extract.rs handles both) — many public-domain / humanities books
+/// on IA are EPUB-only. Returns `None` (item dropped) on any error or if no
+/// usable document file exists, so a flaky lookup never blocks discovery.
+async fn resolve_doc_url(client: &reqwest::Client, ident: &str) -> Option<String> {
     let meta_url = format!("https://archive.org/metadata/{ident}");
     let resp = client
         .get(&meta_url)
@@ -88,23 +110,7 @@ async fn resolve_pdf_url(client: &reqwest::Client, ident: &str) -> Option<String
         .error_for_status()
         .ok()?;
     let meta: Metadata = resp.json().await.ok()?;
-    let name = meta
-        .files
-        .iter()
-        .find(|f| {
-            f.format
-                .as_deref()
-                .is_some_and(|s| s.to_lowercase().contains("pdf"))
-        })
-        .or_else(|| {
-            meta.files.iter().find(|f| {
-                f.name
-                    .as_deref()
-                    .is_some_and(|n| n.to_lowercase().ends_with(".pdf"))
-            })
-        })?
-        .name
-        .as_deref()?;
+    let name = find_file(&meta.files, "pdf").or_else(|| find_file(&meta.files, "epub"))?;
     // Build the URL with proper path-segment encoding (file names can contain
     // spaces or other reserved characters).
     let mut u = url::Url::parse("https://archive.org/download/").ok()?;
@@ -185,15 +191,16 @@ impl Source for InternetArchiveSource {
                     let Some(ident) = d.get("identifier").and_then(coerce_string) else {
                         continue;
                     };
-                    // Filter to items whose format list mentions PDF — avoids
-                    // metadata lookups for items that only have image scans or DjVu.
+                    // Filter to items whose format list mentions PDF or EPUB —
+                    // avoids metadata lookups for items that only have image scans
+                    // or DjVu, while keeping EPUB-only books (common on IA).
                     let formats = d
                         .get("format")
                         .map(coerce_string_list)
                         .unwrap_or_default()
                         .join(" ")
                         .to_lowercase();
-                    if !formats.contains("pdf") {
+                    if !formats.contains("pdf") && !formats.contains("epub") {
                         continue;
                     }
                     let authors = d.get("creator").map(coerce_string_list).unwrap_or_default();
@@ -209,7 +216,7 @@ impl Source for InternetArchiveSource {
                     .map(|(ident, title, authors, year, desc)| {
                         let client = client.clone();
                         async move {
-                            let url = resolve_pdf_url(&client, &ident).await?;
+                            let url = resolve_doc_url(&client, &ident).await?;
                             Some(Document {
                                 title,
                                 url,
@@ -221,7 +228,7 @@ impl Source for InternetArchiveSource {
                             })
                         }
                     })
-                    .buffer_unordered(8)
+                    .buffer_unordered(12)
                     .filter_map(|d| async move { d })
                     .collect()
                     .await;
