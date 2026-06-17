@@ -11,6 +11,28 @@ use std::path::{Path, PathBuf};
 /// pathological multi-hundred-MB file (times N) could exhaust memory.
 const MAX_TEXT_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Cap on PDF input we'll hand to `pdf_extract`, which loads the whole file and
+/// builds the full text in memory. With up to `num_cpus` concurrent extractions
+/// a few large (or one malicious) PDF could spike RSS to several GB and OOM the
+/// app — the downloader accepts files up to 500 MB. Oversized PDFs are skipped
+/// with an error (logged), not extracted.
+const MAX_PDF_BYTES: u64 = 150 * 1024 * 1024;
+
+/// Truncate extracted text to [`MAX_TEXT_BYTES`] on a char boundary, so a huge
+/// document can't bloat its SQLite row or the ranking working set. (The PDF path
+/// is the one extractor whose output is otherwise unbounded.)
+fn truncate_text(mut s: String) -> String {
+    let cap = MAX_TEXT_BYTES as usize;
+    if s.len() > cap {
+        let mut end = cap;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
+    }
+    s
+}
+
 /// Read a text file as lossy UTF-8, bounded to `MAX_TEXT_BYTES`. `read_to_string`
 /// hard-errors on any non-UTF-8 byte (Latin-1, UTF-16, legacy encodings), which
 /// would silently drop otherwise-readable documents; lossy decoding keeps the
@@ -28,18 +50,28 @@ pub fn extract_text(path: &Path) -> anyhow::Result<String> {
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-    match suffix.as_str() {
-        "txt" => read_text_file_capped(path),
-        "pdf" => extract_pdf(path),
-        "epub" => extract_epub(path),
-        "html" | "htm" => read_text_file_capped(path).map(|h| strip_html(&h)),
-        _ => Err(anyhow::anyhow!("Unsupported file extension: .{}", suffix)),
-    }
+    let text = match suffix.as_str() {
+        "txt" => read_text_file_capped(path)?,
+        "pdf" => extract_pdf(path)?,
+        "epub" => extract_epub(path)?,
+        "html" | "htm" => read_text_file_capped(path).map(|h| strip_html(&h))?,
+        _ => return Err(anyhow::anyhow!("Unsupported file extension: .{}", suffix)),
+    };
+    Ok(truncate_text(text))
 }
 
 // `pdf_extract` (and its `lopdf` backing) regularly panics on malformed PDFs.
 // Catch the unwind so a single bad file never aborts the run.
 fn extract_pdf(path: &Path) -> anyhow::Result<String> {
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.len() > MAX_PDF_BYTES {
+            return Err(anyhow::anyhow!(
+                "PDF too large to extract ({} MB, cap {} MB)",
+                meta.len() / 1024 / 1024,
+                MAX_PDF_BYTES / 1024 / 1024
+            ));
+        }
+    }
     let p: PathBuf = path.to_path_buf();
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| pdf_extract::extract_text(&p)));
     match result {
@@ -180,6 +212,17 @@ pub fn strip_html(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncate_text_bounds_on_char_boundary() {
+        // Under the cap: unchanged.
+        assert_eq!(truncate_text("hello".to_string()), "hello");
+        // Over the cap: truncated, never panics on a multi-byte boundary.
+        let big = "é".repeat(MAX_TEXT_BYTES as usize); // 2 bytes each
+        let out = truncate_text(big);
+        assert!(out.len() <= MAX_TEXT_BYTES as usize);
+        assert!(out.is_char_boundary(out.len()));
+    }
 
     #[test]
     fn strip_html_removes_scripts() {
