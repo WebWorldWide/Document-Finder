@@ -282,26 +282,42 @@ pub async fn list_libraries(
         let manifest_path = path.join("manifest.json");
 
         if !db_path.exists() && manifest_path.exists() {
-            // Migration logic: JSON to SQLite
+            // Legacy manifest → SQLite migration, made crash-safe: build a fully
+            // populated DB at a temp path in ONE transaction, then atomically
+            // rename it to `library.db`. A crash before the rename leaves no
+            // `library.db`, so the next scan simply re-migrates from the manifest
+            // (the old per-doc auto-commit loop could leave a partial DB that was
+            // never re-migrated). The temp DB uses DELETE journal mode so there
+            // are no `-wal`/`-shm` sidecars to orphan across the rename.
             if let Ok(raw) = std::fs::read(&manifest_path) {
                 if let Ok(m) = serde_json::from_slice::<crate::engine::manifest::Manifest>(&raw) {
-                    if let Ok(mgr) = crate::engine::db::DbManager::new(&db_path) {
-                        if let Ok(run_id) = mgr.insert_run(&m.query, &path.to_string_lossy()) {
-                            for e in m.documents {
-                                let _ = mgr.insert_document(
-                                    run_id,
-                                    &e.doc.title,
-                                    &e.doc.url,
-                                    &e.doc.source,
-                                    &e.doc.authors.join(", "),
-                                    e.doc.year.as_deref(),
-                                    e.doc.abstract_.as_deref(),
-                                    &e.local_path,
-                                    e.text_path.as_deref(),
-                                    e.extract_error.as_deref(),
-                                    0, // size unknown
-                                );
-                            }
+                    let docs: Vec<crate::engine::db::MigrateDoc> = m
+                        .documents
+                        .into_iter()
+                        .map(|e| crate::engine::db::MigrateDoc {
+                            title: e.doc.title,
+                            url: e.doc.url,
+                            source: e.doc.source,
+                            authors: e.doc.authors.join(", "),
+                            year: e.doc.year,
+                            abstract_: e.doc.abstract_,
+                            local_path: e.local_path,
+                            text_path: e.text_path,
+                            extract_error: e.extract_error,
+                        })
+                        .collect();
+                    let tmp = path.join("library.db.tmp");
+                    let _ = std::fs::remove_file(&tmp);
+                    let migrated = crate::engine::db::DbManager::open_for_migration(&tmp)
+                        .and_then(|mut mgr| mgr.migrate(&m.query, &path.to_string_lossy(), &docs));
+                    match migrated {
+                        Ok(()) => {
+                            // Drop happened inside the closure; rename into place.
+                            let _ = std::fs::rename(&tmp, &db_path);
+                        }
+                        Err(e) => {
+                            tracing::warn!("manifest migration failed for {}: {e}", path.display());
+                            let _ = std::fs::remove_file(&tmp);
                         }
                     }
                 }
@@ -317,7 +333,11 @@ pub async fn list_libraries(
             let conn = init_db(&db_path).map_err(|e| e.to_string())?;
             let row = conn
                 .query_row(
-                    "SELECT r.query, (SELECT COUNT(*) FROM documents WHERE run_id = r.id)
+                    // Count EVERY document in this folder's library.db (each folder is
+                    // a single query), not just the latest run's — a re-run that finds
+                    // fewer docs must not make the library appear to shrink. The
+                    // newest run still supplies the display query string.
+                    "SELECT r.query, (SELECT COUNT(*) FROM documents)
                  FROM runs r ORDER BY r.created_at DESC LIMIT 1",
                     [],
                     |row| Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?)),
