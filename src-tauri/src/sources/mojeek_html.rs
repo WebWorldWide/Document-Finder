@@ -15,7 +15,10 @@ use super::web_common::{clean_title, looks_like_doc};
 use super::{Document, Source, USER_AGENT};
 
 const ENDPOINT: &str = "https://www.mojeek.com/search";
-const MAX_PAGES: usize = 6;
+// Mojeek is an independent, scraping-tolerant crawler with a smaller index, so it
+// frequently exhausts results (raw==0) before the cap anyway — a modest bump from
+// 6 surfaces more of its long tail at low risk.
+const MAX_PAGES: usize = 8;
 const PAGE_SIZE: usize = 10;
 
 pub struct MojeekHtmlSource {

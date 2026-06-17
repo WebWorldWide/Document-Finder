@@ -159,30 +159,30 @@ export const INTENSITY_ORDER: DownloadIntensity[] = ["light", "balanced", "deep"
 
 export const INTENSITY_PRESETS: Record<DownloadIntensity, IntensityPreset> = {
   light: {
-    perSource: 25,
-    maxTotal: 75,
+    perSource: 40,
+    maxTotal: 150,
     concurrency: 4,
     label: "Light",
     blurb: "Quick skim — fewer results, gentle on sources.",
   },
   balanced: {
-    perSource: 100,
-    maxTotal: 500,
+    perSource: 150,
+    maxTotal: 900,
     concurrency: 8,
     label: "Balanced",
-    blurb: "Good for most searches — ~100/source, 500 max, 8 at a time.",
+    blurb: "Good for most searches — ~150/source, 900 max, 8 at a time.",
   },
   deep: {
-    perSource: 250,
-    maxTotal: 1500,
+    perSource: 350,
+    maxTotal: 2500,
     concurrency: 12,
     label: "Deep",
     blurb:
       "More thorough — wider per-source pull, longer source deadlines, and (with the LLM) more sub-queries. Slower, more rate-limits.",
   },
   exhaustive: {
-    perSource: 500,
-    maxTotal: 4000,
+    perSource: 600,
+    maxTotal: 6000,
     concurrency: 16,
     label: "Exhaustive",
     blurb:

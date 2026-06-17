@@ -14,7 +14,12 @@ use super::web_common::{clean_title, looks_like_doc};
 use super::{Document, Source, USER_AGENT};
 
 const ENDPOINT: &str = "https://www.bing.com/search";
-const MAX_PAGES: usize = 6;
+// Bing is filetype:-aware and deep-paginates reliably via `first`, and at 10/page
+// it only reached first=51 (60 raw) — below the per-engine target for every preset
+// above Light. 10 pages reaches first=91 (~100 raw); backend_timeout still caps
+// total per-engine work, and a mid-pagination CAPTCHA returns 200/zero (neutral),
+// so the worst case is wasted late-page requests, not a tripped circuit.
+const MAX_PAGES: usize = 10;
 const PAGE_SIZE: usize = 10; // Bing's `first` param uses 1, 11, 21, 31 …
 
 pub struct BingHtmlSource {
