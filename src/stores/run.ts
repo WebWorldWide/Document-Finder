@@ -50,7 +50,15 @@ export interface SourceStat {
   /// Live discovery phase for this source in the current run.
   status: "querying" | "done" | "error";
   /// Cumulative hits this source returned across sub-queries this run.
+  /// Accumulated LIVE from `found` events (the authoritative incremental
+  /// counter), so the Sources panel climbs in real time during discovery
+  /// instead of jumping only when a source's task completes.
   hits: number;
+  /// Number of still-running (sub_query, source) tasks for this source. A
+  /// source flips to "done" only when this reaches 0, so the status dot
+  /// doesn't flicker between querying/done while sibling sub-query tasks for
+  /// the same source are still streaming.
+  active: number;
 }
 
 export type Candidate = CandidatePayload;
@@ -136,6 +144,15 @@ function reset(query: string) {
   });
 }
 
+/// Normalize an event's source id to the key used by the Sources panel.
+/// The meta-search aggregator rewrites nested engine ids to
+/// "meta_search/<engine>" (see meta_search.rs), but source_start/source_done
+/// report the bare aggregator id ("meta_search"). Collapsing the prefix here
+/// makes live `found` counts land on the same row as the start/done events.
+function baseSourceId(source: string): string {
+  return source.startsWith("meta_search/") ? "meta_search" : source;
+}
+
 function apply(ev: DfEvent) {
   switch (ev.type) {
     case "keywords":
@@ -150,7 +167,11 @@ function apply(ev: DfEvent) {
       setState(
         produce((s) => {
           const cur = s.sourceStats[ev.payload.source];
-          s.sourceStats[ev.payload.source] = { status: "querying", hits: cur?.hits ?? 0 };
+          s.sourceStats[ev.payload.source] = {
+            status: "querying",
+            hits: cur?.hits ?? 0,
+            active: (cur?.active ?? 0) + 1,
+          };
         }),
       );
       addLog("info", `   querying ${ev.payload.source}`);
@@ -160,10 +181,22 @@ function apply(ev: DfEvent) {
       setState(
         produce((s) => {
           const cur = s.sourceStats[ev.payload.source];
-          s.sourceStats[ev.payload.source] = {
-            status: "done",
-            hits: (cur?.hits ?? 0) + ev.payload.count,
-          };
+          // One in-flight (sub_query, source) task just finished. Hits are
+          // accumulated live from `found`, so do NOT re-add `count` here — that
+          // would double-count. Only flip to "done" once the LAST task for this
+          // source finishes (active === 0). A source that only errored and found
+          // nothing stays "error" rather than masquerading as a clean "done".
+          const active = Math.max(0, (cur?.active ?? 1) - 1);
+          const hits = cur?.hits ?? 0;
+          const status =
+            active > 0
+              ? cur?.status === "error"
+                ? "error"
+                : "querying"
+              : cur?.status === "error" && hits === 0
+                ? "error"
+                : "done";
+          s.sourceStats[ev.payload.source] = { status, hits, active };
         }),
       );
       addLog("info", `   ${ev.payload.source}: +${ev.payload.count}`);
@@ -192,14 +225,34 @@ function apply(ev: DfEvent) {
             ].slice(-50);
           }
           const st = s.sourceStats[source];
-          s.sourceStats[source] = { status: "error", hits: st?.hits ?? 0 };
+          s.sourceStats[source] = {
+            status: "error",
+            hits: st?.hits ?? 0,
+            active: st?.active ?? 0,
+          };
         }),
       );
       addLog("warn", `   ${ev.payload.source}: ${ev.payload.error}`);
       break;
 
     case "found":
-      setState("found", ev.payload.total);
+      setState(
+        produce((s) => {
+          // `total` is the cumulative unique (deduped) discovery count.
+          s.found = ev.payload.total;
+          // Increment the per-source live counter so the Sources panel + the
+          // "By source" bar graph climb in real time as documents stream in,
+          // instead of only updating when the source's task completes. Collapse
+          // the meta_search/<engine> prefix so hits land on the aggregator row.
+          const base = baseSourceId(ev.payload.source);
+          const cur = s.sourceStats[base];
+          s.sourceStats[base] = {
+            status: cur?.status === "error" ? "error" : "querying",
+            hits: (cur?.hits ?? 0) + 1,
+            active: cur?.active ?? 0,
+          };
+        }),
+      );
       break;
 
     case "found_total":
@@ -212,8 +265,14 @@ function apply(ev: DfEvent) {
       setState(
         produce((s) => {
           for (const id of Object.keys(s.sourceStats)) {
-            if (s.sourceStats[id]?.status === "querying") {
-              s.sourceStats[id] = { status: "done", hits: s.sourceStats[id].hits };
+            const st = s.sourceStats[id];
+            if (!st) continue;
+            if (st.status === "querying") {
+              s.sourceStats[id] = { status: "done", hits: st.hits, active: 0 };
+            } else if (st.active !== 0) {
+              // Zero any leftover in-flight count (e.g. an aborted task whose
+              // source_done never arrived) without disturbing an error row.
+              s.sourceStats[id] = { ...st, active: 0 };
             }
           }
         }),
@@ -434,6 +493,11 @@ export const runStore = {
   apply,
   startSearch,
   exportZip,
+  /// Reset all live run state. Called when starting a new query; also used by
+  /// unit tests to isolate the event-reducer between cases.
+  reset(query = "") {
+    reset(query);
+  },
   clearFatalError() {
     setState("fatalError", null);
   },
