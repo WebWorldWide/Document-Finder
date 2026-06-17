@@ -125,7 +125,14 @@ impl Source for SemanticScholarSource {
                         identifier: p.external_ids.and_then(|e| e.doi),
                     });
                 }
-                Some((Ok(docs), (offset + per_page as i64, yielded + n, next_done)))
+                // Advance the *raw* offset by the page we requested (or the API's
+                // own `next`), but count only EMITTED docs toward the limit. Most
+                // S2 results lack an openAccessPdf and are dropped above; counting
+                // raw results here would burn the budget on non-OA papers and stop
+                // the stream long before `limit` downloadable PDFs were collected.
+                let added = docs.len();
+                let next_offset = data.next.unwrap_or(offset + per_page as i64);
+                Some((Ok(docs), (next_offset, yielded + added, next_done)))
             }
         })
         .flat_map(|res: anyhow::Result<Vec<Document>>| match res {
