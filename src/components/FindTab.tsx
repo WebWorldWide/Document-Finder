@@ -173,8 +173,13 @@ export default function FindTab() {
   });
 
   const lanes = createMemo(() => {
-    const totals: Record<string, { done: number; inflight: number }> = {};
-    for (const id of PRIMARY_SOURCES) totals[id] = { done: 0, inflight: 0 };
+    const totals: Record<string, { found: number; done: number; inflight: number }> = {};
+    for (const id of PRIMARY_SOURCES) totals[id] = { found: 0, done: 0, inflight: 0 };
+    // `found` comes from the live per-source discovery counter so the bars
+    // climb as documents are found (not just as they download). sourceStats is
+    // keyed by the aggregator id (meta_search), which matches PRIMARY_SOURCES.
+    const stats = rs().sourceStats;
+    for (const id of PRIMARY_SOURCES) totals[id].found = stats[id]?.hits ?? 0;
     for (const it of rs().completed) {
       if (it.status === "done") {
         const k = laneKey(it.source);
@@ -188,8 +193,14 @@ export default function FindTab() {
     return totals;
   });
   const laneSources = () => PRIMARY_SOURCES.filter((s) => settings.selectedSources.includes(s));
-  const laneMax = () =>
-    Math.max(1, ...laneSources().map((s) => lanes()[s].done + lanes()[s].inflight));
+  // Before downloads begin, the bars track per-source FOUND counts (live
+  // discovery); once downloads start, they track saved + in-flight files.
+  const laneMax = () => {
+    const ls = laneSources();
+    if (downloadsStarted())
+      return Math.max(1, ...ls.map((s) => lanes()[s].done + lanes()[s].inflight));
+    return Math.max(1, ...ls.map((s) => lanes()[s].found));
+  };
 
   const inFlightDocs = (): StreamDoc[] =>
     Object.values(rs().inFlight).map((d) => ({
@@ -679,24 +690,27 @@ export default function FindTab() {
                     <For each={laneSources()}>
                       {(s) => {
                         const v = () => lanes()[s];
+                        // Solid bar = found during discovery, saved during/after
+                        // download; the in-flight overlay only shows downloads.
+                        const primary = () => (downloadsStarted() ? v().done : v().found);
                         return (
                           <div
                             class="df-lane"
                             style={{ "--src-color": sourceColor(s) }}
-                            title={`${SOURCE_LABELS[s]}: ${v().done} saved · ${v().inflight} in flight`}
+                            title={`${SOURCE_LABELS[s]}: ${v().found} found · ${v().done} saved · ${v().inflight} in flight`}
                           >
-                            <Show when={v().inflight > 0}>
+                            <Show when={downloadsStarted() && v().inflight > 0}>
                               <div
                                 class="df-lane-bar inflight"
                                 style={{
-                                  height: `${(v().inflight / laneMax()) * 100}%`,
+                                  height: `${Math.min(100, (v().inflight / laneMax()) * 100)}%`,
                                   "margin-bottom": "1px",
                                 }}
                               />
                             </Show>
                             <div
                               class="df-lane-bar"
-                              style={{ height: `${(v().done / laneMax()) * 100}%` }}
+                              style={{ height: `${Math.min(100, (primary() / laneMax()) * 100)}%` }}
                             />
                           </div>
                         );
@@ -708,7 +722,11 @@ export default function FindTab() {
                       {(s) => (
                         <div style={{ flex: 1, "min-width": 0 }}>
                           <div class="df-lane-key">{SOURCE_LABELS[s].slice(0, 4)}</div>
-                          <div class="df-lane-val">{lanes()[s].done + lanes()[s].inflight}</div>
+                          <div class="df-lane-val">
+                            {downloadsStarted()
+                              ? lanes()[s].done + lanes()[s].inflight
+                              : lanes()[s].found}
+                          </div>
                         </div>
                       )}
                     </For>

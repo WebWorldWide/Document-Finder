@@ -61,7 +61,9 @@ function SourceRow(props: {
           >
             <span class="df-srcrow-status-dot" />
             <Switch>
-              <Match when={props.status!.status === "querying"}>scanning…</Match>
+              <Match when={props.status!.status === "querying"}>
+                {props.status!.hits > 0 ? `${props.status!.hits} found…` : "scanning…"}
+              </Match>
               <Match when={props.status!.status === "done"}>+{props.status!.hits} hits</Match>
               <Match when={props.status!.status === "error"}>error</Match>
             </Switch>
