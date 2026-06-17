@@ -160,6 +160,36 @@ export default function WelcomeDialog() {
             </button>
             <Show when={modelsOpen()}>
               <div class="mt-3 space-y-2 border-t border-[var(--color-border)] pt-3">
+                {/* Embedding model — fastembed-managed, not a registry download
+                    card. Shown as a passive row so "two models"/"Download both"
+                    is honest; it fetches + warms automatically (often before this
+                    dialog is even read), so there's no separate download button. */}
+                <div class="surface-raised-subtle flex items-center gap-2 p-2.5">
+                  <Show
+                    when={
+                      modelsStore.state.embeddingLoaded || modelsStore.state.embeddingDownloaded
+                    }
+                    fallback={
+                      <span class="shrink-0 text-[10px] text-[var(--color-foreground-muted)]">
+                        Auto
+                      </span>
+                    }
+                  >
+                    <CheckCircle2
+                      size={14}
+                      class="shrink-0"
+                      style={{ color: "var(--color-success)" }}
+                    />
+                  </Show>
+                  <div class="flex-1 text-[11px] leading-tight">
+                    <span class="font-semibold">Semantic-search model (BGE-Small)</span>
+                    <span class="ml-1 text-[var(--color-foreground-muted)]">
+                      {modelsStore.state.embeddingLoaded || modelsStore.state.embeddingDownloaded
+                        ? "· ready, managed automatically"
+                        : "· downloads automatically on first search"}
+                    </span>
+                  </div>
+                </div>
                 <For each={modelsStore.state.models.filter((m) => m.is_default)}>
                   {(model) => <ModelDownloadCard model={model} />}
                 </For>
