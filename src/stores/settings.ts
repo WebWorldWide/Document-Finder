@@ -116,7 +116,14 @@ if (!settings.libraryRoot) {
 }
 
 export function saveSettings() {
-  localStorage.setItem(LS_KEY, JSON.stringify(settings));
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(settings));
+  } catch (e) {
+    // Storage disabled or quota exceeded — non-fatal: settings just won't
+    // persist across restarts. Surfacing it as a thrown error here would break
+    // every toggle/handler that calls this synchronously.
+    console.error("saveSettings failed (settings not persisted):", e);
+  }
 }
 
 /// Clears a persisted `llmModelId` that's no longer in the model catalog

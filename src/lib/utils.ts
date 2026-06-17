@@ -75,8 +75,11 @@ export const ALL_SOURCES = [
 export type SourceId = (typeof ALL_SOURCES)[number];
 
 /// Sources we ship enabled by default on a fresh install. The built-in
-/// meta-search aggregator (`meta_search`) replaces SearXNG as the default
-/// web backend so the app works zero-config.
+/// meta-search aggregator (`meta_search`) is the default web backend and
+/// internally falls back to the SearXNG pool, so the standalone `searxng`
+/// source is intentionally NOT enabled by default — when both are on, the
+/// orchestrator drops `searxng` as already-covered, which made it look
+/// "enabled but doing nothing". It remains available to select manually.
 export const DEFAULT_ENABLED_SOURCES: SourceId[] = [
   "arxiv",
   "openalex",
@@ -87,7 +90,6 @@ export const DEFAULT_ENABLED_SOURCES: SourceId[] = [
   "zenodo",
   "gutenberg",
   "meta_search",
-  "searxng",
 ];
 
 /// Web-engine ids that the meta_search aggregator covers. We keep these as
