@@ -3,7 +3,7 @@
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::citation_graph::enrich_with_citation_graph;
 use super::db::DbManager;
-use super::dedup::Deduplicator;
+use super::dedup::{AddOutcome, Deduplicator};
 use super::downloader::{download, DownloadOutcome};
 use super::extract::extract_text;
 use super::query::{expand_query_broad, parse_query, safe_folder};
@@ -132,6 +132,19 @@ fn wave_deadlines(max_total: usize) -> (Duration, Duration) {
     let w1 = (60 + max_total / 20).clamp(60, 150) as u64;
     let w2 = (60 + max_total / 18).clamp(60, 130) as u64;
     (Duration::from_secs(w1), Duration::from_secs(w2))
+}
+
+/// Delete leftover `*.part` download temps in the run folder.
+async fn sweep_stale_parts(folder: &Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(folder).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) == Some("part") {
+            let _ = tokio::fs::remove_file(&p).await;
+        }
+    }
 }
 
 /// Emit a stage transition. State strings: "started" | "progress" | "done"
@@ -273,19 +286,26 @@ async fn discover_wave(
                                 let title_for_evt = doc.title.clone();
                                 let url_for_evt = doc.url.clone();
                                 let source_for_evt = doc.source.clone();
-                                d.add(doc, &sname_t, rank_in_source);
-                                count += 1;
+                                let outcome = d.add(doc, &sname_t, rank_in_source);
                                 let total = d.len();
                                 drop(d);
-                                let _ = app_t.emit(
-                                    EV_FOUND,
-                                    FoundPayload {
-                                        title: title_for_evt,
-                                        source: source_for_evt,
-                                        url: url_for_evt,
-                                        total,
-                                    },
-                                );
+                                // Only count + announce a doc that's actually NEW
+                                // to the dedup. A merged duplicate doesn't change
+                                // the unique total, so counting it would inflate
+                                // this source's live contribution and re-fire
+                                // EV_FOUND with an unchanged total.
+                                if matches!(outcome, AddOutcome::New(_)) {
+                                    count += 1;
+                                    let _ = app_t.emit(
+                                        EV_FOUND,
+                                        FoundPayload {
+                                            title: title_for_evt,
+                                            source: source_for_evt,
+                                            url: url_for_evt,
+                                            total,
+                                        },
+                                    );
+                                }
                                 total
                             };
                             if total_now >= max_total {
@@ -592,6 +612,12 @@ pub async fn run_pipeline(
 
     let folder = PathBuf::from(&req.out_dir).join(safe_folder(&req.query));
     tokio::fs::create_dir_all(&folder).await?;
+    // Reclaim any orphaned `*.part` temp files from a previous run killed
+    // mid-download (SIGKILL/power-loss). The downloader cleans them on every
+    // in-function error/cancel, but a hard kill leaves one behind and the
+    // resume-skip check only inspects the FINAL path, so it would never be
+    // reclaimed for a one-off query.
+    sweep_stale_parts(&folder).await;
     let text_dir = folder.join("_text");
     if req.extract {
         tokio::fs::create_dir_all(&text_dir).await?;
@@ -1310,7 +1336,11 @@ pub async fn run_pipeline(
 
                     let mut text_path: Option<String> = None;
                     let mut extract_error: Option<String> = None;
-                    if extract_flag {
+                    // Skip the CPU-bound text extraction if the user has hit Stop:
+                    // the bytes are already on disk and the row is still persisted
+                    // below, so short-circuiting only the optional parse keeps Stop
+                    // responsive instead of grinding through queued large PDFs.
+                    if extract_flag && !cancel.is_cancelled() {
                         let extract_path = path.clone();
                         let _extract_permit = match extract_sem.clone().acquire_owned().await {
                             Ok(p) => p,

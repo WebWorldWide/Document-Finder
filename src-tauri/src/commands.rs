@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::ai;
 use crate::ai::registry;
 use crate::ai::state::{snapshot, AiState, ModelInfo, ModelStatus};
-use crate::engine::db::init_db;
+use crate::engine::db::open_read_only;
 use crate::engine::runlog;
 use crate::engine::{run_pipeline, RunRequest};
 use crate::events::{ErrorPayload, EV_ERROR};
@@ -330,7 +330,7 @@ pub async fn list_libraries(
 
         let path_clone = path.clone();
         let info = tokio::task::spawn_blocking(move || -> Result<Option<LibraryInfo>, String> {
-            let conn = init_db(&db_path).map_err(|e| e.to_string())?;
+            let conn = open_read_only(&db_path).map_err(|e| e.to_string())?;
             let row = conn
                 .query_row(
                     // Count EVERY document in this folder's library.db (each folder is
@@ -399,7 +399,7 @@ pub async fn open_library(state: State<'_, AppState>, path: String) -> Result<Li
 
     let p_clone = p.clone();
     let info = tokio::task::spawn_blocking(move || -> Result<LibraryInfo, String> {
-        let conn = init_db(&db_path).map_err(|e| e.to_string())?;
+        let conn = open_read_only(&db_path).map_err(|e| e.to_string())?;
         let row = conn
             .query_row(
                 "SELECT r.query, (SELECT COUNT(*) FROM documents WHERE run_id = r.id)

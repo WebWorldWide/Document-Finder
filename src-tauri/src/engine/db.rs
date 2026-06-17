@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, OpenFlags, Result};
 use std::path::Path;
 
 /// Create the schema (tables + hot-path indexes). Idempotent. Shared by the
@@ -64,8 +64,25 @@ pub fn init_db(path: &Path) -> Result<Connection> {
     // synchronous=NORMAL is durable+safe under WAL and cuts fsync churn across
     // the many short-lived per-document write connections.
     conn.pragma_update(None, "synchronous", "NORMAL")?;
+    // Enforce the documents.run_id → runs(id) foreign key (off by default in
+    // SQLite). All inserts reference a run created first, so this only guards
+    // against a future delete-by-run leaving orphans.
+    conn.pragma_update(None, "foreign_keys", "ON")?;
 
     create_schema(&conn)?;
+    Ok(conn)
+}
+
+/// Open a library DB **read-only** for scanning (list/open). Avoids the DDL +
+/// `journal_mode=WAL` writes that `init_db` performs on every scanned folder —
+/// those needlessly contend for write locks on a `library.db` an active run is
+/// writing. Sets only a busy_timeout; the schema is expected to already exist.
+pub fn open_read_only(path: &Path) -> Result<Connection> {
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
     Ok(conn)
 }
 
@@ -106,6 +123,7 @@ impl DbManager {
         // fsync churn on these many short-lived per-document write connections —
         // this is the path the init_db comment's NORMAL note is really about.
         conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
         Ok(Self { conn })
     }
 
@@ -115,6 +133,7 @@ impl DbManager {
     pub fn open_for_migration(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
         create_schema(&conn)?;
         Ok(Self { conn })
     }
