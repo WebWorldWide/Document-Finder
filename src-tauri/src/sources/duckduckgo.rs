@@ -28,11 +28,16 @@ impl DuckDuckGoSource {
     }
 }
 
-// Match the result anchor: <a ... class="result__a" href="...">title</a>
-static RESULT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?is)<a\s+rel="nofollow"\s+class="result__a"\s+href="([^"]+)"[^>]*>(.*?)</a>"#)
-        .unwrap()
-});
+// Match the result anchor in TWO stages — capture each anchor's attribute blob
+// + inner HTML, then test for the `result__a` class and extract href SEPARATELY
+// (mirrors brave_html.rs). The old single regex demanded a rigid attribute order
+// (`rel` then `class` then `href`) and an EXACT single class, so any attribute
+// reorder or an extra class token (e.g. `class="result__a js-result-title-link"`)
+// silently matched nothing and DDG — the primary web engine — contributed zero.
+static ANCHOR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?is)<a\s+([^>]*)>(.*?)</a>"#).unwrap());
+static RESULT_CLASS_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)class="[^"]*\bresult__a\b[^"]*""#).unwrap());
+static HREF_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)href="([^"]+)""#).unwrap());
 fn unwrap_ddg_redirect(href: &str) -> String {
     // DDG wraps results as //duckduckgo.com/l/?uddg=<percent-encoded-url>&...
     let h = href.trim_start_matches("//");
@@ -106,12 +111,20 @@ impl Source for DuckDuckGoSource {
                 // when a full page happened to be all landing pages that failed
                 // `looks_like_doc` (the real docs may be on page 2/3).
                 let mut raw = 0usize;
-                for cap in RESULT_RE.captures_iter(&body) {
+                for cap in ANCHOR_RE.captures_iter(&body) {
+                    let attrs = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                    if !RESULT_CLASS_RE.is_match(attrs) {
+                        continue; // not a result anchor
+                    }
                     raw += 1;
                     if yielded + count >= limit {
                         break;
                     }
-                    let href = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                    let href = HREF_RE
+                        .captures(attrs)
+                        .and_then(|c| c.get(1))
+                        .map(|m| m.as_str())
+                        .unwrap_or("");
                     let title_html = cap.get(2).map(|m| m.as_str()).unwrap_or("");
                     let url = unwrap_ddg_redirect(href);
                     if url.is_empty() || !looks_like_doc(&url) {
@@ -176,5 +189,34 @@ mod tests {
         assert!(looks_like_doc("https://example.com/book.epub"));
         assert!(looks_like_doc("https://example.com/paper.pdf?x=1"));
         assert!(!looks_like_doc("https://example.com/page.html"));
+    }
+
+    /// Extract (decoded-url, title) pairs exactly as the search loop does.
+    fn extract(html: &str) -> Vec<(String, String)> {
+        ANCHOR_RE
+            .captures_iter(html)
+            .filter_map(|cap| {
+                let attrs = cap.get(1)?.as_str();
+                if !RESULT_CLASS_RE.is_match(attrs) {
+                    return None;
+                }
+                let href = HREF_RE.captures(attrs)?.get(1)?.as_str();
+                Some((unwrap_ddg_redirect(href), clean_title(cap.get(2)?.as_str())))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn extracts_result_regardless_of_attribute_order_or_extra_classes() {
+        // Attribute reorder + an extra class token must still parse (the old
+        // rigid single-regex matched neither of these).
+        let href_first = r#"<a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fa.edu%2Fp.pdf&rut=x" rel="nofollow" class="result__a js-result-title-link">Deep <b>Learning</b></a>"#;
+        let class_extra = r#"<a rel="nofollow" class="result__a extra" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fa.edu%2Fp.pdf">Deep Learning</a>"#;
+        for html in [href_first, class_extra] {
+            let got = extract(html);
+            assert_eq!(got.len(), 1, "failed to match: {html}");
+            assert_eq!(got[0].0, "https://a.edu/p.pdf");
+            assert_eq!(got[0].1, "Deep Learning");
+        }
     }
 }

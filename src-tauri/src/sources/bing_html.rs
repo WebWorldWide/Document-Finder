@@ -27,13 +27,14 @@ impl BingHtmlSource {
     }
 }
 
-// Match the result heading anchor inside `<li class="b_algo">` blocks.
-// We don't anchor on `b_algo` because Bing sometimes wraps results in
-// alternate containers; the `<h2><a href="...">...</a></h2>` shape is stable.
-static RESULT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?is)<h2[^>]*>\s*<a\s+[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>\s*</h2>"#)
-        .unwrap()
-});
+// Match in TWO stages — grab each `<h2>…</h2>` heading block, then pull the
+// FIRST `<a href="http…">` inside it. The old single regex required the anchor
+// to be the only child of the `<h2>` (`<h2>\s*<a…>…</a>\s*</h2>`), so any badge
+// /inline span Bing nests inside the heading, or trailing markup before
+// `</h2>`, broke the match and the page silently yielded zero.
+static H2_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?is)<h2\b[^>]*>(.*?)</h2>"#).unwrap());
+static ANCHOR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?is)<a\s+([^>]*)>(.*?)</a>"#).unwrap());
+static HREF_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)href="(https?://[^"]+)""#).unwrap());
 
 #[async_trait]
 impl Source for BingHtmlSource {
@@ -87,13 +88,24 @@ impl Source for BingHtmlSource {
                 // only stop paginating on a genuinely empty page — not a page whose
                 // results all happened to fail `looks_like_doc`.
                 let mut raw = 0usize;
-                for cap in RESULT_RE.captures_iter(&body) {
+                for h2 in H2_RE.captures_iter(&body) {
+                    let inner = h2.get(1).map(|m| m.as_str()).unwrap_or("");
+                    let Some(anchor) = ANCHOR_RE.captures(inner) else {
+                        continue; // heading with no anchor (e.g. "Related searches")
+                    };
+                    let attrs = anchor.get(1).map(|m| m.as_str()).unwrap_or("");
+                    let Some(url) = HREF_RE
+                        .captures(attrs)
+                        .and_then(|c| c.get(1))
+                        .map(|m| m.as_str().to_string())
+                    else {
+                        continue; // anchor without an absolute href
+                    };
                     raw += 1;
                     if yielded + count >= limit {
                         break;
                     }
-                    let url = cap.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
-                    let title_html = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+                    let title_html = anchor.get(2).map(|m| m.as_str()).unwrap_or("");
                     if url.is_empty() || !looks_like_doc(&url) {
                         continue;
                     }
@@ -132,6 +144,20 @@ impl Source for BingHtmlSource {
 mod tests {
     use super::*;
 
+    /// Extract (url, title) exactly as the search loop does.
+    fn extract(html: &str) -> Vec<(String, String)> {
+        H2_RE
+            .captures_iter(html)
+            .filter_map(|h2| {
+                let inner = h2.get(1)?.as_str();
+                let anchor = ANCHOR_RE.captures(inner)?;
+                let attrs = anchor.get(1)?.as_str();
+                let url = HREF_RE.captures(attrs)?.get(1)?.as_str().to_string();
+                Some((url, clean_title(anchor.get(2)?.as_str())))
+            })
+            .collect()
+    }
+
     #[test]
     fn extracts_bing_h2_anchor() {
         let html = r#"
@@ -141,11 +167,20 @@ mod tests {
               </a></h2>
             </li>
         "#;
-        let cap = RESULT_RE.captures(html).expect("matches");
-        assert_eq!(&cap[1], "https://stanford.edu/papers/civil-war.pdf");
-        assert_eq!(
-            clean_title(cap.get(2).unwrap().as_str()),
-            "Civil War Primary Sources"
-        );
+        let got = extract(html);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, "https://stanford.edu/papers/civil-war.pdf");
+        assert_eq!(got[0].1, "Civil War Primary Sources");
+    }
+
+    #[test]
+    fn extracts_anchor_even_with_nested_badge_and_trailing_markup() {
+        // A badge span before the anchor and a trailing tag after it both broke
+        // the old flush-adjacency regex; the two-stage match tolerates them.
+        let html = r#"<h2 class="b_topTitle"><span class="badge">PDF</span><a href="https://nasa.gov/report.pdf" data-h="x">Mission <em>Report</em></a><span class="meta">·2020</span></h2>"#;
+        let got = extract(html);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, "https://nasa.gov/report.pdf");
+        assert_eq!(got[0].1, "Mission Report");
     }
 }
