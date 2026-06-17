@@ -38,18 +38,10 @@ fn backend_timeout(limit: usize) -> Duration {
 }
 const CIRCUIT_OPEN_FAILURES: u32 = 3;
 const CIRCUIT_OPEN_DURATION: Duration = Duration::from_secs(300);
-/// A real engine almost never returns zero results for this many *different*
-/// queries in a row — that pattern means its selector silently broke (HTTP 200,
-/// nothing parsed), which the per-query empty/error split can't detect. After
-/// the streak we open a SHORTER circuit so the SearXNG pool fallback engages and
-/// we re-probe sooner than a hard transport fault.
-const EMPTY_STREAK_TRIP: u32 = 4;
-const EMPTY_STREAK_DURATION: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Default)]
 struct BackendHealth {
     consecutive_failures: u32,
-    consecutive_empty: u32,
     skip_until: Option<Instant>,
 }
 
@@ -64,33 +56,23 @@ impl BackendHealth {
 
     fn record_success(&mut self) {
         self.consecutive_failures = 0;
-        self.consecutive_empty = 0;
         self.skip_until = None;
     }
 
     fn record_failure(&mut self) {
-        self.consecutive_empty = 0;
         self.consecutive_failures += 1;
         if self.consecutive_failures >= CIRCUIT_OPEN_FAILURES {
             self.skip_until = Some(Instant::now() + CIRCUIT_OPEN_DURATION);
         }
     }
-
-    /// A clean HTTP-200-but-zero-results query. Neutral in isolation, but a long
-    /// streak across distinct queries trips a short circuit (likely broken parser).
-    fn record_empty(&mut self) {
-        self.consecutive_empty += 1;
-        if self.consecutive_empty >= EMPTY_STREAK_TRIP {
-            self.skip_until = Some(Instant::now() + EMPTY_STREAK_DURATION);
-        }
-    }
 }
 
-/// How one engine's fan-out maps onto the circuit breaker.
+/// How one engine's fan-out maps onto the circuit breaker. A zero-result query is
+/// `Neutral` — only real transport/HTTP errors count toward opening a circuit, so
+/// a legitimately empty (or anti-bot-throttled) engine is never suppressed.
 enum Outcome {
     Success,
     Failure,
-    Empty,
     Neutral,
 }
 
@@ -261,10 +243,9 @@ impl Source for MetaSearchSource {
 
                 // Update circuit breaker. Crucially, a healthy engine that simply
                 // found nothing (HTTP 200, zero results) must NOT be treated as a
-                // hard failure — otherwise three niche/empty queries open the
-                // circuit and silently shrink web coverage for 5 minutes. But a
-                // long *streak* of empties (record_empty) does eventually trip a
-                // short circuit, since that pattern means a broken parser.
+                // failure — otherwise a few niche/empty queries (or an engine
+                // serving anti-bot challenge pages) open the circuit and silently
+                // shrink web coverage. Only real transport/HTTP errors count.
                 let (status_str, outcome) = if timed_out && count == 0 {
                     ("timeout", Outcome::Failure) // slow AND produced nothing -> fault
                 } else if timed_out {
@@ -274,7 +255,7 @@ impl Source for MetaSearchSource {
                 } else if count == 0 && saw_error {
                     ("error", Outcome::Failure) // a real transport/HTTP error
                 } else if count == 0 {
-                    ("empty", Outcome::Empty) // zero results -> empty-streak tracking
+                    ("empty", Outcome::Neutral) // zero results -> not a fault
                 } else {
                     ("ok", Outcome::Success)
                 };
@@ -285,7 +266,6 @@ impl Source for MetaSearchSource {
                     match outcome {
                         Outcome::Success => entry.record_success(),
                         Outcome::Failure => entry.record_failure(),
-                        Outcome::Empty => entry.record_empty(),
                         Outcome::Neutral => {}
                     }
                 }
@@ -374,31 +354,17 @@ mod tests {
     }
 
     #[test]
-    fn empty_streak_trips_a_short_circuit() {
+    fn below_threshold_failures_do_not_open() {
+        // Only a real-failure streak opens a circuit; empties/throttles are
+        // Neutral (no record_*), so an engine serving empty/challenge pages is
+        // never suppressed.
         let mut h = BackendHealth::default();
-        // A few empties below the threshold stay neutral (real niche queries).
-        for _ in 0..EMPTY_STREAK_TRIP - 1 {
-            h.record_empty();
+        for _ in 0..CIRCUIT_OPEN_FAILURES - 1 {
+            h.record_failure();
         }
-        assert!(!h.is_open(), "should not trip below the empty streak");
-        h.record_empty();
-        assert!(
-            h.is_open(),
-            "a long empty streak should trip (broken parser)"
-        );
-        // Any results immediately clear the streak.
+        assert!(!h.is_open(), "stays closed below the failure threshold");
         h.record_success();
-        assert!(!h.is_open());
-    }
-
-    #[test]
-    fn results_reset_both_streaks() {
-        let mut h = BackendHealth::default();
         h.record_failure();
-        h.record_empty();
-        h.record_success();
-        // After a success, neither a single failure nor a single empty re-opens.
-        h.record_failure();
-        assert!(!h.is_open());
+        assert!(!h.is_open(), "a success resets the failure streak");
     }
 }
