@@ -11,7 +11,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
 
-use super::web_common::{clean_title, looks_like_doc};
+use super::web_common::{clean_title, looks_like_doc, read_text_capped};
 use super::{Document, Source, USER_AGENT};
 
 const ENDPOINT: &str = "https://search.brave.com/search";
@@ -93,9 +93,10 @@ impl Source for BraveHtmlSource {
                         (page, yielded, true),
                     ));
                 }
-                let body = match resp.text().await {
+                let body = match read_text_capped(resp).await {
                     Ok(t) => t,
-                    Err(e) => return Some((Err(e.into()), (page, yielded, true))),
+                    // read_text_capped already yields anyhow::Error.
+                    Err(e) => return Some((Err(e), (page, yielded, true))),
                 };
 
                 let mut docs: Vec<Document> = Vec::new();

@@ -160,6 +160,12 @@ pub async fn start_run(
     if req.query.trim().is_empty() {
         return Err("Enter something to search for.".into());
     }
+    // Reject a query with no usable ranking token (only single chars or
+    // punctuation, e.g. "a b c" / "!!!") — it would otherwise tokenize to
+    // nothing, zeroing TF-IDF (no topical ranking, nothing relevance-rejected).
+    if !crate::engine::query::has_searchable_token(&req.query) {
+        return Err("Enter a search term with at least one word (2+ letters).".into());
+    }
     if req.sources.is_empty() {
         return Err("Select at least one source to search.".into());
     }

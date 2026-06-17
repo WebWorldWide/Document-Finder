@@ -76,6 +76,18 @@ pub fn parse_query(q: &str) -> Vec<String> {
         .collect()
 }
 
+/// True if the query contains at least one token the ranker can actually use —
+/// an alphanumeric run of >= 2 chars (mirrors `ranking::tokenize`'s rule).
+///
+/// A query of only single-character words ("a b c") or pure punctuation ("!!!")
+/// passes the non-empty check yet tokenizes to nothing downstream, zeroing the
+/// whole TF-IDF column (no topical ranking, and nothing gets relevance-rejected).
+/// Callers reject such input at the boundary instead of running a no-signal search.
+pub fn has_searchable_token(q: &str) -> bool {
+    q.split(|c: char| !c.is_alphanumeric())
+        .any(|t| t.chars().count() >= 2)
+}
+
 /// Split a multi-topic query into independently searchable sub-queries.
 ///
 /// ```text
@@ -310,6 +322,19 @@ mod tests {
     fn parse_drops_stopwords_and_short() {
         let kw = parse_query("Please find all the books on therapy training.");
         assert_eq!(kw, vec!["therapy", "training"]);
+    }
+
+    #[test]
+    fn has_searchable_token_matches_tokenizer() {
+        // Real queries have a >=2-char alphanumeric run.
+        assert!(has_searchable_token("machine learning"));
+        assert!(has_searchable_token("AI")); // short acronym is fine
+        assert!(has_searchable_token("a bc d")); // one 2-char run is enough
+                                                 // Pathological queries that tokenize to nothing downstream.
+        assert!(!has_searchable_token("a b c"));
+        assert!(!has_searchable_token("!!!"));
+        assert!(!has_searchable_token("   "));
+        assert!(!has_searchable_token(""));
     }
 
     #[test]
