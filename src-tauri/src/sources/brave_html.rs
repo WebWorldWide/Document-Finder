@@ -16,7 +16,6 @@ use super::{Document, Source, USER_AGENT};
 
 const ENDPOINT: &str = "https://search.brave.com/search";
 const MAX_PAGES: usize = 6;
-const PAGE_SIZE: usize = 20;
 
 pub struct BraveHtmlSource {
     client: Arc<reqwest::Client>,
@@ -65,7 +64,13 @@ impl Source for BraveHtmlSource {
                 if done || yielded >= limit || page >= MAX_PAGES {
                     return None;
                 }
-                let offset = (page * PAGE_SIZE).to_string();
+                // Brave's `offset` is a 0-based PAGE index (offset=0,1,2,… → result
+                // pages 1,2,3…), NOT a result-count offset. The old `page*20` asked
+                // Brave for pages 0,20,40,… — every page after the first was out of
+                // range and returned an empty/anomaly page, so Brave only ever
+                // contributed its first page and MAX_PAGES was dead. (Matches
+                // SearXNG's brave engine: `offset = pageno - 1`.)
+                let offset = page.to_string();
                 let req = client
                     .get(ENDPOINT)
                     .header("User-Agent", USER_AGENT)
