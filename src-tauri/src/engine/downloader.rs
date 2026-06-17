@@ -207,6 +207,22 @@ static ATTR_HREF: Lazy<Regex> =
 static ANCHOR_PDF: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(?is)<a\b[^>]*\bhref\s*=\s*["']([^"'#]+\.pdf(?:\?[^"']*)?)["']"#).unwrap()
 });
+// JS-driven download widgets stash the real PDF in a data-* attribute
+// (`data-pdf-url`, `data-pdf`, `data-href`) instead of a plain href.
+static DATA_PDF_ATTR: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?is)\bdata-(?:pdf-url|pdf|href)\s*=\s*["']([^"'#]+?\.pdf(?:\?[^"']*)?)["']"#)
+        .unwrap()
+});
+// Repository / journal "Download" endpoints that serve a PDF from a path with no
+// `.pdf` extension (e.g. `/download/123`, `/article/view/10/9/bitstream`). Tried
+// only as a last resort and host-locked, so a wrong guess just fails the
+// content-type check rather than fetching an unrelated file.
+static ANCHOR_DOWNLOADISH: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r#"(?is)<a\b[^>]*\bhref\s*=\s*["']([^"'#]*/(?:download|fulltext|bitstream|getpdf|viewfile|pdfviewer|pdf)(?:/[^"'#]*)?)["']"#,
+    )
+    .unwrap()
+});
 
 /// Read at most `cap` bytes of a response body as lossy UTF-8. Used to scan an
 /// HTML landing page without pulling an unbounded body into memory.
@@ -232,8 +248,12 @@ fn resolve_href(base: &url::Url, href: &str) -> Option<String> {
 ///   1. `<meta name="citation_pdf_url" content="…">` (the Google-Scholar tag
 ///      most scholarly publishers emit) — trusted, any host.
 ///   2. `<link rel="alternate" type="application/pdf" href="…">` — trusted.
-///   3. The first **same-host** `<a href="….pdf">` — untrusted, so host-locked
-///      to avoid grabbing an unrelated/advertised PDF.
+///   3. A `data-pdf-url` / `data-pdf` / `data-href="….pdf"` attribute (JS
+///      download widgets) — host-locked.
+///   4. The first **same-host** `<a href="….pdf">` — host-locked.
+///   5. Last resort: a **same-host** download-style anchor (`/download/…`,
+///      `/bitstream/…`, `/pdf/…`, …) with no `.pdf` extension. Host-locked; a
+///      wrong guess just fails the downloader's content-type/magic check.
 ///
 /// Returns an absolute URL resolved against `base` (the page's final URL).
 fn resolve_pdf_from_html(html: &str, base: &url::Url) -> Option<String> {
@@ -251,7 +271,22 @@ fn resolve_pdf_from_html(html: &str, base: &url::Url) -> Option<String> {
             }
         }
     }
-    for cap in ANCHOR_PDF.captures_iter(html) {
+    // data-* PDF attributes (host-locked, like the anchor fallbacks).
+    if let Some(u) = first_same_host_match(&DATA_PDF_ATTR, html, base) {
+        return Some(u);
+    }
+    if let Some(u) = first_same_host_match(&ANCHOR_PDF, html, base) {
+        return Some(u);
+    }
+    // Last resort: a download-style endpoint without a `.pdf` extension.
+    first_same_host_match(&ANCHOR_DOWNLOADISH, html, base)
+}
+
+/// Return the first capture-group-1 match of `re` in `html` that resolves to an
+/// absolute URL on the same host as `base`. Shared by the host-locked
+/// (untrusted) PDF-link fallbacks so they can't grab an off-host / advertised file.
+fn first_same_host_match(re: &Regex, html: &str, base: &url::Url) -> Option<String> {
+    for cap in re.captures_iter(html) {
         if let Some(abs) = resolve_href(base, &cap[1]) {
             if let Ok(u) = url::Url::parse(&abs) {
                 if u.host_str() == base.host_str() {
@@ -276,23 +311,20 @@ async fn check_magic_bytes(path: &Path) -> Option<String> {
         return None;
     }
 
-    let mut file = match tokio::fs::File::open(path).await {
-        Ok(f) => f,
+    // Read a small head and scan it the same way the main download path does
+    // (`sniff_doc_ext`): a real PDF can carry a BOM / leading junk before `%PDF`,
+    // so requiring the signature at offset 0 (the old check) wrongly rejected
+    // valid cached PDFs and forced a needless re-download every run. Callers
+    // guarantee the file is >= MIN_DOC_BYTES, so a short read here is an I/O
+    // fault, not EOF.
+    let head = match read_file_head(path, 1024).await {
+        Ok(h) => h,
         Err(_) => return Some("Couldn't verify the downloaded file.".to_string()),
     };
-    let mut head = [0u8; 4];
-    use tokio::io::AsyncReadExt;
-    if file.read_exact(&mut head).await.is_err() {
-        // This runs only after the caller's `size >= MIN_DOC_BYTES` (4096) gate,
-        // so a 4-byte read can't fail by being short — it's an I/O fault (e.g. a
-        // Windows AV sharing-lock on the just-written file). Report it as such
-        // rather than the misleading "too small", which matches the open branch.
-        return Some("Couldn't verify the downloaded file.".to_string());
-    }
 
     match ext.as_str() {
         "pdf" => {
-            if &head == b"%PDF" {
+            if head.windows(4).any(|w| w == b"%PDF") {
                 None
             } else {
                 Some(
@@ -302,7 +334,7 @@ async fn check_magic_bytes(path: &Path) -> Option<String> {
             }
         }
         "epub" => {
-            if &head == b"PK\x03\x04" {
+            if head.starts_with(b"PK\x03\x04") {
                 None
             } else {
                 Some(
@@ -775,6 +807,70 @@ mod tests {
         assert_eq!(
             resolve_pdf_from_html(html, &base).as_deref(),
             Some("https://ojs.example.org/index.php/j/article/view/10/9")
+        );
+    }
+
+    #[test]
+    fn resolves_data_pdf_url_attribute() {
+        let base = url::Url::parse("https://repo.edu/record/9").unwrap();
+        let html =
+            r#"<button class="dl" data-pdf-url="/record/9/files/paper.pdf">Download</button>"#;
+        assert_eq!(
+            resolve_pdf_from_html(html, &base).as_deref(),
+            Some("https://repo.edu/record/9/files/paper.pdf")
+        );
+    }
+
+    #[test]
+    fn resolves_same_host_download_endpoint_without_pdf_extension() {
+        let base = url::Url::parse("https://ojs.example.org/index.php/j/article/view/10").unwrap();
+        let html =
+            r#"<a class="obj_galley_link" href="/index.php/j/article/download/10/9">PDF</a>"#;
+        assert_eq!(
+            resolve_pdf_from_html(html, &base).as_deref(),
+            Some("https://ojs.example.org/index.php/j/article/download/10/9")
+        );
+    }
+
+    #[test]
+    fn skips_cross_host_download_endpoint() {
+        let base = url::Url::parse("https://repo.edu/record/9").unwrap();
+        let html = r#"<a href="https://ads.example.com/download/promo">grab</a>"#;
+        assert_eq!(resolve_pdf_from_html(html, &base), None);
+    }
+
+    #[tokio::test]
+    async fn check_magic_bytes_accepts_bom_prefixed_pdf() {
+        use tokio::io::AsyncWriteExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("doc.pdf");
+        let mut f = tokio::fs::File::create(&path).await.unwrap();
+        // A BOM / leading bytes before %PDF is legitimate and must be accepted.
+        f.write_all(b"\xef\xbb\xbf%PDF-1.7\n").await.unwrap();
+        f.write_all(&[b' '; 2048]).await.unwrap();
+        f.flush().await.unwrap();
+        drop(f);
+        assert!(
+            check_magic_bytes(&path).await.is_none(),
+            "BOM-prefixed PDF should pass magic-byte validation"
+        );
+    }
+
+    #[tokio::test]
+    async fn check_magic_bytes_rejects_html_named_pdf() {
+        use tokio::io::AsyncWriteExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("doc.pdf");
+        let mut f = tokio::fs::File::create(&path).await.unwrap();
+        f.write_all(b"<!DOCTYPE html><html>error page</html>")
+            .await
+            .unwrap();
+        f.write_all(&[b' '; 2048]).await.unwrap();
+        f.flush().await.unwrap();
+        drop(f);
+        assert!(
+            check_magic_bytes(&path).await.is_some(),
+            "an HTML error page saved as .pdf must be rejected"
         );
     }
 }
