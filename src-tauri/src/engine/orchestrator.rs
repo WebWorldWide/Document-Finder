@@ -1514,6 +1514,38 @@ async fn ensure_llm_loaded(
         return None;
     }
 
+    // Verify the pinned SHA-256 before handing the file to the native loader. The
+    // SHA was only checked at download time; a corrupt/truncated GGUF (disk rot,
+    // an interrupted resume, tampering) can make llama.cpp abort natively — which
+    // Rust can't catch. Runs once per session: the `try_get()` fast-path above
+    // skips it after the first successful load.
+    if !entry.sha256.is_empty() {
+        match crate::ai::downloader::verify_sha256(&model_path, entry.sha256).await {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(
+                    "LLM {} failed SHA-256 verification — skipping load (corrupt/truncated); re-download from Settings",
+                    entry.id
+                );
+                let _ = app.emit(
+                    crate::events::EV_MODEL_STATUS,
+                    crate::events::ModelStatusPayload {
+                        model_id: entry.id.to_string(),
+                        status: "failed".to_string(),
+                        detail: Some(
+                            "Model file failed its integrity check — re-download it.".to_string(),
+                        ),
+                    },
+                );
+                return None;
+            }
+            Err(e) => {
+                tracing::warn!("LLM {} SHA-256 check errored: {e}", entry.id);
+                return None;
+            }
+        }
+    }
+
     let _ = app.emit(
         crate::events::EV_MODEL_STATUS,
         crate::events::ModelStatusPayload {

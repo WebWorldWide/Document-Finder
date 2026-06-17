@@ -392,11 +392,15 @@ fn warm_inner(app: AppHandle) {
     // runtime handle, so it works from the main thread AND from the in-search
     // (already-in-runtime) caller.
     tauri::async_runtime::spawn_blocking(move || {
+        // Release the WARMING dedup flag on EVERY exit, including a panic in the
+        // warm task — a manual reset at the end would be skipped on unwind,
+        // permanently disabling warm-up (and silently the semantic rerank) for
+        // the rest of the session.
+        let _warming_guard = WarmingResetGuard;
         let cache = match cache_dir(&app) {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!("embedding warm: cache dir: {e}");
-                WARMING.store(false, Ordering::SeqCst);
                 return;
             }
         };
@@ -412,8 +416,16 @@ fn warm_inner(app: AppHandle) {
                 emit_status(&app, "embedding_failed", &e.to_string());
             }
         }
-        WARMING.store(false, Ordering::SeqCst);
     });
+}
+
+/// Resets the `WARMING` dedup flag when dropped (normal return OR panic), so a
+/// crash in the warm task can't latch it `true` for the session.
+struct WarmingResetGuard;
+impl Drop for WarmingResetGuard {
+    fn drop(&mut self) {
+        WARMING.store(false, Ordering::SeqCst);
+    }
 }
 
 /// Semantic rerank: embed the query + each candidate's (title + abstract) in the
