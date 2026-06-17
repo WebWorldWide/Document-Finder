@@ -265,7 +265,7 @@ impl Source for ArxivSource {
                 if done || yielded >= limit {
                     return None;
                 }
-                let per_page = 100.min(limit.saturating_sub(yielded).max(1));
+                let per_page = 200.min(limit.saturating_sub(yielded).max(1));
                 let q = search_query(&keywords);
                 // Route through the shared backoff helper (like every other
                 // structured source) so a transient 429/5xx from the arXiv export
