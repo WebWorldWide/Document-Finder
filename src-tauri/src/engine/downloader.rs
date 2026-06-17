@@ -280,6 +280,59 @@ async fn existing_file_is_valid(path: &Path) -> bool {
     check_magic_bytes(path).await.is_none()
 }
 
+/// Positive document signature from a file's leading bytes. PDFs occasionally
+/// carry a BOM / junk before `%PDF`, so we scan the first chunk rather than
+/// requiring it at offset 0; an EPUB (ZIP) always starts with the local-file
+/// header `PK\x03\x04`.
+fn sniff_doc_ext(head: &[u8]) -> Option<&'static str> {
+    if head.windows(4).any(|w| w == b"%PDF") {
+        Some(".pdf")
+    } else if head.starts_with(b"PK\x03\x04") {
+        Some(".epub")
+    } else {
+        None
+    }
+}
+
+/// Reconcile the extension guessed from the URL/Content-Type with the file's
+/// real magic bytes. `ext_from` defaults an ambiguous type (e.g. a bare
+/// `application/octet-stream` with no URL extension) to `.pdf`; this corrects
+/// that so the file is stored — and later extracted — under its true type.
+/// `claimed_binary` is true when the URL path or Content-Type explicitly
+/// promised a PDF/EPUB. Returns the extension to store under, or `Err` when a
+/// promised binary turned out not to be a document (an error page that slipped
+/// past the Content-Type filter).
+fn reconcile_doc_ext(
+    head: &[u8],
+    guessed_ext: &str,
+    claimed_binary: bool,
+) -> Result<&'static str, ()> {
+    match sniff_doc_ext(head) {
+        Some(ext) => Ok(ext),
+        None if claimed_binary => Err(()),
+        // Ambiguous type that isn't a known binary doc: keep it as text/markup
+        // (a real .txt/.html document) rather than mislabeling it `.pdf`, which
+        // would make the PDF extractor fail on perfectly good text.
+        None => Ok(if guessed_ext == ".html" {
+            ".html"
+        } else {
+            ".txt"
+        }),
+    }
+}
+
+/// Read up to the first `n` bytes of a file for magic-byte sniffing. Callers
+/// guarantee the file is at least [`MIN_DOC_BYTES`] (4096), so a short read here
+/// is an I/O fault, not EOF.
+async fn read_file_head(path: &Path, n: usize) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut file = tokio::fs::File::open(path).await?;
+    let mut buf = vec![0u8; n];
+    let read = file.read(&mut buf).await?;
+    buf.truncate(read);
+    Ok(buf)
+}
+
 /// GET a document URL with the document-shaped headers and bounded retry on
 /// 429/5xx. Returns the validated `Response` or a terminal `DownloadOutcome`.
 async fn get_document_response(
@@ -527,9 +580,38 @@ where
             "The server returned only {size} bytes — likely an error page, not the document."
         ));
     }
-    if let Some(reason) = check_magic_bytes(&tmp).await {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return DownloadOutcome::Failed(reason);
+    // Sniff the real magic bytes and reconcile the extension. (The temp file's
+    // `.part` extension means the old `check_magic_bytes(&tmp)` was a no-op, so
+    // the download path never validated bytes.) An ambiguous Content-Type that
+    // `ext_from` defaulted to `.pdf` is re-typed to its true kind so extraction
+    // works; a promised binary that isn't a document is rejected.
+    let head = match read_file_head(&tmp, 1024).await {
+        Ok(h) => h,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return DownloadOutcome::Failed(format!("Couldn't verify the saved file: {e}"));
+        }
+    };
+    let ct_lower = content_type.to_lowercase();
+    let url_lower = target.to_lowercase();
+    let url_path = url_lower.split('?').next().unwrap_or(&url_lower);
+    let claimed_binary = ct_lower.contains("pdf")
+        || ct_lower.contains("epub")
+        || url_path.ends_with(".pdf")
+        || url_path.ends_with(".epub");
+    match reconcile_doc_ext(&head, final_ext, claimed_binary) {
+        Ok(real_ext) => {
+            if real_ext != final_ext {
+                out = dest_dir.join(format!("{}{}", doc.slug(), real_ext));
+            }
+        }
+        Err(()) => {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return DownloadOutcome::Failed(
+                "The downloaded file wasn't a valid document (it was probably an error page)."
+                    .to_string(),
+            );
+        }
     }
 
     // All checks passed — atomically publish the complete file.
@@ -567,6 +649,30 @@ mod tests {
     fn allows_pdf_content_type() {
         let r = reject_content_type("https://example.com/paper.pdf", "application/pdf");
         assert!(r.is_none());
+    }
+
+    #[test]
+    fn sniffs_pdf_and_epub_magic() {
+        assert_eq!(sniff_doc_ext(b"%PDF-1.7\n..."), Some(".pdf"));
+        assert_eq!(sniff_doc_ext(b"PK\x03\x04rest-of-zip"), Some(".epub"));
+        // BOM / leading junk before %PDF is still detected.
+        assert_eq!(sniff_doc_ext(b"\xef\xbb\xbf%PDF-1.4"), Some(".pdf"));
+        assert_eq!(sniff_doc_ext(b"<!DOCTYPE html>"), None);
+    }
+
+    #[test]
+    fn reconcile_reclassifies_ambiguous_binary() {
+        // Defaulted to .pdf but the bytes are a ZIP/EPUB → re-typed to .epub.
+        assert_eq!(
+            reconcile_doc_ext(b"PK\x03\x04xx", ".pdf", false),
+            Ok(".epub")
+        );
+        // Ambiguous (not claimed binary) and no signature → kept as text.
+        assert_eq!(reconcile_doc_ext(b"plain text", ".pdf", false), Ok(".txt"));
+        // A real PDF stays a PDF.
+        assert_eq!(reconcile_doc_ext(b"%PDF-1.5", ".pdf", true), Ok(".pdf"));
+        // Promised a PDF/EPUB but the bytes are neither → reject (error page).
+        assert_eq!(reconcile_doc_ext(b"<html>nope", ".pdf", true), Err(()));
     }
 
     #[test]
