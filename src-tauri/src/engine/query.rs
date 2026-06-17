@@ -141,6 +141,10 @@ pub fn expand_query_broad(q: &str) -> Vec<String> {
     /// source (subject to the per-source concurrency throttle), so this trades
     /// recall against per-source request volume.
     const MAX_SUBQUERIES: usize = 8;
+    /// Hard ceiling on distinct topic phrases, so a pathological many-topic query
+    /// (a giant pasted comma list) can't explode per-source request volume — but
+    /// high enough that every topic in a realistic multi-topic query survives.
+    const MAX_TOPICS: usize = 16;
 
     // Pre-tokenize each topical part once. Fall back to raw whitespace tokens if
     // stopword-stripping leaves nothing, so we always search *something*.
@@ -161,21 +165,27 @@ pub fn expand_query_broad(q: &str) -> Vec<String> {
     let mut seen: HashSet<String> = HashSet::new();
 
     // Pass 1: the focused full phrase for every topic (precision first, so a
-    // truncation only ever drops relaxations — never a whole topic).
-    for (phrase, kws) in &parsed {
+    // truncation only ever drops relaxations — never a whole topic). Bounded by
+    // MAX_TOPICS so a giant pasted list can't explode request volume.
+    for (phrase, kws) in parsed.iter().take(MAX_TOPICS) {
         push_unique_subquery(phrase.clone(), kws, &mut out, &mut seen);
     }
 
+    // Effective cap: never below MAX_SUBQUERIES, but grows to fit every topic
+    // phrase so the final truncate can only ever drop drop-one RELAXATIONS — the
+    // old fixed truncate(MAX_SUBQUERIES) silently dropped whole topics past the 8th.
+    let cap = MAX_SUBQUERIES.max(out.len());
+
     // Pass 2: drop-one relaxations. Only worthwhile with >= 3 terms.
     for (_, kws) in &parsed {
-        if out.len() >= MAX_SUBQUERIES {
+        if out.len() >= cap {
             break;
         }
         if kws.len() < 3 {
             continue;
         }
         for i in 0..kws.len() {
-            if out.len() >= MAX_SUBQUERIES {
+            if out.len() >= cap {
                 break;
             }
             let subset: Vec<String> = kws
@@ -192,7 +202,7 @@ pub fn expand_query_broad(q: &str) -> Vec<String> {
         // Mirror expand_query's never-empty contract.
         out.push(q.to_string());
     }
-    out.truncate(MAX_SUBQUERIES);
+    out.truncate(cap);
     out
 }
 
@@ -274,6 +284,19 @@ mod tests {
         let r = expand_query_broad("alpha beta gamma delta epsilon zeta eta theta");
         assert!(r.len() <= 8, "exceeded cap: {}", r.len());
         assert!(!expand_query_broad("the of and a").is_empty());
+    }
+
+    #[test]
+    fn broad_keeps_every_topic_past_eight() {
+        // 10 distinct topics must ALL survive — the old fixed truncate(8) dropped
+        // topics 9 and 10, leaving entire subjects unsearched.
+        let q = "alpha, beta, gamma, delta, epsilon, zeta, eta, theta, iota, kappa";
+        let r = expand_query_broad(q);
+        for topic in [
+            "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa",
+        ] {
+            assert!(r.iter().any(|s| s == topic), "missing topic {topic}: {r:?}");
+        }
     }
 
     #[test]

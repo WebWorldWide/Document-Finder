@@ -94,16 +94,51 @@ fn titles_corroborate(a: &str, b: &str) -> bool {
     na.starts_with(&nb) || nb.starts_with(&na)
 }
 
-fn author_year_fingerprint(doc: &Document) -> Option<String> {
-    let raw_first_author = doc.authors.first()?;
-    // Two common formats: "Doe, Jane" (bibliographic) and "Jane Doe" (display).
-    // Detect comma form; otherwise the lastname is the final whitespace-token.
-    let last = if raw_first_author.contains(',') {
-        raw_first_author.split(',').next()?.trim().to_string()
+/// Lowercased surname of a document's first author, handling both the
+/// "Doe, Jane" (bibliographic) and "Jane Doe" (display) forms.
+fn first_author_surname(doc: &Document) -> Option<String> {
+    let raw = doc.authors.first()?;
+    let last = if raw.contains(',') {
+        raw.split(',').next()?.trim().to_string()
     } else {
-        raw_first_author.split_whitespace().last()?.to_string()
+        raw.split_whitespace().last()?.to_string()
     }
     .to_lowercase();
+    if last.is_empty() {
+        None
+    } else {
+        Some(last)
+    }
+}
+
+/// Min normalized-title token count to merge on title ALONE. Below this, a shared
+/// generic title ("annual report", "the holy bible") is too weak a signal — we
+/// also require a corroborating year or first-author surname (`weak_corroborates`).
+const SHORT_TITLE_TOKENS: usize = 5;
+
+/// Sentinel emitted by openalex/semantic_scholar/doaj/gutenberg for a missing
+/// title. It must NEVER be a merge key, or every title-less doc (across sources)
+/// would collapse into one and the rest would be silently dropped.
+fn is_sentinel_title(norm: &str) -> bool {
+    norm.is_empty() || norm == "untitled"
+}
+
+/// Weak corroboration for merging two SHORT-titled docs: same 4-digit year OR
+/// the same first-author surname.
+fn weak_corroborates(a: &Document, b: &Document) -> bool {
+    if let (Some(ya), Some(yb)) = (a.year.as_deref(), b.year.as_deref()) {
+        if ya.len() == 4 && ya == yb {
+            return true;
+        }
+    }
+    match (first_author_surname(a), first_author_surname(b)) {
+        (Some(sa), Some(sb)) => sa == sb,
+        _ => false,
+    }
+}
+
+fn author_year_fingerprint(doc: &Document) -> Option<String> {
+    let last = first_author_surname(doc)?;
     let year = doc.year.as_deref().filter(|y| y.len() == 4)?;
     // First 3 normalized title tokens (alphanumeric only). Catches reissues
     // that append " — Revised Edition" / " (2nd ed.)" without losing precision.
@@ -166,18 +201,25 @@ impl Deduplicator {
             }
         }
 
-        // 3. Normalized-title match.
+        // 3. Normalized-title match. Skip the "Untitled" sentinel entirely, and
+        //    for SHORT generic titles require weak corroboration (same year or
+        //    first-author surname) so distinct works sharing a generic title
+        //    (different Bible editions, "Annual Report") aren't merged and dropped.
         let norm = normalize_title(&doc.title);
-        if !norm.is_empty() {
+        let title_is_key = !is_sentinel_title(&norm);
+        if title_is_key {
             if let Some(&idx) = self.by_title.get(&norm) {
-                self.docs[idx]
-                    .source_ranks
-                    .push((source_id.to_string(), rank));
-                self.by_url.insert(doc.url.clone(), idx);
-                if let Some(d) = &doi {
-                    self.by_doi.insert(d.clone(), idx);
+                let short = norm.split_whitespace().count() < SHORT_TITLE_TOKENS;
+                if !short || weak_corroborates(&doc, &self.docs[idx].doc) {
+                    self.docs[idx]
+                        .source_ranks
+                        .push((source_id.to_string(), rank));
+                    self.by_url.insert(doc.url.clone(), idx);
+                    if let Some(d) = &doi {
+                        self.by_doi.insert(d.clone(), idx);
+                    }
+                    return AddOutcome::Merged(idx);
                 }
-                return AddOutcome::Merged(idx);
             }
         }
 
@@ -212,8 +254,10 @@ impl Deduplicator {
         if let Some(d) = doi {
             self.by_doi.insert(d, idx);
         }
-        if !norm.is_empty() {
-            self.by_title.insert(norm, idx);
+        if title_is_key {
+            // Keep the FIRST doc as the title anchor so a later short-titled doc
+            // that fell through step 3 can't hijack the bucket.
+            self.by_title.entry(norm).or_insert(idx);
         }
         if let Some(ay_key) = ay {
             // Keep the FIRST doc as the fingerprint anchor; a later doc that
@@ -345,6 +389,80 @@ mod tests {
         let mut d = Deduplicator::new();
         let _ = d.add(doc("X", "https://a/p", &[], None), "web", 1);
         let r = d.add(doc("X", "https://a/p", &[], None), "web", 1);
+        assert!(matches!(r, AddOutcome::Merged(0)));
+        assert_eq!(d.len(), 1);
+    }
+
+    #[test]
+    fn untitled_sentinels_never_merge() {
+        let mut d = Deduplicator::new();
+        let _ = d.add(doc("Untitled", "https://a/1", &[], None), "openalex", 1);
+        let r2 = d.add(doc("Untitled", "https://b/2", &[], None), "doaj", 1);
+        let r3 = d.add(doc("untitled", "https://c/3", &[], None), "gutenberg", 1);
+        assert!(
+            matches!(r2, AddOutcome::New(_)),
+            "2nd Untitled must not merge"
+        );
+        assert!(
+            matches!(r3, AddOutcome::New(_)),
+            "3rd Untitled must not merge"
+        );
+        assert_eq!(d.len(), 3);
+    }
+
+    #[test]
+    fn distinct_short_titles_without_corroboration_stay_separate() {
+        // Same generic short title, different editions (no shared author/year) —
+        // must NOT collapse (e.g. distinct Internet Archive Bible editions).
+        let mut d = Deduplicator::new();
+        let _ = d.add(
+            doc(
+                "The Holy Bible",
+                "https://ia/kjv",
+                &["King James"],
+                Some("1611"),
+            ),
+            "internet_archive",
+            1,
+        );
+        let r = d.add(
+            doc(
+                "The Holy Bible",
+                "https://ia/douay",
+                &["Challoner"],
+                Some("1752"),
+            ),
+            "internet_archive",
+            2,
+        );
+        assert!(matches!(r, AddOutcome::New(_)));
+        assert_eq!(d.len(), 2);
+    }
+
+    #[test]
+    fn short_titles_with_matching_year_do_merge() {
+        // Same short title + same year → genuine duplicate across sources → merge.
+        let mut d = Deduplicator::new();
+        let _ = d.add(
+            doc(
+                "Deep Learning",
+                "https://a/1",
+                &["Goodfellow"],
+                Some("2016"),
+            ),
+            "openalex",
+            1,
+        );
+        let r = d.add(
+            doc(
+                "Deep learning.",
+                "https://b/2",
+                &["Goodfellow, Ian"],
+                Some("2016"),
+            ),
+            "semantic_scholar",
+            2,
+        );
         assert!(matches!(r, AddOutcome::Merged(0)));
         assert_eq!(d.len(), 1);
     }
