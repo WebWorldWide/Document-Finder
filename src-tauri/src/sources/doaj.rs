@@ -78,6 +78,10 @@ impl Source for DOAJSource {
         let q = keywords.join(" AND ");
         let q_escaped = utf8_percent_encode(&q, NON_ALPHANUMERIC).to_string();
         let url = format!("{}/{}", BASE, q_escaped);
+        // Page size MUST stay constant across pages: DOAJ offsets are
+        // `(page-1)*pageSize`, so a pageSize that shrank as `yielded` grew would
+        // re-anchor the window and skip results. (100 is the DOAJ API maximum.)
+        let page_size = limit.clamp(1, 100);
         stream::unfold((1u32, 0usize, false), move |(page, yielded, done)| {
             let client = client.clone();
             let url = url.clone();
@@ -85,10 +89,9 @@ impl Source for DOAJSource {
                 if done || yielded >= limit {
                     return None;
                 }
-                let per_page = 100.min(limit.saturating_sub(yielded).max(1));
                 let params = [
                     ("page", page.to_string()),
-                    ("pageSize", per_page.to_string()),
+                    ("pageSize", page_size.to_string()),
                 ];
                 let resp = match get_with_retry(&client, &url, &params).await {
                     Ok(r) => r,
@@ -102,7 +105,7 @@ impl Source for DOAJSource {
                     return None;
                 }
                 let n = data.results.len();
-                let next_done = n < per_page;
+                let next_done = n < page_size;
                 let mut docs = Vec::with_capacity(n);
                 for item in data.results {
                     let Some(bib) = item.bibjson else { continue };
