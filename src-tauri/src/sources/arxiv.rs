@@ -11,7 +11,7 @@ use quick_xml::Reader;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{Document, Source};
+use super::{get_with_retry, Document, Source};
 
 const BASE: &str = "https://export.arxiv.org/api/query";
 
@@ -267,23 +267,20 @@ impl Source for ArxivSource {
                 }
                 let per_page = 100.min(limit.saturating_sub(yielded).max(1));
                 let q = search_query(&keywords);
-                let body = match client
-                    .get(BASE)
-                    .query(&[
-                        ("search_query", q.as_str()),
-                        ("start", &start.to_string()),
-                        ("max_results", &per_page.to_string()),
-                    ])
-                    .send()
-                    .await
-                {
-                    Ok(r) => match r.error_for_status() {
-                        Ok(r) => match r.text().await {
-                            Ok(t) => t,
-                            Err(e) => return Some((Err(e.into()), (start, yielded, true))),
-                        },
-                        Err(e) => return Some((Err(e.into()), (start, yielded, true))),
-                    },
+                // Route through the shared backoff helper (like every other
+                // structured source) so a transient 429/5xx from the arXiv export
+                // API is retried instead of terminating the whole arXiv stream.
+                let params = [
+                    ("search_query", q),
+                    ("start", start.to_string()),
+                    ("max_results", per_page.to_string()),
+                ];
+                let resp = match get_with_retry(&client, BASE, &params).await {
+                    Ok(r) => r,
+                    Err(e) => return Some((Err(e), (start, yielded, true))),
+                };
+                let body = match resp.text().await {
+                    Ok(t) => t,
                     Err(e) => return Some((Err(e.into()), (start, yielded, true))),
                 };
 
@@ -293,7 +290,10 @@ impl Source for ArxivSource {
                     return None;
                 }
                 let docs: Vec<Document> = builders.into_iter().filter_map(builder_to_doc).collect();
-                let next_done = n < per_page;
+                // Stop (and skip the mandatory 3s inter-page sleep) on a short page
+                // OR once this page reaches the limit — the old code slept before a
+                // page that the `yielded >= limit` guard would never fetch.
+                let next_done = n < per_page || yielded + n >= limit;
                 if !next_done {
                     tokio::time::sleep(PAGINATION_DELAY).await;
                 }
