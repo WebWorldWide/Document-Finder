@@ -144,7 +144,11 @@ pub fn build_source(
 pub fn make_client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
-        .timeout(std::time::Duration::from_secs(60))
+        // Per-request cap for discovery/API calls. Kept short so a single slow
+        // or hung source can't hold a discovery wave open near its (now also
+        // short) deadline. Document *downloads* use the separate
+        // `make_download_client`, which has no overall timeout for large PDFs.
+        .timeout(std::time::Duration::from_secs(25))
         .redirect(safe_redirect_policy())
         // Drop private/reserved IPs at resolution time for every request and
         // redirect — closes the DNS-rebinding window and the private-hostname
@@ -214,13 +218,14 @@ pub(crate) fn safe_redirect_policy() -> reqwest::redirect::Policy {
     })
 }
 
-const RETRY_MAX_ATTEMPTS: u32 = 4;
-/// Per-attempt backoff ceiling. The discovery wave aborts in-flight tasks at a
-/// ~60s deadline; capping each sleep (and honoring it for a server-sent
-/// `Retry-After`) keeps a single rate-limited source from sleeping past that
-/// deadline and yielding zero docs. The old `5 * attempt^2` schedule reached
-/// 5+20+45 = 70s, which blew the budget.
-const RETRY_CAP: std::time::Duration = std::time::Duration::from_secs(20);
+const RETRY_MAX_ATTEMPTS: u32 = 3;
+/// Per-attempt backoff ceiling. Discovery waves now force-stop in ~15-60s
+/// (see `orchestrator::wave_deadlines`), so a rate-limited source must not
+/// sleep anywhere near that long or it yields zero docs before the wave ends.
+/// Capping each sleep at 8s (and honoring a server-sent `Retry-After` up to the
+/// same cap) keeps a single 429'd source from eating the whole budget — at most
+/// ~2 short waits across the 3 attempts.
+const RETRY_CAP: std::time::Duration = std::time::Duration::from_secs(8);
 
 /// Parse a `Retry-After` header in its delta-seconds form. The HTTP-date form is
 /// not handled (it falls back to the computed backoff); the keyless APIs we hit
