@@ -1357,7 +1357,9 @@ input,
   padding: 9px var(--pad-5);
   border-left: 2px solid transparent;
   transition: background 120ms;
-  animation: doc-in 280ms ease-out;
+  /* No entrance animation: the live download stream updates many times per
+     second, and an opacity-flash per row was a photosensitivity/strobe hazard.
+     Rows now appear/update with no luminance flashing. */
 }
 .df-doc:hover {
   background: var(--hover);

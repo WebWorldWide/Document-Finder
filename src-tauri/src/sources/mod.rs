@@ -272,9 +272,21 @@ pub async fn get_with_retry(
     url: &str,
     query: &[(&str, String)],
 ) -> anyhow::Result<reqwest::Response> {
+    send_with_retry(url, || client.get(url).query(query)).await
+}
+
+/// Core of [`get_with_retry`] over a request *builder* closure (rebuilt per
+/// attempt, since `RequestBuilder` isn't `Clone`). Same capped/jittered backoff
+/// on 429/5xx. Lets a source customize the request — e.g. Zenodo's WAF returns
+/// 403 for the browser User-Agent, so it sends an honest tool UA +
+/// `Accept: application/json` instead.
+pub(crate) async fn send_with_retry<F>(url: &str, build: F) -> anyhow::Result<reqwest::Response>
+where
+    F: Fn() -> reqwest::RequestBuilder,
+{
     let mut delay = std::time::Duration::from_millis(2000);
     for attempt in 1..=RETRY_MAX_ATTEMPTS {
-        let resp = client.get(url).query(query).send().await;
+        let resp = build().send().await;
         match resp {
             Ok(r) => {
                 let status = r.status().as_u16();

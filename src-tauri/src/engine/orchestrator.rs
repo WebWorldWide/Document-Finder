@@ -617,7 +617,11 @@ async fn download_and_extract(
     let total = candidates.len();
     let counters = Arc::new(tokio::sync::Mutex::new((0usize, 0usize))); // (done, failed)
     let download_sem = Arc::new(Semaphore::new(concurrency.clamp(1, 32)));
-    let extract_sem = Arc::new(Semaphore::new(num_cpus::get().clamp(1, 8)));
+    // Use only HALF the cores for the CPU-bound PDF/EPUB extraction so a large
+    // run doesn't peg every core and lock up the whole machine (the UI/webview
+    // and the OS need headroom). Capped at 4 — beyond that the disk + the
+    // download side, not CPU, are the bottleneck anyway.
+    let extract_sem = Arc::new(Semaphore::new((num_cpus::get() / 2).clamp(1, 4)));
     // Downloads use a dedicated client with NO overall timeout (only connect +
     // read-stall timeouts) so a large or slow PDF isn't aborted like the shared
     // API client would. See `make_download_client`.
