@@ -479,6 +479,7 @@ async function startSearch(query: string) {
       concurrency: settings.concurrency,
       extract: true,
       use_citation_graph: settings.useCitationGraph,
+      cross_run_reuse: settings.crossRunReuse,
       ...flags,
       llm_model_id: settings.llmModelId || null,
     });

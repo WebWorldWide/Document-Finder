@@ -697,6 +697,55 @@ where
     DownloadOutcome::Saved(out)
 }
 
+/// Cross-library reuse: if an identical document (same slug = cleaned title +
+/// 6-char URL hash) was already downloaded into a SIBLING library under `root`,
+/// copy that file into `dest_dir` instead of re-fetching it from the network.
+///
+/// The file is COPIED (not linked), so each per-query library stays
+/// self-contained; only the redundant download is skipped. Returns the
+/// copied-in path, or `None` if no valid sibling copy exists. Opt-in: the
+/// orchestrator passes `root` only when the user enables "reuse across
+/// libraries", because reusing a local copy means a remote update wouldn't be
+/// picked up.
+pub async fn reuse_from_siblings(doc: &Document, dest_dir: &Path, root: &Path) -> Option<PathBuf> {
+    let slug = doc.slug();
+    // The slug matches only when BOTH title and URL match (the URL hash), so a
+    // hit is a genuine duplicate, not a title collision. The download path
+    // stores under one of these extensions.
+    const EXTS: [&str; 4] = [".pdf", ".epub", ".html", ".txt"];
+    let mut entries = tokio::fs::read_dir(root).await.ok()?;
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        // Async file-type check; skip non-dirs and the current run's own folder.
+        let Ok(ft) = entry.file_type().await else {
+            continue;
+        };
+        if !ft.is_dir() {
+            continue;
+        }
+        let dir = entry.path();
+        if dir == dest_dir {
+            continue;
+        }
+        for ext in EXTS {
+            let candidate = dir.join(format!("{slug}{ext}"));
+            let Ok(meta) = tokio::fs::metadata(&candidate).await else {
+                continue;
+            };
+            // Only reuse a file that still passes the same validation a fresh
+            // download would (size floor + magic bytes), so we never propagate a
+            // stale junk/error-page file saved by an older, laxer downloader.
+            if meta.len() < MIN_DOC_BYTES || !existing_file_is_valid(&candidate).await {
+                continue;
+            }
+            let dest = dest_dir.join(format!("{slug}{ext}"));
+            if tokio::fs::copy(&candidate, &dest).await.is_ok() {
+                return Some(dest);
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -837,6 +886,75 @@ mod tests {
         let base = url::Url::parse("https://repo.edu/record/9").unwrap();
         let html = r#"<a href="https://ads.example.com/download/promo">grab</a>"#;
         assert_eq!(resolve_pdf_from_html(html, &base), None);
+    }
+
+    fn test_doc(title: &str, url: &str) -> Document {
+        Document {
+            title: title.into(),
+            url: url.into(),
+            source: "arxiv".into(),
+            authors: vec![],
+            year: None,
+            abstract_: None,
+            identifier: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn reuse_copies_identical_file_from_a_sibling_library() {
+        let root = tempfile::tempdir().unwrap();
+        let lib_a = root.path().join("query-a-1-1");
+        let lib_b = root.path().join("query-b-2-2");
+        tokio::fs::create_dir_all(&lib_a).await.unwrap();
+        tokio::fs::create_dir_all(&lib_b).await.unwrap();
+
+        let doc = test_doc("Shared Paper", "https://example.org/shared.pdf");
+        let mut pdf = b"%PDF-1.7\n".to_vec();
+        pdf.resize(9000, b' '); // > MIN_DOC_BYTES, valid magic
+        let src = lib_a.join(format!("{}.pdf", doc.slug()));
+        tokio::fs::write(&src, &pdf).await.unwrap();
+
+        let reused = reuse_from_siblings(&doc, &lib_b, root.path()).await;
+        assert!(reused.is_some(), "should reuse the sibling copy");
+        let dest = reused.unwrap();
+        assert!(
+            dest.starts_with(&lib_b),
+            "copy lands in the destination library"
+        );
+        assert!(
+            tokio::fs::metadata(&dest).await.is_ok(),
+            "copied file exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn reuse_returns_none_when_no_sibling_has_it() {
+        let root = tempfile::tempdir().unwrap();
+        let lib_b = root.path().join("query-b");
+        tokio::fs::create_dir_all(&lib_b).await.unwrap();
+        let doc = test_doc("Lonely", "https://example.org/lonely.pdf");
+        assert!(reuse_from_siblings(&doc, &lib_b, root.path())
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn reuse_ignores_an_invalid_sibling_file() {
+        let root = tempfile::tempdir().unwrap();
+        let lib_a = root.path().join("query-a");
+        let lib_b = root.path().join("query-b");
+        tokio::fs::create_dir_all(&lib_a).await.unwrap();
+        tokio::fs::create_dir_all(&lib_b).await.unwrap();
+        let doc = test_doc("Junk", "https://example.org/junk.pdf");
+        // A .pdf that is actually an HTML error page must NOT be reused.
+        let mut junk = b"<!DOCTYPE html><html>nope</html>".to_vec();
+        junk.resize(9000, b' ');
+        tokio::fs::write(lib_a.join(format!("{}.pdf", doc.slug())), &junk)
+            .await
+            .unwrap();
+        assert!(reuse_from_siblings(&doc, &lib_b, root.path())
+            .await
+            .is_none());
     }
 
     #[tokio::test]
