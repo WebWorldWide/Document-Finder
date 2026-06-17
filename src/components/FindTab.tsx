@@ -1,5 +1,14 @@
 import { createSignal, createMemo, createEffect, onCleanup, untrack, Show, For } from "solid-js";
-import { Search, Square, Sparkles, Archive, FolderOpen, BookOpen, Loader2 } from "lucide-solid";
+import {
+  Search,
+  Square,
+  Sparkles,
+  Archive,
+  FolderOpen,
+  BookOpen,
+  Loader2,
+  RotateCw,
+} from "lucide-solid";
 import DocRow, { type StreamDoc } from "./DocRow";
 import SourcePanel from "./SourcePanel";
 import Sparkline from "./Sparkline";
@@ -543,6 +552,15 @@ export default function FindTab() {
                     </span>
                   </Show>
                   <Show when={!rs().running && rs().folder}>
+                    <Show when={rs().failed > 0}>
+                      <button
+                        class="df-btn sm"
+                        onClick={() => void runStore.retryFailed()}
+                        title="Re-attempt the downloads that failed, into the same library"
+                      >
+                        <RotateCw size={12} /> Retry {rs().failed} failed
+                      </button>
+                    </Show>
                     <button
                       class="df-btn sm"
                       onClick={() => void handleExport()}

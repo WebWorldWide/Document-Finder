@@ -75,6 +75,31 @@ describe("runStore live per-source discovery counts", () => {
     expect(runStore.state.sourceStats["gutenberg"].active).toBe(0);
   });
 
+  it("retains full doc metadata on a failed download so it can be retried", () => {
+    runStore.apply({
+      type: "download_failed",
+      payload: {
+        url: "https://example.org/paper",
+        title: "A Paper",
+        source: "arxiv",
+        authors: ["Ada L.", "Alan T."],
+        year: "2021",
+        abstract: "an abstract",
+        identifier: "10.1234/abc",
+        error: "the server refused the file",
+        done: 0,
+        failed: 1,
+        total: 1,
+      },
+    });
+    const f = runStore.state.completed.find((c) => c.url === "https://example.org/paper");
+    expect(f).toBeTruthy();
+    expect(f!.status).toBe("failed");
+    expect(f!.authors).toEqual(["Ada L.", "Alan T."]);
+    expect(f!.year).toBe("2021");
+    expect(f!.identifier).toBe("10.1234/abc");
+  });
+
   it("keeps a source that only errored (no hits) flagged as error after its task finishes", () => {
     runStore.apply(sourceStart("zenodo"));
     runStore.apply({

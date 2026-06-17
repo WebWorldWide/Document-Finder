@@ -26,6 +26,17 @@ export interface RunRequest {
   llm_model_id?: string | null;
 }
 
+export interface RetryRequest {
+  /** Existing library folder (must be inside the confined root). */
+  folder: string;
+  /** Original query, recorded against the retry's run row. */
+  query: string;
+  /** The documents to re-download (the failed ones from the previous run). */
+  docs: Document[];
+  concurrency?: number;
+  extract?: boolean;
+}
+
 export type ModelKind = "embedding" | "llm";
 
 export interface ModelInfo {
@@ -76,6 +87,8 @@ export const api = {
   /** Persist + validate the library root so open/export/delete confine to it. */
   setLibraryRoot: (path: string) => invoke<string>("set_library_root", { path }),
   startRun: (req: RunRequest) => invoke<void>("start_run", { req }),
+  /** Re-download a fixed set of documents into an existing library folder. */
+  retryRun: (req: RetryRequest) => invoke<void>("retry_run", { req }),
   cancelRun: () => invoke<void>("cancel_run"),
   listLibraries: (root: string) => invoke<LibraryInfo[]>("list_libraries", { root }),
   openLibrary: (path: string) => invoke<LibraryInfo>("open_library", { path }),

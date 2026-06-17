@@ -41,6 +41,7 @@ pub fn run() {
             commands::default_library_dir,
             commands::set_library_root,
             commands::start_run,
+            commands::retry_run,
             commands::cancel_run,
             commands::list_libraries,
             commands::open_library,

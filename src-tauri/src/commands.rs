@@ -12,7 +12,7 @@ use crate::ai::registry;
 use crate::ai::state::{snapshot, AiState, ModelInfo, ModelStatus};
 use crate::engine::db::open_read_only;
 use crate::engine::runlog;
-use crate::engine::{run_pipeline, RunRequest};
+use crate::engine::{run_pipeline, run_retry_pipeline, RunRequest};
 use crate::events::{ErrorPayload, EV_ERROR};
 use crate::sources::USER_AGENT;
 use crate::util::path_safety::{
@@ -210,6 +210,107 @@ pub async fn start_run(
             let _clear_guard = ClearTokenOnDrop(app2.clone());
 
             let result = run_pipeline(app2.clone(), req, token).await;
+            if let Err(e) = result {
+                let _ = app2.emit(
+                    EV_ERROR,
+                    ErrorPayload {
+                        message: e.to_string(),
+                    },
+                );
+            }
+        });
+    }
+    Ok(())
+}
+
+/// Request to re-attempt the download+extract of a fixed set of documents into
+/// an existing library folder, without re-running discovery or ranking. Powers
+/// the "Retry failed" action.
+#[derive(Debug, Deserialize)]
+pub struct RetryRequest {
+    /// The existing library folder (must be inside the confinement root).
+    pub folder: String,
+    /// The original query (recorded against the retry's run row).
+    pub query: String,
+    /// The documents to re-download (the failed ones from the previous run).
+    pub docs: Vec<crate::sources::Document>,
+    #[serde(default = "default_retry_concurrency")]
+    pub concurrency: usize,
+    #[serde(default = "default_retry_extract")]
+    pub extract: bool,
+}
+
+fn default_retry_concurrency() -> usize {
+    8
+}
+fn default_retry_extract() -> bool {
+    true
+}
+
+#[tauri::command]
+pub async fn retry_run(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: RetryRequest,
+) -> Result<(), String> {
+    if req.docs.is_empty() {
+        return Ok(());
+    }
+    // Confine to the configured library root: `folder` arrives from the renderer
+    // and the retry pipeline writes downloads + a `*.part`-sweep into it, so it
+    // must stay inside the allowed root (same guarantee as every path command).
+    // The folder already exists (it's a prior run's library), so the
+    // existence-requiring `safe_within_root` is the right confiner.
+    let root = confinement_root(&state)?;
+    let folder = safe_within_root(Path::new(&req.folder), &root)
+        .map_err(|e| format!("Refusing to retry: the folder is outside the allowed root. {e}"))?;
+
+    {
+        let mut cur = state
+            .current_cancel
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if cur.is_some() {
+            return Err("a run is already in progress".to_string());
+        }
+        let token = CancellationToken::new();
+        *cur = Some(token.clone());
+        drop(cur);
+
+        let app2 = app.clone();
+        let query = req.query;
+        let docs = req.docs;
+        let concurrency = req.concurrency;
+        let extract = req.extract;
+        tokio::spawn(async move {
+            use tauri::Emitter;
+            // RAII guard: clear the run's cancel token on EVERY exit (incl. a
+            // panic unwind), mirroring start_run — otherwise a panic would leave
+            // current_cancel `Some` and block every future run.
+            struct ClearTokenOnDrop(AppHandle);
+            impl Drop for ClearTokenOnDrop {
+                fn drop(&mut self) {
+                    if let Some(state) = self.0.try_state::<AppState>() {
+                        let mut cur = state
+                            .current_cancel
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        *cur = None;
+                    }
+                }
+            }
+            let _clear_guard = ClearTokenOnDrop(app2.clone());
+
+            let result = run_retry_pipeline(
+                app2.clone(),
+                folder,
+                query,
+                docs,
+                concurrency,
+                extract,
+                token,
+            )
+            .await;
             if let Err(e) = result {
                 let _ = app2.emit(
                     EV_ERROR,

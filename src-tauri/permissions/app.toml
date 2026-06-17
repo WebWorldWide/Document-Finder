@@ -9,6 +9,7 @@ commands.allow = [
   "default_library_dir",
   "set_library_root",
   "start_run",
+  "retry_run",
   "cancel_run",
   "list_libraries",
   "open_library",

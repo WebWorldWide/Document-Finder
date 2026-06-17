@@ -32,6 +32,12 @@ export interface CompletedItem {
   indexError?: string;
   /** Set when the file saved but no usable text could be extracted. */
   extractError?: string;
+  /** Document metadata retained on FAILED items so "Retry failed" can rebuild
+   *  the Document and re-attempt the download without re-running discovery. */
+  authors?: string[];
+  year?: string;
+  abstract?: string;
+  identifier?: string;
 }
 
 export interface SourceIssue {
@@ -359,6 +365,11 @@ function apply(ev: DfEvent) {
         source: ev.payload.source,
         status: "failed",
         error: ev.payload.error,
+        // Retain full doc metadata so "Retry failed" can rebuild the Document.
+        authors: ev.payload.authors,
+        year: ev.payload.year,
+        abstract: ev.payload.abstract,
+        identifier: ev.payload.identifier,
       };
       setState(
         produce((s) => {
@@ -482,6 +493,51 @@ async function startSearch(query: string) {
   }
 }
 
+/// Re-attempt the downloads that failed in the just-finished run, WITHOUT
+/// re-running discovery/ranking. Modeled as a fresh, scoped run (reset + the
+/// normal EV_DOWNLOAD_*/EV_COMPLETE flow) over just the failed docs, so the run
+/// card tracks it with correct counts and no cumulative-counter gymnastics. The
+/// recovered files land in the same library folder.
+async function retryFailed() {
+  if (state.running || !state.folder) return;
+  const failed = state.completed.filter((c) => c.status === "failed");
+  if (failed.length === 0) return;
+
+  const folder = state.folder;
+  const query = state.query;
+  const docs = failed.map((c) => ({
+    title: c.title,
+    url: c.url,
+    source: c.source,
+    authors: c.authors ?? [],
+    year: c.year,
+    abstract: c.abstract,
+    identifier: c.identifier,
+  }));
+
+  reset(query);
+  // Seed `found` with the retry scope so the run card reads "N found · M saved"
+  // during the retry (there's no discovery phase to populate it).
+  setState({ running: true, folder, found: docs.length });
+  pipelineStore.reset();
+  void pipelineStore.ensureSubscribed();
+
+  try {
+    await api.retryRun({
+      folder,
+      query,
+      docs,
+      concurrency: settings.concurrency,
+      extract: true,
+    });
+  } catch (e) {
+    // A retry_run rejection (concurrent-run guard, folder outside root) means
+    // the retry never started — surface it without the AI-evicting `error` path.
+    setState({ running: false, fatalError: String(e) });
+    addLog("error", `Error: ${String(e)}`);
+  }
+}
+
 async function exportZip(): Promise<ExportResult | null> {
   if (!state.folder) return null;
 
@@ -510,6 +566,7 @@ export const runStore = {
   },
   apply,
   startSearch,
+  retryFailed,
   exportZip,
   /// Reset all live run state. Called when starting a new query; also used by
   /// unit tests to isolate the event-reducer between cases.

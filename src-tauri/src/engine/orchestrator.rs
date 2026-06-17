@@ -582,6 +582,432 @@ async fn compute_llm_extras(
     }
 }
 
+/// Parallel download + parallel extraction over a fixed candidate list, writing
+/// into `folder` (with text under `text_dir`) and indexing rows under `run_id`
+/// in `db_path`. Shared by the full pipeline (`run_pipeline`) and the
+/// retry-failed path (`run_retry_pipeline`) so both go through exactly one,
+/// verified, download implementation. Returns `(done, failed)`. The caller emits
+/// the surrounding stage + completion events.
+#[allow(clippy::too_many_arguments)]
+async fn download_and_extract(
+    app: &AppHandle,
+    candidates: Vec<Document>,
+    folder: &Path,
+    text_dir: &Path,
+    db_path: &Path,
+    run_id: i64,
+    concurrency: usize,
+    extract: bool,
+    cancel: &CancellationToken,
+) -> (usize, usize) {
+    // Two separate semaphores so download (network-bound) and extract
+    // (CPU-bound) don't serialize each other: the download permit drops the
+    // moment bytes are on disk, and a smaller extract permit (CPU count) gates
+    // the heavy text parsing.
+    let total = candidates.len();
+    let counters = Arc::new(tokio::sync::Mutex::new((0usize, 0usize))); // (done, failed)
+    let download_sem = Arc::new(Semaphore::new(concurrency.clamp(1, 32)));
+    let extract_sem = Arc::new(Semaphore::new(num_cpus::get().clamp(1, 8)));
+    // Downloads use a dedicated client with NO overall timeout (only connect +
+    // read-stall timeouts) so a large or slow PDF isn't aborted like the shared
+    // API client would. See `make_download_client`.
+    let download_client = Arc::new(make_download_client());
+
+    let mut handles = Vec::with_capacity(candidates.len());
+    for doc in candidates {
+        let app = app.clone();
+        let client = download_client.clone();
+        let cancel = cancel.clone();
+        let download_sem = download_sem.clone();
+        let extract_sem = extract_sem.clone();
+        let counters = counters.clone();
+        let folder = folder.to_path_buf();
+        let db_path = db_path.to_path_buf();
+        let text_dir = text_dir.to_path_buf();
+        let extract_flag = extract;
+
+        let handle = tokio::spawn(async move {
+            let download_permit = match download_sem.acquire_owned().await {
+                Ok(p) => p,
+                Err(e) => {
+                    // The download semaphore should never close mid-run; if it
+                    // somehow does, log it rather than letting the doc silently
+                    // disappear from the counts with no trace.
+                    tracing::error!("download semaphore closed, skipping {}: {e}", doc.url);
+                    return;
+                }
+            };
+            // Announce the attempt BEFORE the cancel check so a download skipped
+            // by a just-arrived Stop still shows up in the UI stream (instead of
+            // the task vanishing silently). The terminal EV_CANCELLED clears any
+            // leftover in-flight row.
+            let _ = app.emit(
+                EV_DOWNLOAD_STARTED,
+                DownloadStartedPayload {
+                    url: doc.url.clone(),
+                    title: doc.title.clone(),
+                    source: doc.source.clone(),
+                },
+            );
+            if cancel.is_cancelled() {
+                return;
+            }
+
+            let app_for_progress = app.clone();
+            let url_for_progress = doc.url.clone();
+            let title_for_progress = doc.title.clone();
+            let last_emit = std::sync::Mutex::new(std::time::Instant::now());
+
+            let mut outcome = download(&doc, &folder, &client, &cancel, |ev| {
+                // Throttle progress to ~5 updates/sec/file, but NEVER drop the
+                // terminal (`force`) event — that's the one that carries the
+                // true final byte count for fast / unknown-length downloads.
+                let mut last = last_emit.lock().unwrap_or_else(|e| e.into_inner());
+                if !ev.force
+                    && last.elapsed() < std::time::Duration::from_millis(200)
+                    && (ev.total == 0 || ev.downloaded < ev.total)
+                {
+                    return;
+                }
+                *last = std::time::Instant::now();
+                let _ = app_for_progress.emit(
+                    EV_DOWNLOAD_PROGRESS,
+                    DownloadProgressPayload {
+                        url: url_for_progress.clone(),
+                        title: title_for_progress.clone(),
+                        downloaded: ev.downloaded,
+                        total: ev.total,
+                    },
+                );
+            })
+            .await;
+
+            // Unpaywall fallback: if the download failed and the doc carries a
+            // DOI, ask Unpaywall for an OA PDF and retry once. Recovers
+            // DOI-bearing candidates whose primary link was paywalled, dead, or a
+            // landing page with no resolvable PDF. Scoped to DOI-bearing docs, so
+            // it never fires for the many web results that lack one.
+            if matches!(outcome, DownloadOutcome::Failed(_)) && !cancel.is_cancelled() {
+                if let Some(doi) =
+                    super::dedup::extract_doi(doc.identifier.as_deref().unwrap_or(""))
+                {
+                    if let Some(oa_url) =
+                        super::downloader::resolve_oa_pdf_via_unpaywall(&client, &doi).await
+                    {
+                        if oa_url != doc.url {
+                            let mut alt = doc.clone();
+                            alt.url = oa_url;
+                            let retry = download(&alt, &folder, &client, &cancel, |_ev| {}).await;
+                            if !matches!(retry, DownloadOutcome::Failed(_)) {
+                                outcome = retry;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Map the outcome to a saved/cached file (with a `cached` flag), or
+            // handle the terminal failure/cancel cases and bail out of the task.
+            let (path, cached) = match outcome {
+                DownloadOutcome::Saved(path) => (path, false),
+                DownloadOutcome::Cached(path) => (path, true),
+                DownloadOutcome::Failed(err) => {
+                    runlog::log(runlog::Event::DownloadFail {
+                        source: &doc.source,
+                        title: &doc.title,
+                        url: &doc.url,
+                        error: &err,
+                    });
+                    let (done, failed) = {
+                        let mut c = counters.lock().await;
+                        c.1 += 1;
+                        (c.0, c.1)
+                    };
+                    let _ = app.emit(
+                        EV_DOWNLOAD_FAILED,
+                        DownloadFailedPayload {
+                            doc,
+                            error: err,
+                            done,
+                            failed,
+                            total,
+                        },
+                    );
+                    return;
+                }
+                DownloadOutcome::Cancelled => {
+                    // Counted neither done nor failed; UI shows "cancelled" via cancel event.
+                    return;
+                }
+            };
+
+            {
+                {
+                    let bytes = tokio::fs::metadata(&path)
+                        .await
+                        .map(|m| m.len())
+                        .unwrap_or(0);
+                    runlog::log(runlog::Event::DownloadOk {
+                        source: &doc.source,
+                        title: &doc.title,
+                        url: &doc.url,
+                        local_path: &path.to_string_lossy(),
+                        bytes,
+                    });
+                    // Release the download permit before extraction so the
+                    // next download can start. Extract uses its own
+                    // CPU-count semaphore.
+                    drop(download_permit);
+
+                    let mut text_path: Option<String> = None;
+                    let mut extract_error: Option<String> = None;
+                    // Skip the CPU-bound text extraction if the user has hit Stop:
+                    // the bytes are already on disk and the row is still persisted
+                    // below, so short-circuiting only the optional parse keeps Stop
+                    // responsive instead of grinding through queued large PDFs.
+                    if extract_flag && !cancel.is_cancelled() {
+                        let extract_path = path.clone();
+                        let _extract_permit = match extract_sem.clone().acquire_owned().await {
+                            Ok(p) => p,
+                            Err(_) => return,
+                        };
+                        let extract_res =
+                            match tokio::task::spawn_blocking(move || extract_text(&extract_path))
+                                .await
+                            {
+                                Ok(res) => res,
+                                Err(e) => Err(anyhow::anyhow!("extraction task panicked: {}", e)),
+                            };
+                        match extract_res {
+                            Ok(text) => {
+                                if !text.trim().is_empty() {
+                                    let stem = path
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("doc")
+                                        .to_string();
+                                    let tpath = text_dir.join(format!("{stem}.txt"));
+                                    if tokio::fs::write(&tpath, text).await.is_ok() {
+                                        if let Ok(rel) = tpath.strip_prefix(&folder) {
+                                            text_path = Some(rel.to_string_lossy().to_string());
+                                        }
+                                    }
+                                } else {
+                                    extract_error = Some("extracted text is empty".into());
+                                }
+                            }
+                            Err(e) => {
+                                let err_msg = e.to_string();
+                                tracing::warn!(
+                                    "extraction failed for {}: {}",
+                                    path.display(),
+                                    err_msg
+                                );
+                                extract_error = Some(err_msg);
+                            }
+                        }
+                    }
+
+                    let local_path = path
+                        .strip_prefix(&folder)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| path.to_string_lossy().to_string());
+
+                    // Persist to SQLite (open a fresh connection on the blocking thread
+                    // because rusqlite::Connection is !Send and cannot cross .await points)
+                    let db_path_for_task = db_path.clone();
+                    let title_for_db = doc.title.clone();
+                    let url_for_db = doc.url.clone();
+                    let source_for_db = doc.source.clone();
+                    let authors_for_db = doc.authors.join(", ");
+                    let year_for_db = doc.year.clone();
+                    let abstract_for_db = doc.abstract_.clone();
+                    let lp_for_db = local_path.clone();
+                    let tp_for_db = text_path.clone();
+                    let ee_for_db = extract_error.clone();
+                    // Persist the row, capturing any error so a SQLITE_BUSY / lock /
+                    // constraint failure surfaces (tracing + run log + the UI's
+                    // index_error) instead of silently dropping a downloaded doc.
+                    let db_result = tokio::task::spawn_blocking(move || -> rusqlite::Result<()> {
+                        let mgr = DbManager::open_existing(&db_path_for_task)?;
+                        mgr.insert_document(
+                            run_id,
+                            &title_for_db,
+                            &url_for_db,
+                            &source_for_db,
+                            &authors_for_db,
+                            year_for_db.as_deref(),
+                            abstract_for_db.as_deref(),
+                            &lp_for_db,
+                            tp_for_db.as_deref(),
+                            ee_for_db.as_deref(),
+                            bytes,
+                        )
+                    })
+                    .await;
+                    let db_err = match db_result {
+                        Ok(Ok(())) => None,
+                        Ok(Err(e)) => Some(e.to_string()),
+                        Err(join_err) => Some(format!("db task panicked: {join_err}")),
+                    };
+                    if let Some(err) = &db_err {
+                        tracing::error!("failed to persist document row for {}: {}", doc.url, err);
+                        runlog::log(runlog::Event::DbError {
+                            title: &doc.title,
+                            url: &doc.url,
+                            error: err,
+                        });
+                    }
+
+                    let (done, failed) = {
+                        let mut c = counters.lock().await;
+                        c.0 += 1;
+                        (c.0, c.1)
+                    };
+
+                    let _ = app.emit(
+                        EV_DOWNLOAD_DONE,
+                        DownloadDonePayload {
+                            doc,
+                            local_path,
+                            absolute_path: path.to_string_lossy().to_string(),
+                            text_path,
+                            bytes,
+                            cached,
+                            index_error: db_err,
+                            extract_error,
+                            done,
+                            failed,
+                            total,
+                        },
+                    );
+                }
+            }
+        });
+        handles.push(handle);
+    }
+
+    for h in handles {
+        if let Err(e) = h.await {
+            if e.is_panic() {
+                let msg = format!("download task panicked: {e}");
+                tracing::error!("{msg}");
+                let _ = app.emit(EV_ERROR, ErrorPayload { message: msg });
+            }
+        }
+    }
+
+    let counts = counters.lock().await;
+    *counts
+}
+
+/// Retry the download + extraction of a fixed list of documents into an existing
+/// library folder, without re-running discovery or ranking. Emits the same
+/// EV_DOWNLOAD_* / EV_COMPLETE events as a normal run so the UI tracks it like a
+/// (scoped) run. Used by the "Retry failed" action.
+pub async fn run_retry_pipeline(
+    app: AppHandle,
+    folder: PathBuf,
+    query: String,
+    docs: Vec<Document>,
+    concurrency: usize,
+    extract: bool,
+    cancel: CancellationToken,
+) -> anyhow::Result<()> {
+    let db_path = folder.join("library.db");
+    let text_dir = folder.join("_text");
+    if extract {
+        tokio::fs::create_dir_all(&text_dir).await?;
+    }
+    // Reclaim any orphaned *.part temps before re-downloading into the folder.
+    sweep_stale_parts(&folder).await;
+
+    // Associate the retried rows with a fresh run in this library's db (the
+    // folder always already has a library.db from the original run).
+    let run_id = {
+        let mgr = DbManager::new(&db_path).map_err(|e| anyhow::anyhow!("DB init failed: {}", e))?;
+        mgr.insert_run(&query, &folder.to_string_lossy())
+            .map_err(|e| anyhow::anyhow!("failed to insert run: {}", e))?
+    };
+
+    let total = docs.len();
+    emit_stage(
+        &app,
+        "download",
+        "started",
+        None,
+        Some(total as u64),
+        Some(format!("{total} to retry")),
+    );
+    if extract {
+        emit_stage(&app, "extract", "started", None, Some(total as u64), None);
+    } else {
+        emit_stage(
+            &app,
+            "extract",
+            "skipped",
+            None,
+            None,
+            Some("text extraction disabled".into()),
+        );
+    }
+
+    let (done, failed) = download_and_extract(
+        &app,
+        docs,
+        &folder,
+        &text_dir,
+        &db_path,
+        run_id,
+        concurrency,
+        extract,
+        &cancel,
+    )
+    .await;
+
+    emit_stage(
+        &app,
+        "download",
+        "done",
+        Some(done as u64),
+        Some(total as u64),
+        Some(format!("{done} saved · {failed} failed")),
+    );
+    if extract {
+        emit_stage(
+            &app,
+            "extract",
+            "done",
+            Some(done as u64),
+            Some(total as u64),
+            None,
+        );
+    }
+
+    let folder_str = folder.to_string_lossy().to_string();
+    runlog::log(runlog::Event::RunComplete {
+        done,
+        failed,
+        total,
+        folder: &folder_str,
+    });
+    let _ = app.emit(
+        if cancel.is_cancelled() {
+            EV_CANCELLED
+        } else {
+            EV_COMPLETE
+        },
+        CompletePayload {
+            done,
+            failed,
+            total,
+            folder: folder_str,
+            manifest: db_path.to_string_lossy().to_string(),
+        },
+    );
+    Ok(())
+}
+
 pub async fn run_pipeline(
     app: AppHandle,
     req: RunRequest,
@@ -1188,321 +1614,22 @@ pub async fn run_pipeline(
     }
 
     // -------- Phase 2: parallel downloads + parallel extraction --------
-    //
-    // Two separate semaphores so download (network-bound) and extract
-    // (CPU-bound) don't serialize each other. Previously a single semaphore
-    // gated the whole task lifetime — once a download finished, the same
-    // permit was held through extraction, blocking the next download from
-    // starting. Now the download permit drops the moment bytes are on disk,
-    // and a smaller extract permit (CPU count) gates the heavy text parsing.
+    // Delegated to the shared `download_and_extract` (also used by the
+    // retry-failed path) so there is exactly one verified download path.
     let total = candidates.len();
-    let counters = Arc::new(tokio::sync::Mutex::new((0usize, 0usize))); // (done, failed)
-    let download_sem = Arc::new(Semaphore::new(req.concurrency.clamp(1, 32)));
-    let extract_sem = Arc::new(Semaphore::new(num_cpus::get().clamp(1, 8)));
-    // Downloads use a dedicated client with NO overall timeout (only connect +
-    // read-stall timeouts) so a large or slow PDF isn't aborted at 60s like the
-    // shared API client would. See `make_download_client`.
-    let download_client = Arc::new(make_download_client());
+    let (done, failed) = download_and_extract(
+        &app,
+        candidates,
+        &folder,
+        &text_dir,
+        &db_path,
+        run_id,
+        req.concurrency,
+        req.extract,
+        &cancel,
+    )
+    .await;
 
-    let mut handles = Vec::with_capacity(candidates.len());
-    for doc in candidates {
-        let app = app.clone();
-        let client = download_client.clone();
-        let cancel = cancel.clone();
-        let download_sem = download_sem.clone();
-        let extract_sem = extract_sem.clone();
-        let counters = counters.clone();
-        let folder = folder.clone();
-        let db_path = db_path.clone();
-        let text_dir = text_dir.clone();
-        let extract_flag = req.extract;
-
-        let handle = tokio::spawn(async move {
-            let download_permit = match download_sem.acquire_owned().await {
-                Ok(p) => p,
-                Err(e) => {
-                    // The download semaphore should never close mid-run; if it
-                    // somehow does, log it rather than letting the doc silently
-                    // disappear from the counts with no trace.
-                    tracing::error!("download semaphore closed, skipping {}: {e}", doc.url);
-                    return;
-                }
-            };
-            // Announce the attempt BEFORE the cancel check so a download skipped
-            // by a just-arrived Stop still shows up in the UI stream (instead of
-            // the task vanishing silently). The terminal EV_CANCELLED clears any
-            // leftover in-flight row.
-            let _ = app.emit(
-                EV_DOWNLOAD_STARTED,
-                DownloadStartedPayload {
-                    url: doc.url.clone(),
-                    title: doc.title.clone(),
-                    source: doc.source.clone(),
-                },
-            );
-            if cancel.is_cancelled() {
-                return;
-            }
-
-            let app_for_progress = app.clone();
-            let url_for_progress = doc.url.clone();
-            let title_for_progress = doc.title.clone();
-            let last_emit = std::sync::Mutex::new(std::time::Instant::now());
-
-            let mut outcome = download(&doc, &folder, &client, &cancel, |ev| {
-                // Throttle progress to ~5 updates/sec/file, but NEVER drop the
-                // terminal (`force`) event — that's the one that carries the
-                // true final byte count for fast / unknown-length downloads.
-                let mut last = last_emit.lock().unwrap_or_else(|e| e.into_inner());
-                if !ev.force
-                    && last.elapsed() < std::time::Duration::from_millis(200)
-                    && (ev.total == 0 || ev.downloaded < ev.total)
-                {
-                    return;
-                }
-                *last = std::time::Instant::now();
-                let _ = app_for_progress.emit(
-                    EV_DOWNLOAD_PROGRESS,
-                    DownloadProgressPayload {
-                        url: url_for_progress.clone(),
-                        title: title_for_progress.clone(),
-                        downloaded: ev.downloaded,
-                        total: ev.total,
-                    },
-                );
-            })
-            .await;
-
-            // Unpaywall fallback: if the download failed and the doc carries a
-            // DOI, ask Unpaywall for an OA PDF and retry once. Recovers
-            // DOI-bearing candidates whose primary link was paywalled, dead, or a
-            // landing page with no resolvable PDF. Scoped to DOI-bearing docs, so
-            // it never fires for the many web results that lack one.
-            if matches!(outcome, DownloadOutcome::Failed(_)) && !cancel.is_cancelled() {
-                if let Some(doi) =
-                    super::dedup::extract_doi(doc.identifier.as_deref().unwrap_or(""))
-                {
-                    if let Some(oa_url) =
-                        super::downloader::resolve_oa_pdf_via_unpaywall(&client, &doi).await
-                    {
-                        if oa_url != doc.url {
-                            let mut alt = doc.clone();
-                            alt.url = oa_url;
-                            let retry = download(&alt, &folder, &client, &cancel, |_ev| {}).await;
-                            if !matches!(retry, DownloadOutcome::Failed(_)) {
-                                outcome = retry;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Map the outcome to a saved/cached file (with a `cached` flag), or
-            // handle the terminal failure/cancel cases and bail out of the task.
-            let (path, cached) = match outcome {
-                DownloadOutcome::Saved(path) => (path, false),
-                DownloadOutcome::Cached(path) => (path, true),
-                DownloadOutcome::Failed(err) => {
-                    runlog::log(runlog::Event::DownloadFail {
-                        source: &doc.source,
-                        title: &doc.title,
-                        url: &doc.url,
-                        error: &err,
-                    });
-                    let (done, failed) = {
-                        let mut c = counters.lock().await;
-                        c.1 += 1;
-                        (c.0, c.1)
-                    };
-                    let _ = app.emit(
-                        EV_DOWNLOAD_FAILED,
-                        DownloadFailedPayload {
-                            doc,
-                            error: err,
-                            done,
-                            failed,
-                            total,
-                        },
-                    );
-                    return;
-                }
-                DownloadOutcome::Cancelled => {
-                    // Counted neither done nor failed; UI shows "cancelled" via cancel event.
-                    return;
-                }
-            };
-
-            {
-                {
-                    let bytes = tokio::fs::metadata(&path)
-                        .await
-                        .map(|m| m.len())
-                        .unwrap_or(0);
-                    runlog::log(runlog::Event::DownloadOk {
-                        source: &doc.source,
-                        title: &doc.title,
-                        url: &doc.url,
-                        local_path: &path.to_string_lossy(),
-                        bytes,
-                    });
-                    // Release the download permit before extraction so the
-                    // next download can start. Extract uses its own
-                    // CPU-count semaphore.
-                    drop(download_permit);
-
-                    let mut text_path: Option<String> = None;
-                    let mut extract_error: Option<String> = None;
-                    // Skip the CPU-bound text extraction if the user has hit Stop:
-                    // the bytes are already on disk and the row is still persisted
-                    // below, so short-circuiting only the optional parse keeps Stop
-                    // responsive instead of grinding through queued large PDFs.
-                    if extract_flag && !cancel.is_cancelled() {
-                        let extract_path = path.clone();
-                        let _extract_permit = match extract_sem.clone().acquire_owned().await {
-                            Ok(p) => p,
-                            Err(_) => return,
-                        };
-                        let extract_res =
-                            match tokio::task::spawn_blocking(move || extract_text(&extract_path))
-                                .await
-                            {
-                                Ok(res) => res,
-                                Err(e) => Err(anyhow::anyhow!("extraction task panicked: {}", e)),
-                            };
-                        match extract_res {
-                            Ok(text) => {
-                                if !text.trim().is_empty() {
-                                    let stem = path
-                                        .file_stem()
-                                        .and_then(|s| s.to_str())
-                                        .unwrap_or("doc")
-                                        .to_string();
-                                    let tpath = text_dir.join(format!("{stem}.txt"));
-                                    if tokio::fs::write(&tpath, text).await.is_ok() {
-                                        if let Ok(rel) = tpath.strip_prefix(&folder) {
-                                            text_path = Some(rel.to_string_lossy().to_string());
-                                        }
-                                    }
-                                } else {
-                                    extract_error = Some("extracted text is empty".into());
-                                }
-                            }
-                            Err(e) => {
-                                let err_msg = e.to_string();
-                                tracing::warn!(
-                                    "extraction failed for {}: {}",
-                                    path.display(),
-                                    err_msg
-                                );
-                                extract_error = Some(err_msg);
-                            }
-                        }
-                    }
-
-                    let local_path = path
-                        .strip_prefix(&folder)
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| path.to_string_lossy().to_string());
-
-                    // Persist to SQLite (open a fresh connection on the blocking thread
-                    // because rusqlite::Connection is !Send and cannot cross .await points)
-                    let db_path_for_task = db_path.clone();
-                    let title_for_db = doc.title.clone();
-                    let url_for_db = doc.url.clone();
-                    let source_for_db = doc.source.clone();
-                    let authors_for_db = doc.authors.join(", ");
-                    let year_for_db = doc.year.clone();
-                    let abstract_for_db = doc.abstract_.clone();
-                    let lp_for_db = local_path.clone();
-                    let tp_for_db = text_path.clone();
-                    let ee_for_db = extract_error.clone();
-                    // Persist the row, capturing any error. Previously this was
-                    // `let _ =` on both the connection open and the insert, so a
-                    // SQLITE_BUSY / lock / constraint failure silently dropped a
-                    // downloaded doc from the library with no log — the user saw
-                    // fewer docs than were actually saved. Open a lightweight
-                    // connection (schema already created at run start) and
-                    // surface failures via tracing + the run log. The doc is
-                    // still counted as `done` (the bytes are on disk); only its
-                    // index row is missing, which the log now makes observable.
-                    let db_result = tokio::task::spawn_blocking(move || -> rusqlite::Result<()> {
-                        let mgr = DbManager::open_existing(&db_path_for_task)?;
-                        mgr.insert_document(
-                            run_id,
-                            &title_for_db,
-                            &url_for_db,
-                            &source_for_db,
-                            &authors_for_db,
-                            year_for_db.as_deref(),
-                            abstract_for_db.as_deref(),
-                            &lp_for_db,
-                            tp_for_db.as_deref(),
-                            ee_for_db.as_deref(),
-                            bytes,
-                        )
-                    })
-                    .await;
-                    let db_err = match db_result {
-                        Ok(Ok(())) => None,
-                        Ok(Err(e)) => Some(e.to_string()),
-                        Err(join_err) => Some(format!("db task panicked: {join_err}")),
-                    };
-                    if let Some(err) = &db_err {
-                        tracing::error!("failed to persist document row for {}: {}", doc.url, err);
-                        runlog::log(runlog::Event::DbError {
-                            title: &doc.title,
-                            url: &doc.url,
-                            error: err,
-                        });
-                    }
-
-                    let (done, failed) = {
-                        let mut c = counters.lock().await;
-                        c.0 += 1;
-                        (c.0, c.1)
-                    };
-
-                    let _ = app.emit(
-                        EV_DOWNLOAD_DONE,
-                        DownloadDonePayload {
-                            doc,
-                            local_path,
-                            absolute_path: path.to_string_lossy().to_string(),
-                            text_path,
-                            bytes,
-                            cached,
-                            // The bytes are on disk so the doc still counts as
-                            // `done`, but if the SQLite index row failed it won't
-                            // appear in the Library view — surface that to the UI
-                            // instead of leaving the miss invisible (a log line
-                            // the user never sees).
-                            index_error: db_err,
-                            extract_error,
-                            done,
-                            failed,
-                            total,
-                        },
-                    );
-                }
-            }
-        });
-        handles.push(handle);
-    }
-
-    for h in handles {
-        if let Err(e) = h.await {
-            if e.is_panic() {
-                let msg = format!("download task panicked: {e}");
-                tracing::error!("{msg}");
-                let _ = app.emit(EV_ERROR, ErrorPayload { message: msg });
-            }
-        }
-    }
-
-    let (done, failed) = {
-        let c = counters.lock().await;
-        *c
-    };
     emit_stage(
         &app,
         "download",

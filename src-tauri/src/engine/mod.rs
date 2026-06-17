@@ -10,4 +10,4 @@ pub mod query;
 pub mod ranking;
 pub mod runlog;
 
-pub use orchestrator::{run_pipeline, RunRequest};
+pub use orchestrator::{run_pipeline, run_retry_pipeline, RunRequest};
