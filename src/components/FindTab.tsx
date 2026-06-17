@@ -241,6 +241,18 @@ export default function FindTab() {
         text: `${f.title.slice(0, 48)} — ${humanizeDownloadError(f.error)}`,
       });
     }
+    // Files that saved to disk but whose library index row failed to write:
+    // the bytes are there, but they won't show up in the Library view.
+    for (const c of rs().completed) {
+      if (c.status === "done" && c.indexError) {
+        out.push({
+          source: c.source,
+          label: SOURCE_LABELS[c.source] ?? c.source,
+          tag: "not indexed",
+          text: `${c.title.slice(0, 48)} — saved to disk but not added to the library index`,
+        });
+      }
+    }
     return out;
   });
 

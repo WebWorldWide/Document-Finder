@@ -28,6 +28,9 @@ export interface SourceStartPayload {
 
 export interface SourceDonePayload {
   source: string;
+  /** Unique-NEW docs this (sub_query, source) task added to the dedup (merged
+   *  cross-source duplicates excluded), not raw results. Per-source hit counts
+   *  are accumulated live from `found` events; this is informational. */
   count: number;
 }
 
@@ -74,6 +77,9 @@ export interface DownloadDonePayload {
   bytes: number;
   /** True when reused from a previous run — excluded from network throughput. */
   cached: boolean;
+  /** Set when the file saved but its SQLite index row failed to write — the doc
+   *  counts as done but won't appear in the Library view. Surfaced as a warning. */
+  index_error?: string;
   done: number;
   failed: number;
   total: number;
