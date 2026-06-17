@@ -235,6 +235,14 @@ impl Deduplicator {
                         .source_ranks
                         .push((source_id.to_string(), rank));
                     self.by_url.insert(doc.url.clone(), idx);
+                    // Register the DOI too (like steps 3 and 5). A DOI is
+                    // authoritative, so once ANY merge accepts a DOI-bearing doc
+                    // its DOI must be indexed — otherwise a later doc carrying the
+                    // same DOI misses the step-2 lookup and gets inserted as a
+                    // duplicate instead of merging here.
+                    if let Some(d) = &doi {
+                        self.by_doi.insert(d.clone(), idx);
+                    }
                     // Deliberately do NOT bind this doc's normalized title to the
                     // bucket. This merge was justified by author+year+prefix
                     // corroboration, NOT full-title equality, and `norm` differs
@@ -492,5 +500,55 @@ mod tests {
             1,
         );
         assert!(matches!(r, AddOutcome::Merged(0)));
+    }
+
+    #[test]
+    fn doi_from_author_year_merge_is_indexed_for_later_dedup() {
+        let mut d = Deduplicator::new();
+        // A: anchor with its own DOI.
+        let _ = d.add(
+            doc(
+                "Alpha Beta Gamma",
+                "https://doi.org/10.1111/aaa",
+                &["Smith, John"],
+                Some("2023"),
+            ),
+            "web",
+            1,
+        );
+        // B: merges into A via author+year+title-prefix (step 4), carrying a
+        // DIFFERENT DOI. The fix must index B's DOI on the merged entry.
+        let rb = d.add(
+            doc(
+                "Alpha Beta Gamma — Revised Edition",
+                "https://doi.org/10.2222/bbb",
+                &["John Smith"],
+                Some("2023"),
+            ),
+            "brave",
+            1,
+        );
+        assert!(
+            matches!(rb, AddOutcome::Merged(0)),
+            "B should merge into A via author/year"
+        );
+        // C: a distinct paper that happens to share B's DOI (different title,
+        // author, year, url). Before the fix, B's DOI was never indexed, so C
+        // missed the step-2 DOI lookup and inserted as a duplicate. It must now
+        // merge via the DOI registered during B's author/year merge.
+        let rc = d.add(
+            doc(
+                "Zeta Eta Theta",
+                "https://doi.org/10.2222/bbb",
+                &["Jones, Pat"],
+                Some("2010"),
+            ),
+            "openalex",
+            1,
+        );
+        assert!(
+            matches!(rc, AddOutcome::Merged(0)),
+            "C should merge via the DOI indexed during B's author/year merge"
+        );
     }
 }

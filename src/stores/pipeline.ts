@@ -31,18 +31,34 @@ const [state, setState] = createStore<{ stages: Record<PipelineStage, StageEntry
 });
 
 let unsub: UnlistenFn | null = null;
+let subscribing: Promise<void> | null = null;
 
 async function ensureSubscribed() {
   if (unsub) return;
-  unsub = await listen<PipelineStagePayload>("df:pipeline_stage", (ev) => {
-    const { stage, state: s, count, total, message } = ev.payload;
-    setState("stages", stage, {
-      state: s,
-      count,
-      total,
-      message,
-    });
-  });
+  // Serialize concurrent callers (startSearch and retryFailed both fire-and-
+  // forget `void ensureSubscribed()`). Without this, two calls in the same tick
+  // both pass the synchronous `if (unsub)` guard before the first `await listen`
+  // resolves, registering a second listener and orphaning the first (a leak +
+  // duplicate event handling). Mirrors modelsStore's subscribe guard.
+  if (!subscribing) {
+    subscribing = listen<PipelineStagePayload>("df:pipeline_stage", (ev) => {
+      const { stage, state: s, count, total, message } = ev.payload;
+      setState("stages", stage, {
+        state: s,
+        count,
+        total,
+        message,
+      });
+    })
+      .then((u) => {
+        unsub = u;
+      })
+      .catch((e) => {
+        subscribing = null; // allow a later retry after a failed subscribe
+        throw e;
+      });
+  }
+  return subscribing;
 }
 
 function reset() {
