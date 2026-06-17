@@ -5,6 +5,7 @@ import SourcePanel from "./SourcePanel";
 import Sparkline from "./Sparkline";
 import Banner from "./Banner";
 import ModelStatusBadge from "./ModelStatusBadge";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { runStore } from "@/stores/run";
 import { pipelineStore } from "@/stores/pipeline";
 import type { PipelineStage } from "@/lib/events";
@@ -282,6 +283,35 @@ export default function FindTab() {
     setExportedTo(null);
     await runStore.startSearch(query());
   }
+  // Confirm a Stop only when downloads are actively in flight — cancelling then
+  // discards completed network work. A stop during discovery is cheap, so it's
+  // not gated.
+  async function requestStop() {
+    if (stopping()) return;
+    if (rs().active > 0) {
+      const ok = await confirm(
+        `Stop now? ${rs().active} download${rs().active === 1 ? "" : "s"} in progress will be cancelled.`,
+        { title: "Stop search", kind: "warning" },
+      );
+      if (!ok) return;
+    }
+    setStopping(true);
+    void api.cancelRun();
+  }
+  // Files saved this run whose text couldn't be extracted (e.g. scanned PDFs).
+  const noTextCount = createMemo(
+    () => rs().completed.filter((c) => c.status === "done" && c.extractError).length,
+  );
+  // A finished run that produced nothing — folder is set (a run happened) but
+  // no candidates were found and nothing downloaded.
+  const noResults = createMemo(
+    () =>
+      !rs().running &&
+      rs().folder !== null &&
+      rs().found === 0 &&
+      rs().completed.length === 0 &&
+      !rs().fatalError,
+  );
   async function handleExport() {
     setExporting(true);
     setExportError(null);
@@ -372,10 +402,7 @@ export default function FindTab() {
               <button
                 class="df-btn danger"
                 disabled={stopping()}
-                onClick={() => {
-                  setStopping(true);
-                  void api.cancelRun();
-                }}
+                onClick={() => void requestStop()}
               >
                 <Square size={12} /> {stopping() ? "Stopping…" : "Stop"}
               </button>
@@ -482,6 +509,18 @@ export default function FindTab() {
           </div>
         </Show>
 
+        {/* NO RESULTS — a finished run that found nothing (the run card is
+            hidden because nothing streamed in). */}
+        <Show when={noResults()}>
+          <div style={{ "margin-top": "22px" }}>
+            <Banner kind="warn">
+              <strong>No documents found.</strong> Try broader or different terms, enable more
+              sources, or check your connection. A source may have been rate-limited — expand any
+              issues below for details.
+            </Banner>
+          </div>
+        </Show>
+
         {/* RUN CARD */}
         <Show when={hasRun()}>
           <div class="df-run-card fade-in" style={{ "margin-top": "22px" }}>
@@ -530,7 +569,7 @@ export default function FindTab() {
                 </div>
               </div>
 
-              <div class="df-stats">
+              <div class="df-stats" role="status" aria-live="polite">
                 <div class="df-stat">
                   <span class="df-stat-num">{rs().found}</span>
                   <span class="df-stat-label">found</span>
@@ -551,6 +590,17 @@ export default function FindTab() {
                       {rs().rankingRejected}
                     </span>
                     <span class="df-stat-label">off-topic</span>
+                  </div>
+                </Show>
+                <Show when={noTextCount() > 0}>
+                  <div
+                    class="df-stat"
+                    title="Saved, but no machine-readable text could be extracted (e.g. scanned PDFs)"
+                  >
+                    <span class="df-stat-num" style={{ color: "var(--ink-3)" }}>
+                      {noTextCount()}
+                    </span>
+                    <span class="df-stat-label">no text</span>
                   </div>
                 </Show>
                 <span style={{ flex: 1 }} />

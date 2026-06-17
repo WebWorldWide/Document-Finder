@@ -1477,6 +1477,7 @@ pub async fn run_pipeline(
                             // instead of leaving the miss invisible (a log line
                             // the user never sees).
                             index_error: db_err,
+                            extract_error,
                             done,
                             failed,
                             total,

@@ -166,6 +166,12 @@ pub struct DownloadDonePayload {
     /// miss. `None` on the normal success path.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index_error: Option<String>,
+    /// Set when the file saved but text extraction produced nothing usable
+    /// (e.g. a scanned, image-only PDF). The file is still kept; this lets the
+    /// UI show a low-key "no extractable text" count. `None` when text was
+    /// extracted (or extraction was disabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extract_error: Option<String>,
     pub done: usize,
     pub failed: usize,
     pub total: usize,

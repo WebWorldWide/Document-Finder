@@ -80,6 +80,9 @@ export interface DownloadDonePayload {
   /** Set when the file saved but its SQLite index row failed to write — the doc
    *  counts as done but won't appear in the Library view. Surfaced as a warning. */
   index_error?: string;
+  /** Set when the file saved but no usable text could be extracted (e.g. a
+   *  scanned image-only PDF). The file is kept; surfaced as a low-key count. */
+  extract_error?: string;
   done: number;
   failed: number;
   total: number;

@@ -30,6 +30,8 @@ export interface CompletedItem {
   /** Set when the file saved but its library index row failed to write — the
    *  file is on disk but won't appear in the Library view. */
   indexError?: string;
+  /** Set when the file saved but no usable text could be extracted. */
+  extractError?: string;
 }
 
 export interface SourceIssue {
@@ -330,6 +332,7 @@ function apply(ev: DfEvent) {
         bytes: ev.payload.bytes,
         cached: ev.payload.cached,
         indexError: ev.payload.index_error,
+        extractError: ev.payload.extract_error,
       };
       setState(
         produce((s) => {
@@ -433,6 +436,17 @@ function apply(ev: DfEvent) {
 async function startSearch(query: string) {
   if (!query.trim() || state.running) return;
   if (settings.selectedSources.length === 0) return;
+
+  // Connectivity pre-check: every source needs the network, so a definitively
+  // offline machine would otherwise produce a confusing cascade of per-source
+  // errors. navigator.onLine is only trustworthy when false (the OS reports no
+  // link), so we block solely on that and let real searches proceed otherwise.
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    reset(query.trim());
+    setState("fatalError", "You appear to be offline. Connect to the internet and try again.");
+    addLog("error", "Offline — searches need an internet connection.");
+    return;
+  }
 
   reset(query.trim());
   // Pipeline strip should clear from the previous run before stage events
