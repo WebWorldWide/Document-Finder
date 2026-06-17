@@ -58,8 +58,6 @@ export const [settings, setSettings] = createStore({
   maxTotal: posInt(saved.maxTotal, 900),
   concurrency: posInt(saved.concurrency, 8),
   selectedSources: safeSources(saved.selectedSources),
-  // Free CORE API key (https://core.ac.uk/services/api). Empty = CORE inactive.
-  coreApiKey: safeStr(saved.coreApiKey, ""),
   useCitationGraph: safeBool(saved.useCitationGraph, false),
   /// Search quality preset — replaces the previous useSemanticRerank /
   /// useLlmExpansion / useLlmFilter trio. See `qualityToFlags` for the

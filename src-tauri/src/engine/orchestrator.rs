@@ -102,10 +102,8 @@ fn source_concurrency(name: &str) -> usize {
         // Semantic Scholar's public API 429s aggressively and shares a global
         // rate pool; keep it gentle so it doesn't lock us out for the session.
         "semantic_scholar" => 2,
-        // Zenodo's guest API rate-limits (~60/min); CORE's free tier is a tight
-        // token bucket — keep both gentle.
+        // Zenodo's guest API rate-limits (~60/min) — keep it gentle.
         "zenodo" => 2,
-        "core" => 1,
         // Structured APIs tolerate a handful of concurrent requests fine.
         _ => 4,
     }

@@ -186,30 +186,6 @@ export default function SettingsView() {
             </div>
           </section>
 
-          {/* CORE API key (opt-in source) */}
-          <section class="df-section">
-            <h2>CORE API key</h2>
-            <p class="hint">
-              Optional. CORE is the largest open-access full-text aggregator (300M+ works). Paste a
-              free key from <span class="mono">core.ac.uk/services/api</span> to add it as a source.
-              Leave blank to keep it off.
-            </p>
-            <div class="df-field">
-              <label>API key</label>
-              <input
-                class="mono"
-                type="password"
-                autocomplete="off"
-                value={settings.coreApiKey}
-                placeholder="(none — CORE disabled)"
-                onInput={(e) => {
-                  setSettings("coreApiKey", e.currentTarget.value);
-                  saveSettings();
-                }}
-              />
-            </div>
-          </section>
-
           {/* Download depth */}
           <section class="df-section">
             <h2>Download depth</h2>

@@ -393,10 +393,6 @@ async function startSearch(query: string) {
       use_citation_graph: settings.useCitationGraph,
       ...flags,
       llm_model_id: settings.llmModelId || null,
-      // Pass CORE its API key when set; otherwise omit so CORE stays inactive.
-      ...(settings.coreApiKey.trim()
-        ? { source_options: { core: { api_key: settings.coreApiKey.trim() } } }
-        : {}),
     });
   } catch (e) {
     // A start_run rejection (the concurrent-run guard, or a library folder

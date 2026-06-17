@@ -1,7 +1,6 @@
 pub mod arxiv;
 pub mod bing_html;
 pub mod brave_html;
-pub mod core;
 pub mod doaj;
 pub mod duckduckgo;
 pub mod europe_pmc;
@@ -42,7 +41,6 @@ pub const SOURCE_IDS: &[&str] = &[
     "internet_archive",
     "doaj",
     "zenodo",
-    "core",
     "gutenberg",
     "meta_search",
     "searxng",
@@ -89,14 +87,12 @@ impl Document {
     }
 }
 
-/// Per-source configuration delivered from the frontend. Optional per-source
-/// knobs live here so adding one doesn't ripple through every `build_source`
-/// callsite. `api_key` backs key-gated sources (CORE).
+/// Per-source configuration delivered from the frontend. Currently empty — every
+/// backend builds itself from the shared HTTP client. Kept as an extension point
+/// so adding a per-source knob later doesn't ripple through every callsite of
+/// `build_source`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct SourceOptions {
-    #[serde(default)]
-    pub api_key: Option<String>,
-}
+pub struct SourceOptions {}
 
 #[async_trait]
 pub trait Source: Send + Sync {
@@ -130,8 +126,6 @@ pub fn build_source(
         ))),
         "doaj" => Some(Box::new(doaj::DOAJSource::new(client))),
         "zenodo" => Some(Box::new(zenodo::ZenodoSource::new(client))),
-        // Opt-in, key-gated. With no key the source contributes nothing.
-        "core" => Some(Box::new(core::CoreSource::new(client, _options.api_key))),
         "gutenberg" => Some(Box::new(gutenberg::GutenbergSource::new(client))),
         "web" => Some(Box::new(duckduckgo::DuckDuckGoSource::new(client))),
         "brave" => Some(Box::new(brave_html::BraveHtmlSource::new(client))),

@@ -76,16 +76,24 @@ export default function WelcomeDialog() {
     }
   }
 
+  // Embedding model is fastembed-managed (no registry card); it auto-downloads
+  // on first use and these flags reflect that.
+  const embeddingReady = () =>
+    modelsStore.state.embeddingLoaded || modelsStore.state.embeddingDownloaded;
+  // Default LLMs (the only registry downloads) that still need fetching.
+  const llmsToDownload = () =>
+    modelsStore.state.models.filter((m) => m.is_default && m.status.kind !== "ready");
+  // Everything the AI features need is already present.
+  const allReady = () => llmsToDownload().length === 0 && embeddingReady();
+
   function downloadDefaults() {
-    // The embedding model isn't a registry entry (it's fastembed-managed), so
-    // "Download both" must download the default LLM AND warm the embedding —
-    // otherwise it only fetches the LLM and the default "Balanced" preset (which
-    // needs the embedding for semantic rerank) is never set up.
-    const defaults = modelsStore.state.models.filter((m) => m.is_default);
-    for (const m of defaults) {
+    // Only fetch what's actually missing — re-issuing a download for an
+    // already-installed model just flickers the UI and looks broken. Warm the
+    // embedding only if it isn't already loaded/cached.
+    for (const m of llmsToDownload()) {
       void modelsStore.download(m.id);
     }
-    void modelsStore.warmEmbedding();
+    if (!embeddingReady()) void modelsStore.warmEmbedding();
   }
 
   return (
@@ -116,7 +124,8 @@ export default function WelcomeDialog() {
             </h2>
           </div>
           <p class="mb-5 text-xs leading-relaxed text-[var(--color-muted-foreground)]">
-            Three optional setup steps. Each is independent — skip whatever you don't need.
+            Everything below is optional and independent — skip whatever you don't need. Searches
+            work right away.
           </p>
 
           {/* Section 1: Built-in meta-search — passive, just showing it's on */}
@@ -193,13 +202,23 @@ export default function WelcomeDialog() {
                 <For each={modelsStore.state.models.filter((m) => m.is_default)}>
                   {(model) => <ModelDownloadCard model={model} />}
                 </For>
-                <button
-                  onClick={() => void downloadDefaults()}
-                  class="btn-tactile mt-2 w-full px-3 py-2 text-xs font-semibold"
-                  style={{ background: "var(--color-primary)", color: "white" }}
+                <Show
+                  when={!allReady()}
+                  fallback={
+                    <div class="mt-2 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold">
+                      <CheckCircle2 size={14} style={{ color: "var(--color-success)" }} />
+                      <span style={{ color: "var(--color-success)" }}>AI models ready</span>
+                    </div>
+                  }
                 >
-                  Download both
-                </button>
+                  <button
+                    onClick={() => void downloadDefaults()}
+                    class="btn-tactile mt-2 w-full px-3 py-2 text-xs font-semibold"
+                    style={{ background: "var(--color-primary)", color: "white" }}
+                  >
+                    {embeddingReady() ? "Download model" : "Download both"}
+                  </button>
+                </Show>
               </div>
             </Show>
           </section>
