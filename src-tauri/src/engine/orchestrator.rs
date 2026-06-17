@@ -61,6 +61,13 @@ pub struct RunRequest {
     /// LLM model id from the registry. If None, uses the registry default.
     #[serde(default)]
     pub llm_model_id: Option<String>,
+    /// When true, before downloading a candidate the pipeline checks SIBLING
+    /// libraries (other per-query folders under the same root) for an identical
+    /// already-downloaded file and copies it in instead of re-fetching. Opt-in;
+    /// saves bandwidth across overlapping searches while keeping each library
+    /// self-contained.
+    #[serde(default)]
+    pub cross_run_reuse: bool,
     #[serde(default)]
     pub source_options: HashMap<String, SourceOptions>,
 }
@@ -598,6 +605,9 @@ async fn download_and_extract(
     run_id: i64,
     concurrency: usize,
     extract: bool,
+    // When `Some(root)`, try reusing an identical file from a sibling library
+    // under `root` before downloading (cross-run reuse; opt-in).
+    reuse_root: Option<&Path>,
     cancel: &CancellationToken,
 ) -> (usize, usize) {
     // Two separate semaphores so download (network-bound) and extract
@@ -625,6 +635,7 @@ async fn download_and_extract(
         let db_path = db_path.to_path_buf();
         let text_dir = text_dir.to_path_buf();
         let extract_flag = extract;
+        let reuse_root = reuse_root.map(|p| p.to_path_buf());
 
         let handle = tokio::spawn(async move {
             let download_permit = match download_sem.acquire_owned().await {
@@ -653,34 +664,46 @@ async fn download_and_extract(
                 return;
             }
 
+            // Cross-library reuse (opt-in): copy an identical file from a sibling
+            // library instead of re-fetching. A hit is reported as `Cached` — no
+            // network throughput, but it's still indexed + extracted below.
+            let reused = match &reuse_root {
+                Some(root) => super::downloader::reuse_from_siblings(&doc, &folder, root).await,
+                None => None,
+            };
+
             let app_for_progress = app.clone();
             let url_for_progress = doc.url.clone();
             let title_for_progress = doc.title.clone();
             let last_emit = std::sync::Mutex::new(std::time::Instant::now());
 
-            let mut outcome = download(&doc, &folder, &client, &cancel, |ev| {
-                // Throttle progress to ~5 updates/sec/file, but NEVER drop the
-                // terminal (`force`) event — that's the one that carries the
-                // true final byte count for fast / unknown-length downloads.
-                let mut last = last_emit.lock().unwrap_or_else(|e| e.into_inner());
-                if !ev.force
-                    && last.elapsed() < std::time::Duration::from_millis(200)
-                    && (ev.total == 0 || ev.downloaded < ev.total)
-                {
-                    return;
-                }
-                *last = std::time::Instant::now();
-                let _ = app_for_progress.emit(
-                    EV_DOWNLOAD_PROGRESS,
-                    DownloadProgressPayload {
-                        url: url_for_progress.clone(),
-                        title: title_for_progress.clone(),
-                        downloaded: ev.downloaded,
-                        total: ev.total,
-                    },
-                );
-            })
-            .await;
+            let mut outcome = if let Some(reused_path) = reused {
+                DownloadOutcome::Cached(reused_path)
+            } else {
+                download(&doc, &folder, &client, &cancel, |ev| {
+                    // Throttle progress to ~5 updates/sec/file, but NEVER drop the
+                    // terminal (`force`) event — that's the one that carries the
+                    // true final byte count for fast / unknown-length downloads.
+                    let mut last = last_emit.lock().unwrap_or_else(|e| e.into_inner());
+                    if !ev.force
+                        && last.elapsed() < std::time::Duration::from_millis(200)
+                        && (ev.total == 0 || ev.downloaded < ev.total)
+                    {
+                        return;
+                    }
+                    *last = std::time::Instant::now();
+                    let _ = app_for_progress.emit(
+                        EV_DOWNLOAD_PROGRESS,
+                        DownloadProgressPayload {
+                            url: url_for_progress.clone(),
+                            title: title_for_progress.clone(),
+                            downloaded: ev.downloaded,
+                            total: ev.total,
+                        },
+                    );
+                })
+                .await
+            };
 
             // Unpaywall fallback: if the download failed and the doc carries a
             // DOI, ask Unpaywall for an OA PDF and retry once. Recovers
@@ -952,6 +975,9 @@ pub async fn run_retry_pipeline(
         );
     }
 
+    // Retry is an explicit "fetch these again" action, so it does NOT use
+    // cross-run reuse — that would just re-copy the stale sibling file we're
+    // trying to replace. Pass None.
     let (done, failed) = download_and_extract(
         &app,
         docs,
@@ -961,6 +987,7 @@ pub async fn run_retry_pipeline(
         run_id,
         concurrency,
         extract,
+        None,
         &cancel,
     )
     .await;
@@ -1617,6 +1644,13 @@ pub async fn run_pipeline(
     // Delegated to the shared `download_and_extract` (also used by the
     // retry-failed path) so there is exactly one verified download path.
     let total = candidates.len();
+    // Cross-run reuse scans sibling per-query folders under the library root
+    // (the run folder's parent). Only enabled when the user opted in.
+    let reuse_root = if req.cross_run_reuse {
+        folder.parent()
+    } else {
+        None
+    };
     let (done, failed) = download_and_extract(
         &app,
         candidates,
@@ -1626,6 +1660,7 @@ pub async fn run_pipeline(
         run_id,
         req.concurrency,
         req.extract,
+        reuse_root,
         &cancel,
     )
     .await;

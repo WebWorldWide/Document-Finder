@@ -59,6 +59,10 @@ export const [settings, setSettings] = createStore({
   concurrency: posInt(saved.concurrency, 8),
   selectedSources: safeSources(saved.selectedSources),
   useCitationGraph: safeBool(saved.useCitationGraph, false),
+  /// Reuse an identical already-downloaded file from another library instead of
+  /// re-fetching it across overlapping searches. Opt-in (off by default) so a
+  /// remote update is never masked by a stale local copy.
+  crossRunReuse: safeBool(saved.crossRunReuse, false),
   /// Search quality preset — replaces the previous useSemanticRerank /
   /// useLlmExpansion / useLlmFilter trio. See `qualityToFlags` for the
   /// concrete flag mapping.

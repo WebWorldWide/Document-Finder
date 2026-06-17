@@ -24,6 +24,9 @@ export interface RunRequest {
   use_llm_expansion?: boolean;
   use_llm_filter?: boolean;
   llm_model_id?: string | null;
+  /** Reuse an identical already-downloaded file from a sibling library instead
+   *  of re-fetching it. Opt-in (default false). */
+  cross_run_reuse?: boolean;
 }
 
 export interface RetryRequest {

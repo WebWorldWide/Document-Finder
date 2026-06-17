@@ -378,6 +378,15 @@ export default function SettingsView() {
               label="Citation-graph reasoning"
               detail="Cross-references Semantic Scholar to boost papers cited by other top results. Slow."
             />
+            <RankingToggle
+              checked={settings.crossRunReuse}
+              onToggle={(v) => {
+                setSettings("crossRunReuse", v);
+                saveSettings();
+              }}
+              label="Reuse files across libraries"
+              detail="If an identical document was already downloaded in another library, copy it in instead of re-fetching it — saves bandwidth across overlapping searches. Off by default so a remote update is never masked by a stale local copy."
+            />
           </section>
 
           {/* AI Models */}
