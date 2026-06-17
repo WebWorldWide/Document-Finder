@@ -19,6 +19,35 @@ static WS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+").unwrap());
 static ENTITY_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"&(#[xX][0-9A-Fa-f]+|#[0-9]+|[A-Za-z][A-Za-z0-9]*);").unwrap());
 
+/// Hard cap on a scraped HTML body. Search-result pages are well under 1 MB;
+/// this is generous headroom while still refusing a hostile/misconfigured engine
+/// that streams a huge body to exhaust memory. The client's 25s timeout caps
+/// wall-time, not bytes — this caps bytes. Mirrors `searxng_pool::json_capped`.
+const MAX_HTML_BYTES: usize = 16 * 1024 * 1024;
+
+/// Read an HTTP response body as (lossy UTF-8) text, refusing a body larger than
+/// [`MAX_HTML_BYTES`]. Checks `Content-Length` up front and also hard-stops
+/// mid-stream (a chunked response can omit/understate it). Used by every HTML
+/// scraper instead of `resp.text()`, which buffers an unbounded body.
+pub async fn read_text_capped(resp: reqwest::Response) -> anyhow::Result<String> {
+    use futures::StreamExt;
+    if let Some(len) = resp.content_length() {
+        if len as usize > MAX_HTML_BYTES {
+            anyhow::bail!("search response body too large ({len} bytes)");
+        }
+    }
+    let mut stream = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if buf.len() + chunk.len() > MAX_HTML_BYTES {
+            anyhow::bail!("search response body exceeded {MAX_HTML_BYTES} bytes");
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
 /// Map a named HTML entity to its replacement. Covers the punctuation/symbol
 /// entities that actually show up in search-result titles; anything else (and
 /// all accented letters) is handled by the numeric branch of [`decode_entities`].

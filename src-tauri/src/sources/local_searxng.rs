@@ -194,8 +194,14 @@ pub async fn spawn_server(backend: Arc<dyn Source>) -> std::io::Result<u16> {
     } else {
         tracing::warn!("local_searxng slow to start; will register port {port} once it responds");
         tokio::spawn(async move {
-            for _ in 0..120 {
-                tokio::time::sleep(Duration::from_millis(500)).await;
+            // Poll for a generous window (every 1s for ~10 min). A slow or
+            // resource-constrained machine can take well over a minute to bring
+            // the in-process server up; the old 60s cap left it PERMANENTLY
+            // bypassed for the session even after it became healthy. 10 min is an
+            // upper bound — beyond that the server is genuinely broken and the
+            // public-pool fallback is the right answer.
+            for _ in 0..600 {
+                tokio::time::sleep(Duration::from_secs(1)).await;
                 if matches!(client.get(&url).send().await, Ok(r) if r.status().is_success()) {
                     let _ = LOCAL_PORT.set(port);
                     tracing::info!("local_searxng ready on 127.0.0.1:{port} (delayed start)");
