@@ -47,13 +47,15 @@ per-query SQLite libraries on disk.
   `permissions/app.toml` (enforced by the `permissions_in_sync` test).
 - `events.rs` — event-name constants, payload structs, and `classify_source_error`.
 - `sources/` — `trait Source` (`mod.rs`) with one module per backend:
-  `arxiv`, `openalex`, `semantic_scholar`, `internet_archive`, `doaj`,
+  `arxiv`, `openalex`, `semantic_scholar`, `europe_pmc`, `internet_archive`,
+  `doaj`, `zenodo`, `core` (opt-in, key-gated via `SourceOptions.api_key`),
   `gutenberg`, and the web layer: `meta_search` (aggregator) over six HTML
   scrapers (`duckduckgo`, `bing_html`, `brave_html`, `mojeek_html`,
   `marginalia_html`, `startpage_html`) with `searxng_pool` and `local_searxng`
   as fallbacks. `web_common` holds shared scraping helpers. `mod.rs` also has
   `build_source`, `SOURCE_IDS`, the `Document` struct, `make_client`, the browser
-  `USER_AGENT`, and `get_with_retry` (exponential backoff on 429/5xx).
+  `USER_AGENT`, and `get_with_retry` (exponential backoff on 429/5xx). Unpaywall
+  is a downloader-side DOI→OA-PDF resolver (not a `Source`).
 - `engine/` — `orchestrator` (the search→download→extract→rank pipeline),
   `query` (sub-query expansion + slugging), `db` (SQLite, `CREATE TABLE IF NOT
   EXISTS`, no migrations yet), `downloader` (concurrent download with a
