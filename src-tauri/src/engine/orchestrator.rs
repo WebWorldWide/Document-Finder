@@ -642,9 +642,24 @@ async fn download_and_extract(
                 Ok(p) => p,
                 Err(e) => {
                     // The download semaphore should never close mid-run; if it
-                    // somehow does, log it rather than letting the doc silently
-                    // disappear from the counts with no trace.
+                    // somehow does, count the doc as failed and emit so it doesn't
+                    // silently vanish from the totals (done + failed < total).
                     tracing::error!("download semaphore closed, skipping {}: {e}", doc.url);
+                    let (done, failed) = {
+                        let mut c = counters.lock().await;
+                        c.1 += 1;
+                        (c.0, c.1)
+                    };
+                    let _ = app.emit(
+                        EV_DOWNLOAD_FAILED,
+                        DownloadFailedPayload {
+                            doc,
+                            error: format!("Couldn't start the download (internal error): {e}"),
+                            done,
+                            failed,
+                            total,
+                        },
+                    );
                     return;
                 }
             };
@@ -789,44 +804,59 @@ async fn download_and_extract(
                     // below, so short-circuiting only the optional parse keeps Stop
                     // responsive instead of grinding through queued large PDFs.
                     if extract_flag && !cancel.is_cancelled() {
-                        let extract_path = path.clone();
-                        let _extract_permit = match extract_sem.clone().acquire_owned().await {
-                            Ok(p) => p,
-                            Err(_) => return,
+                        // The extract semaphore should never close mid-run; if it
+                        // somehow does, skip extraction but do NOT bare-return —
+                        // that would orphan the already-downloaded file (no DB row,
+                        // no count, no event, done+failed < total). Record it and
+                        // fall through to persist + emit below.
+                        let permit = match extract_sem.clone().acquire_owned().await {
+                            Ok(p) => Some(p),
+                            Err(e) => {
+                                tracing::error!(
+                                    "extract semaphore closed, skipping extraction for {}: {e}",
+                                    doc.url
+                                );
+                                extract_error = Some(format!("text extraction unavailable: {e}"));
+                                None
+                            }
                         };
-                        let extract_res =
-                            match tokio::task::spawn_blocking(move || extract_text(&extract_path))
-                                .await
+                        if let Some(_extract_permit) = permit {
+                            let extract_path = path.clone();
+                            let extract_res = match tokio::task::spawn_blocking(move || {
+                                extract_text(&extract_path)
+                            })
+                            .await
                             {
                                 Ok(res) => res,
                                 Err(e) => Err(anyhow::anyhow!("extraction task panicked: {}", e)),
                             };
-                        match extract_res {
-                            Ok(text) => {
-                                if !text.trim().is_empty() {
-                                    let stem = path
-                                        .file_stem()
-                                        .and_then(|s| s.to_str())
-                                        .unwrap_or("doc")
-                                        .to_string();
-                                    let tpath = text_dir.join(format!("{stem}.txt"));
-                                    if tokio::fs::write(&tpath, text).await.is_ok() {
-                                        if let Ok(rel) = tpath.strip_prefix(&folder) {
-                                            text_path = Some(rel.to_string_lossy().to_string());
+                            match extract_res {
+                                Ok(text) => {
+                                    if !text.trim().is_empty() {
+                                        let stem = path
+                                            .file_stem()
+                                            .and_then(|s| s.to_str())
+                                            .unwrap_or("doc")
+                                            .to_string();
+                                        let tpath = text_dir.join(format!("{stem}.txt"));
+                                        if tokio::fs::write(&tpath, text).await.is_ok() {
+                                            if let Ok(rel) = tpath.strip_prefix(&folder) {
+                                                text_path = Some(rel.to_string_lossy().to_string());
+                                            }
                                         }
+                                    } else {
+                                        extract_error = Some("extracted text is empty".into());
                                     }
-                                } else {
-                                    extract_error = Some("extracted text is empty".into());
                                 }
-                            }
-                            Err(e) => {
-                                let err_msg = e.to_string();
-                                tracing::warn!(
-                                    "extraction failed for {}: {}",
-                                    path.display(),
-                                    err_msg
-                                );
-                                extract_error = Some(err_msg);
+                                Err(e) => {
+                                    let err_msg = e.to_string();
+                                    tracing::warn!(
+                                        "extraction failed for {}: {}",
+                                        path.display(),
+                                        err_msg
+                                    );
+                                    extract_error = Some(err_msg);
+                                }
                             }
                         }
                     }
@@ -1252,7 +1282,11 @@ pub async fn run_pipeline(
             CompletePayload {
                 done: 0,
                 failed: 0,
-                total: 0,
+                // Report the discovered count, not 0 — EV_FOUND_TOTAL already set
+                // the frontend's `total` to merged.len(), and the cancelled handler
+                // overwrites `total` from this payload. A 0 here would leave the UI
+                // inconsistent (found=N, total=0) and break overallPct.
+                total: merged.len(),
                 folder: folder.to_string_lossy().to_string(),
                 manifest: db_path.to_string_lossy().to_string(),
             },
@@ -1604,7 +1638,9 @@ pub async fn run_pipeline(
             CompletePayload {
                 done: 0,
                 failed: 0,
-                total: 0,
+                // Kept candidates that would have been downloaded — keeps the
+                // cancelled UI consistent with the found/total it was showing.
+                total: candidates.len(),
                 folder: folder.to_string_lossy().to_string(),
                 manifest: db_path.to_string_lossy().to_string(),
             },

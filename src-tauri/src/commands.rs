@@ -153,6 +153,17 @@ pub async fn start_run(
     state: State<'_, AppState>,
     req: RunRequest,
 ) -> Result<(), String> {
+    // Validate inputs server-side too. The renderer guards these, but a direct
+    // command invocation must fail fast rather than silently spin up a run that
+    // discovers nothing (an empty query expands to a no-op; no sources means no
+    // discovery tasks).
+    if req.query.trim().is_empty() {
+        return Err("Enter something to search for.".into());
+    }
+    if req.sources.is_empty() {
+        return Err("Select at least one source to search.".into());
+    }
+
     // Confine the download output to the configured library root. `out_dir`
     // arrives from the renderer and the pipeline `create_dir_all`s under it, so
     // without this a compromised/buggy renderer could redirect every downloaded
