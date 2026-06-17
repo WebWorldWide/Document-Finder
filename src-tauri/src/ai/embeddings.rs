@@ -97,7 +97,11 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
 /// lexical ranking that a native *abort* already gets — instead of an unbounded
 /// blocked thread pinning the client mutex for the session.
 const WARM_TIMEOUT: Duration = Duration::from_secs(300);
-const EMBED_TIMEOUT: Duration = Duration::from_secs(120);
+// Pure inference on an already-loaded model — embedding a few hundred short
+// texts is a matter of seconds even on CPU. Kept well under the old 120s so a
+// hung worker can't stall the ranking phase (which downloads wait on) for two
+// minutes before degrading to lexical ranking.
+const EMBED_TIMEOUT: Duration = Duration::from_secs(45);
 
 fn request_timeout(req: &WorkerRequest) -> Duration {
     match req {

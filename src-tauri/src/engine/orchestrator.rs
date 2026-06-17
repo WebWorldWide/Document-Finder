@@ -1608,9 +1608,19 @@ async fn ensure_llm_loaded(
     );
 
     let path_clone = model_path.clone();
-    let res = tokio::task::spawn_blocking(move || crate::ai::llm::load_blocking(&path_clone))
-        .await
-        .ok()?;
+    let load = tokio::task::spawn_blocking(move || crate::ai::llm::load_blocking(&path_clone));
+    // Bound the native mmap + metadata parse. This runs concurrently with discovery
+    // wave 1 (and gates the LLM filter), so a wedged or pathologically slow load
+    // must not hold the pipeline open. On timeout we skip the LLM this run —
+    // graceful: expansion/filter simply don't contribute — without disabling it
+    // for future runs. (The detached load finishes in the background, harmlessly.)
+    let res = match tokio::time::timeout(std::time::Duration::from_secs(25), load).await {
+        Ok(joined) => joined.ok()?,
+        Err(_) => {
+            tracing::warn!("LLM load timed out (>25s) — skipping LLM features this run");
+            return None;
+        }
+    };
     match res {
         Ok(m) => Some(m),
         Err(e) => {
