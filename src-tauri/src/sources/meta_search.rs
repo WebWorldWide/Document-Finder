@@ -38,10 +38,18 @@ fn backend_timeout(limit: usize) -> Duration {
 }
 const CIRCUIT_OPEN_FAILURES: u32 = 3;
 const CIRCUIT_OPEN_DURATION: Duration = Duration::from_secs(300);
+/// A real engine almost never returns zero results for this many *different*
+/// queries in a row — that pattern means its selector silently broke (HTTP 200,
+/// nothing parsed), which the per-query empty/error split can't detect. After
+/// the streak we open a SHORTER circuit so the SearXNG pool fallback engages and
+/// we re-probe sooner than a hard transport fault.
+const EMPTY_STREAK_TRIP: u32 = 4;
+const EMPTY_STREAK_DURATION: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Default)]
 struct BackendHealth {
     consecutive_failures: u32,
+    consecutive_empty: u32,
     skip_until: Option<Instant>,
 }
 
@@ -56,15 +64,34 @@ impl BackendHealth {
 
     fn record_success(&mut self) {
         self.consecutive_failures = 0;
+        self.consecutive_empty = 0;
         self.skip_until = None;
     }
 
     fn record_failure(&mut self) {
+        self.consecutive_empty = 0;
         self.consecutive_failures += 1;
         if self.consecutive_failures >= CIRCUIT_OPEN_FAILURES {
             self.skip_until = Some(Instant::now() + CIRCUIT_OPEN_DURATION);
         }
     }
+
+    /// A clean HTTP-200-but-zero-results query. Neutral in isolation, but a long
+    /// streak across distinct queries trips a short circuit (likely broken parser).
+    fn record_empty(&mut self) {
+        self.consecutive_empty += 1;
+        if self.consecutive_empty >= EMPTY_STREAK_TRIP {
+            self.skip_until = Some(Instant::now() + EMPTY_STREAK_DURATION);
+        }
+    }
+}
+
+/// How one engine's fan-out maps onto the circuit breaker.
+enum Outcome {
+    Success,
+    Failure,
+    Empty,
+    Neutral,
 }
 
 static HEALTH: Lazy<Mutex<HashMap<&'static str, BackendHealth>>> =
@@ -198,16 +225,25 @@ impl Source for MetaSearchSource {
                 let started = Instant::now();
                 let mut count = 0usize;
                 let mut saw_error = false;
+                let mut saw_rate_limit = false;
                 let mut timed_out = false;
 
                 let stream = stream.take(per_engine_limit);
                 tokio::pin!(stream);
                 let result = tokio::time::timeout(engine_budget, async {
                     while let Some(item) = stream.next().await {
-                        if item.is_ok() {
-                            count += 1;
-                        } else {
-                            saw_error = true;
+                        match &item {
+                            Ok(_) => count += 1,
+                            Err(e) => {
+                                saw_error = true;
+                                // A 429/rate-limit means "healthy but throttled",
+                                // not "broken" — don't let it open the circuit.
+                                if crate::events::classify_source_error(&e.to_string())
+                                    == "rate_limit"
+                                {
+                                    saw_rate_limit = true;
+                                }
+                            }
                         }
                         if tx.send(item).await.is_err() {
                             break;
@@ -225,30 +261,32 @@ impl Source for MetaSearchSource {
 
                 // Update circuit breaker. Crucially, a healthy engine that simply
                 // found nothing (HTTP 200, zero results) must NOT be treated as a
-                // failure — otherwise three niche/empty queries open the circuit
-                // and silently shrink web coverage for 5 minutes. Outcome:
-                //   Some(true)  -> record_success (reset)
-                //   Some(false) -> record_failure (toward circuit-open)
-                //   None        -> neutral: leave failure count untouched
-                let (status_str, outcome): (&str, Option<bool>) = if timed_out && count == 0 {
-                    ("timeout", Some(false)) // slow AND produced nothing -> fault
+                // hard failure — otherwise three niche/empty queries open the
+                // circuit and silently shrink web coverage for 5 minutes. But a
+                // long *streak* of empties (record_empty) does eventually trip a
+                // short circuit, since that pattern means a broken parser.
+                let (status_str, outcome) = if timed_out && count == 0 {
+                    ("timeout", Outcome::Failure) // slow AND produced nothing -> fault
                 } else if timed_out {
-                    ("partial", None) // slow but returned results -> don't penalize
+                    ("partial", Outcome::Neutral) // slow but returned results
+                } else if count == 0 && saw_rate_limit {
+                    ("throttled", Outcome::Neutral) // rate-limited, not broken
                 } else if count == 0 && saw_error {
-                    ("error", Some(false)) // a real transport/HTTP error
+                    ("error", Outcome::Failure) // a real transport/HTTP error
                 } else if count == 0 {
-                    ("empty", None) // legitimate zero-result query -> not a fault
+                    ("empty", Outcome::Empty) // zero results -> empty-streak tracking
                 } else {
-                    ("ok", Some(true))
+                    ("ok", Outcome::Success)
                 };
 
                 {
                     let mut health = HEALTH.lock();
                     let entry = health.entry(name).or_default();
                     match outcome {
-                        Some(true) => entry.record_success(),
-                        Some(false) => entry.record_failure(),
-                        None => {}
+                        Outcome::Success => entry.record_success(),
+                        Outcome::Failure => entry.record_failure(),
+                        Outcome::Empty => entry.record_empty(),
+                        Outcome::Neutral => {}
                     }
                 }
 
@@ -332,6 +370,35 @@ mod tests {
         }
         assert!(h.is_open());
         h.record_success();
+        assert!(!h.is_open());
+    }
+
+    #[test]
+    fn empty_streak_trips_a_short_circuit() {
+        let mut h = BackendHealth::default();
+        // A few empties below the threshold stay neutral (real niche queries).
+        for _ in 0..EMPTY_STREAK_TRIP - 1 {
+            h.record_empty();
+        }
+        assert!(!h.is_open(), "should not trip below the empty streak");
+        h.record_empty();
+        assert!(
+            h.is_open(),
+            "a long empty streak should trip (broken parser)"
+        );
+        // Any results immediately clear the streak.
+        h.record_success();
+        assert!(!h.is_open());
+    }
+
+    #[test]
+    fn results_reset_both_streaks() {
+        let mut h = BackendHealth::default();
+        h.record_failure();
+        h.record_empty();
+        h.record_success();
+        // After a success, neither a single failure nor a single empty re-opens.
+        h.record_failure();
         assert!(!h.is_open());
     }
 }

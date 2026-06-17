@@ -3,9 +3,10 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 interface MetaSearchHealthPayload {
   backend: string;
-  // "empty" (healthy, zero results) and "partial" (slow but returned results)
-  // are non-failing states the backend emits so they don't trip the breaker.
-  status: "ok" | "empty" | "partial" | "timeout" | "circuit_open" | "error";
+  // "empty" (healthy, zero results), "partial" (slow but returned results), and
+  // "throttled" (rate-limited, not broken) are non-failing states the backend
+  // emits so they don't trip the breaker.
+  status: "ok" | "empty" | "partial" | "throttled" | "timeout" | "circuit_open" | "error";
   result_count: number;
   latency_ms: number;
 }
@@ -30,6 +31,7 @@ function statusColor(status: BackendStatus["status"]): string {
     case "empty":
       return "var(--ink-4, oklch(0.7 0 0))";
     case "partial":
+    case "throttled":
     case "timeout":
       return "var(--color-warning, oklch(0.75 0.15 80))";
     case "circuit_open":

@@ -248,7 +248,9 @@ pub struct PipelineStagePayload {
 #[derive(Debug, Clone, Serialize)]
 pub struct MetaSearchHealthPayload {
     pub backend: String,
-    /// "ok" | "timeout" | "circuit_open" | "error"
+    /// One of: "ok" | "empty" | "partial" | "throttled" | "timeout" |
+    /// "circuit_open" | "error". Keep in sync with MetaSearchHealthBar.tsx's
+    /// status union and statusColor().
     pub status: String,
     pub result_count: usize,
     pub latency_ms: u64,

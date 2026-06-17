@@ -23,6 +23,10 @@ use crate::util::url_safety::validate_url;
 
 const INSTANCES_URL: &str = "https://searx.space/data/instances.json";
 const CACHE_TTL: Duration = Duration::from_secs(24 * 3600);
+/// A zero-instance fetch (every instance filtered out, or transient DNS
+/// failures) is only honored briefly — never for the full 24h — so one bad
+/// refresh can't silently disable the last-resort web fallback for a day.
+const EMPTY_CACHE_TTL: Duration = Duration::from_secs(60);
 const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Max bytes buffered from a public-instance JSON response. The instance list
@@ -155,13 +159,23 @@ async fn fetch_instances(client: &reqwest::Client) -> anyhow::Result<Vec<String>
     Ok(urls)
 }
 
+/// Effective freshness window for a cache entry: a populated list is good for the
+/// full TTL; an empty list expires quickly so a transient bad fetch self-heals.
+fn cache_ttl_for(c: &CachedInstances) -> Duration {
+    if c.urls.is_empty() {
+        EMPTY_CACHE_TTL
+    } else {
+        CACHE_TTL
+    }
+}
+
 async fn get_instances(client: &reqwest::Client) -> Vec<String> {
-    // Check cache under lock — clone if fresh.
+    // Check cache under lock — clone if fresh (short window for an empty list).
     let cached = {
         let guard = INSTANCE_CACHE.lock();
         guard
             .as_ref()
-            .filter(|c| c.fetched_at.elapsed() < CACHE_TTL)
+            .filter(|c| c.fetched_at.elapsed() < cache_ttl_for(c))
             .cloned()
     };
 
@@ -171,7 +185,7 @@ async fn get_instances(client: &reqwest::Client) -> Vec<String> {
 
     // Re-fetch outside lock.
     match fetch_instances(client).await {
-        Ok(urls) => {
+        Ok(urls) if !urls.is_empty() => {
             let mut guard = INSTANCE_CACHE.lock();
             *guard = Some(CachedInstances {
                 urls: urls.clone(),
@@ -179,14 +193,28 @@ async fn get_instances(client: &reqwest::Client) -> Vec<String> {
             });
             urls
         }
-        Err(e) => {
-            tracing::warn!("searxng_pool: failed to refresh instance list: {e}");
-            // Return stale cache if available, otherwise empty.
-            INSTANCE_CACHE
-                .lock()
-                .as_ref()
-                .map(|c| c.urls.clone())
-                .unwrap_or_default()
+        // A zero-instance result (Ok(empty)) or an error must NOT overwrite a
+        // good cache with nothing. Prefer a still-valid populated stale list;
+        // otherwise remember the empty for a SHORT window (EMPTY_CACHE_TTL) so we
+        // re-probe soon instead of hammering searx.space every query.
+        other => {
+            match &other {
+                Err(e) => tracing::warn!("searxng_pool: failed to refresh instance list: {e}"),
+                Ok(_) => {
+                    tracing::warn!("searxng_pool: instance refresh returned zero usable instances")
+                }
+            }
+            let mut guard = INSTANCE_CACHE.lock();
+            if let Some(c) = guard.as_ref() {
+                if !c.urls.is_empty() && c.fetched_at.elapsed() < CACHE_TTL {
+                    return c.urls.clone();
+                }
+            }
+            *guard = Some(CachedInstances {
+                urls: Vec::new(),
+                fetched_at: Instant::now(),
+            });
+            Vec::new()
         }
     }
 }
