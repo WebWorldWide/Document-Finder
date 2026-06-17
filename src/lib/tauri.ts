@@ -24,6 +24,9 @@ export interface RunRequest {
   use_llm_expansion?: boolean;
   use_llm_filter?: boolean;
   llm_model_id?: string | null;
+  /// Per-source options keyed by source id. Used to pass key-gated sources
+  /// (CORE) their API key. Absent/empty keys leave a source inactive.
+  source_options?: Record<string, { api_key?: string }>;
 }
 
 export type ModelKind = "embedding" | "llm";

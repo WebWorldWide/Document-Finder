@@ -102,6 +102,10 @@ fn source_concurrency(name: &str) -> usize {
         // Semantic Scholar's public API 429s aggressively and shares a global
         // rate pool; keep it gentle so it doesn't lock us out for the session.
         "semantic_scholar" => 2,
+        // Zenodo's guest API rate-limits (~60/min); CORE's free tier is a tight
+        // token bucket — keep both gentle.
+        "zenodo" => 2,
+        "core" => 1,
         // Structured APIs tolerate a handful of concurrent requests fine.
         _ => 4,
     }
@@ -1203,7 +1207,7 @@ pub async fn run_pipeline(
             let title_for_progress = doc.title.clone();
             let last_emit = std::sync::Mutex::new(std::time::Instant::now());
 
-            let outcome = download(&doc, &folder, &client, &cancel, |ev| {
+            let mut outcome = download(&doc, &folder, &client, &cancel, |ev| {
                 // Throttle progress to ~5 updates/sec/file, but NEVER drop the
                 // terminal (`force`) event — that's the one that carries the
                 // true final byte count for fast / unknown-length downloads.
@@ -1226,6 +1230,30 @@ pub async fn run_pipeline(
                 );
             })
             .await;
+
+            // Unpaywall fallback: if the download failed and the doc carries a
+            // DOI, ask Unpaywall for an OA PDF and retry once. Recovers
+            // DOI-bearing candidates whose primary link was paywalled, dead, or a
+            // landing page with no resolvable PDF. Scoped to DOI-bearing docs, so
+            // it never fires for the many web results that lack one.
+            if matches!(outcome, DownloadOutcome::Failed(_)) && !cancel.is_cancelled() {
+                if let Some(doi) =
+                    super::dedup::extract_doi(doc.identifier.as_deref().unwrap_or(""))
+                {
+                    if let Some(oa_url) =
+                        super::downloader::resolve_oa_pdf_via_unpaywall(&client, &doi).await
+                    {
+                        if oa_url != doc.url {
+                            let mut alt = doc.clone();
+                            alt.url = oa_url;
+                            let retry = download(&alt, &folder, &client, &cancel, |_ev| {}).await;
+                            if !matches!(retry, DownloadOutcome::Failed(_)) {
+                                outcome = retry;
+                            }
+                        }
+                    }
+                }
+            }
 
             // Map the outcome to a saved/cached file (with a `cached` flag), or
             // handle the terminal failure/cancel cases and bail out of the task.

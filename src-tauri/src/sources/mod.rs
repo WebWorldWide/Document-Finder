@@ -1,8 +1,10 @@
 pub mod arxiv;
 pub mod bing_html;
 pub mod brave_html;
+pub mod core;
 pub mod doaj;
 pub mod duckduckgo;
+pub mod europe_pmc;
 pub mod gutenberg;
 pub mod internet_archive;
 pub mod local_searxng;
@@ -14,6 +16,7 @@ pub mod searxng_pool;
 pub mod semantic_scholar;
 pub mod startpage_html;
 pub mod web_common;
+pub mod zenodo;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -35,8 +38,11 @@ pub const SOURCE_IDS: &[&str] = &[
     "arxiv",
     "openalex",
     "semantic_scholar",
+    "europe_pmc",
     "internet_archive",
     "doaj",
+    "zenodo",
+    "core",
     "gutenberg",
     "meta_search",
     "searxng",
@@ -83,12 +89,14 @@ impl Document {
     }
 }
 
-/// Per-source configuration delivered from the frontend. Currently empty —
-/// every backend builds itself from the shared HTTP client. Kept as an
-/// extension point so adding per-source knobs later doesn't ripple through
-/// every callsite of `build_source`.
+/// Per-source configuration delivered from the frontend. Optional per-source
+/// knobs live here so adding one doesn't ripple through every `build_source`
+/// callsite. `api_key` backs key-gated sources (CORE).
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct SourceOptions {}
+pub struct SourceOptions {
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
 
 #[async_trait]
 pub trait Source: Send + Sync {
@@ -116,10 +124,14 @@ pub fn build_source(
         "semantic_scholar" => Some(Box::new(semantic_scholar::SemanticScholarSource::new(
             client,
         ))),
+        "europe_pmc" => Some(Box::new(europe_pmc::EuropePmcSource::new(client))),
         "internet_archive" => Some(Box::new(internet_archive::InternetArchiveSource::new(
             client,
         ))),
         "doaj" => Some(Box::new(doaj::DOAJSource::new(client))),
+        "zenodo" => Some(Box::new(zenodo::ZenodoSource::new(client))),
+        // Opt-in, key-gated. With no key the source contributes nothing.
+        "core" => Some(Box::new(core::CoreSource::new(client, _options.api_key))),
         "gutenberg" => Some(Box::new(gutenberg::GutenbergSource::new(client))),
         "web" => Some(Box::new(duckduckgo::DuckDuckGoSource::new(client))),
         "brave" => Some(Box::new(brave_html::BraveHtmlSource::new(client))),

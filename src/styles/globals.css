@@ -34,8 +34,11 @@
   --color-source-arxiv: #c25a3a;
   --color-source-openalex: #2e6e7e;
   --color-source-semantic_scholar: #7a4ea3;
+  --color-source-europe_pmc: #2f7d6b;
   --color-source-internet_archive: #6b6033;
   --color-source-doaj: #3f7a4d;
+  --color-source-zenodo: #3457a6;
+  --color-source-core: #9c4f2e;
   --color-source-gutenberg: #a85577;
   --color-source-meta_search: #4a6280;
   --color-source-searxng: #6a4a98;

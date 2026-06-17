@@ -94,6 +94,40 @@ fn referer_for(url: &str) -> Option<String> {
     }
 }
 
+/// Honest project contact for the Unpaywall API's `email` param (politeness, not
+/// auth). A project address — never the user's — so no PII leaves the machine.
+const UNPAYWALL_CONTACT: &str = "documentfinder@webworldwide.com";
+
+/// Ask Unpaywall for an open-access PDF URL for a DOI, as a last-resort resolver
+/// for a kept candidate whose primary link was paywalled / dead / a landing page
+/// with no resolvable PDF. Returns `best_oa_location.url_for_pdf` when present.
+/// Email param only (no key); the caller scopes this to DOI-bearing candidates.
+pub async fn resolve_oa_pdf_via_unpaywall(client: &reqwest::Client, doi: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct UpResp {
+        #[serde(default)]
+        best_oa_location: Option<UpLoc>,
+    }
+    #[derive(serde::Deserialize)]
+    struct UpLoc {
+        #[serde(default)]
+        url_for_pdf: Option<String>,
+    }
+    let url = format!("https://api.unpaywall.org/v2/{doi}");
+    let resp = client
+        .get(&url)
+        .query(&[("email", UNPAYWALL_CONTACT)])
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?;
+    let body: UpResp = resp.json().await.ok()?;
+    body.best_oa_location
+        .and_then(|l| l.url_for_pdf)
+        .filter(|u| !u.is_empty())
+}
+
 /// Cheap, pre-network URL rewrites that turn a known landing-page shape into a
 /// direct document URL without a round-trip. Currently: arXiv `/abs/<id>` →
 /// `/pdf/<id>` (the PDF endpoint serves `%PDF` directly).
