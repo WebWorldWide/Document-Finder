@@ -191,9 +191,8 @@ export default function SettingsView() {
             <h2>CORE API key</h2>
             <p class="hint">
               Optional. CORE is the largest open-access full-text aggregator (300M+ works). Paste a
-              free key from{" "}
-              <span class="mono">core.ac.uk/services/api</span> to add it as a source. Leave blank to
-              keep it off.
+              free key from <span class="mono">core.ac.uk/services/api</span> to add it as a source.
+              Leave blank to keep it off.
             </p>
             <div class="df-field">
               <label>API key</label>
