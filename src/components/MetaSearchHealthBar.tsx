@@ -15,6 +15,7 @@ const BACKEND_LABELS: Record<string, string> = {
   startpage: "Startpage",
 };
 
+// Saturated color for the dot + pill border (contrast there isn't text-critical).
 function statusColor(status: BackendStatus["status"]): string {
   switch (status) {
     case "ok":
@@ -28,6 +29,25 @@ function statusColor(status: BackendStatus["status"]): string {
     case "circuit_open":
     case "error":
       return "var(--color-destructive)";
+  }
+}
+
+// AA-readable color for the status WORD text on the pill surface. The saturated
+// statusColor() values (--ink-4 "none", bright --warn) are below AA as text, so
+// the label uses the text-grade inks while the dot/border keep statusColor().
+function statusTextColor(status: BackendStatus["status"]): string {
+  switch (status) {
+    case "empty":
+      return "var(--ink-2)";
+    case "partial":
+    case "throttled":
+    case "timeout":
+      return "var(--warn-ink)";
+    case "circuit_open":
+    case "error":
+      return "var(--bad)";
+    default:
+      return "var(--ink-2)";
   }
 }
 
@@ -105,7 +125,7 @@ export default function MetaSearchHealthBar() {
                   <span class="text-[var(--color-foreground-muted)]">{b.result_count}</span>
                 </Show>
                 <Show when={b.status !== "ok"}>
-                  <span style={{ color: statusColor(b.status) }}>
+                  <span style={{ color: statusTextColor(b.status) }}>
                     {b.status === "circuit_open"
                       ? "blocked"
                       : b.status === "empty"

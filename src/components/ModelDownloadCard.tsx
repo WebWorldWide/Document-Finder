@@ -49,7 +49,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
               classList={{
                 "bg-[var(--color-primary)]/12 text-[var(--color-primary)]":
                   m().kind === "embedding",
-                "bg-amber-500/12 text-[color:var(--warn)]": m().kind === "llm",
+                "bg-amber-500/12 text-[color:var(--warn-ink)]": m().kind === "llm",
               }}
             >
               {m().kind}

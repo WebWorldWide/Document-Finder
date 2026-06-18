@@ -36,6 +36,7 @@ import {
   META_SEARCH_COVERED,
   SOURCE_LABELS,
   sourceColor,
+  sourceLabel,
   formatBytes,
   ftypeFromPath,
   type SourceId,
@@ -202,6 +203,10 @@ export default function FindTab() {
   // Bar tracks download completion once downloads begin; before that it tracks
   // the active stage's progress (e.g. ranking 181/500) so it visibly advances.
   const barPct = createMemo(() => {
+    // A finished, non-cancelled run reads as done — fill the bar to 100% even in
+    // the all-off-topic case (download total is 0, so overallPct would be 0 and
+    // the bar would look stuck/empty on a card that has actually finished).
+    if (!rs().running && rs().folder && !rs().cancelled) return 100;
     if (downloadsStarted()) return runStore.overallPct;
     const p = activePhase();
     if (p && p.total) return Math.min(100, Math.round(((p.count ?? 0) / p.total) * 100));
@@ -227,7 +232,8 @@ export default function FindTab() {
       const p = activePhase();
       return p ? `${p.label}…` : "Working…";
     }
-    if (rs().folder) return `Search complete — ${rs().done} saved, ${rs().failed} failed`;
+    if (rs().folder)
+      return `Search ${rs().cancelled ? "cancelled" : "complete"} — ${rs().done} saved, ${rs().failed} failed`;
     return "";
   });
 
@@ -315,7 +321,9 @@ export default function FindTab() {
     for (const i of rs().sourceIssues) {
       out.push({
         source: i.source,
-        label: SOURCE_LABELS[i.source] ?? i.source,
+        // sourceLabel() strips the meta_search/<engine> prefix → "DuckDuckGo",
+        // not the raw "meta_search/web", matching the colored dot beside it.
+        label: sourceLabel(i.source),
         tag: issueKindTag(i.kind) + (i.count > 1 ? ` ×${i.count}` : ""),
         text: humanizeSourceKind(i.kind, i.source),
       });
@@ -323,7 +331,7 @@ export default function FindTab() {
     for (const f of rs().completed.filter((c) => c.status === "failed")) {
       out.push({
         source: f.source,
-        label: SOURCE_LABELS[f.source] ?? f.source,
+        label: sourceLabel(f.source),
         text: `${f.title.slice(0, 48)} — ${humanizeDownloadError(f.error)}`,
       });
     }
@@ -333,7 +341,7 @@ export default function FindTab() {
       if (c.status === "done" && c.indexError) {
         out.push({
           source: c.source,
-          label: SOURCE_LABELS[c.source] ?? c.source,
+          label: sourceLabel(c.source),
           tag: "not indexed",
           text: `${c.title.slice(0, 48)} — saved to disk but not added to the library index`,
         });
@@ -450,6 +458,23 @@ export default function FindTab() {
       </div>
 
       <div class="df-canvas-body" style={{ "padding-top": "24px" }}>
+        {/* Coarse SR announcer (visually hidden), always mounted so it announces
+            even the no-results completion (the run card — and its old in-card
+            announcer — isn't rendered when a run finds nothing). See liveStatus. */}
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "absolute",
+            width: "1px",
+            height: "1px",
+            overflow: "hidden",
+            clip: "rect(0 0 0 0)",
+            "white-space": "nowrap",
+          }}
+        >
+          {liveStatus()}
+        </div>
         {/* HERO QUERY */}
         <div class="df-query-wrap">
           <textarea
@@ -711,21 +736,6 @@ export default function FindTab() {
                 </div>
               </div>
 
-              {/* Coarse SR announcer (visually hidden) — see liveStatus. */}
-              <div
-                role="status"
-                aria-live="polite"
-                style={{
-                  position: "absolute",
-                  width: "1px",
-                  height: "1px",
-                  overflow: "hidden",
-                  clip: "rect(0 0 0 0)",
-                  "white-space": "nowrap",
-                }}
-              >
-                {liveStatus()}
-              </div>
               <div class="df-stats">
                 <div class="df-stat">
                   <span class="df-stat-num">{rs().found}</span>
@@ -780,7 +790,20 @@ export default function FindTab() {
                   </For>
                 </div>
                 <div class="df-stat-label" style={{ "align-self": "center" }}>
-                  <Show when={phaseLabel()} fallback={<>{runStore.overallPct}% complete</>}>
+                  <Show
+                    when={phaseLabel()}
+                    fallback={
+                      // A finished run shows a word, not "0% complete" (which read
+                      // as stuck on the all-off-topic / cancelled cards).
+                      <>
+                        {rs().running
+                          ? `${runStore.overallPct}% complete`
+                          : rs().cancelled
+                            ? "Cancelled"
+                            : "Done"}
+                      </>
+                    }
+                  >
                     <span style={{ color: "var(--accent)", "font-weight": 600 }}>
                       {phaseLabel()}
                     </span>

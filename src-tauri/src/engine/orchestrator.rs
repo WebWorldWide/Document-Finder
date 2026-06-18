@@ -947,9 +947,15 @@ async fn download_and_extract(
     for h in handles {
         if let Err(e) = h.await {
             if e.is_panic() {
-                let msg = format!("download task panicked: {e}");
-                tracing::error!("{msg}");
-                let _ = app.emit(EV_ERROR, ErrorPayload { message: msg });
+                // A SINGLE download task panicked. This is NOT terminal for the
+                // run — the other tasks are still downloading and the run finishes
+                // normally via EV_COMPLETE. Emitting the global EV_ERROR here
+                // flipped the whole run card to an "errored/ended" state mid-run
+                // (then silently un-errored on EV_COMPLETE). Log it instead and
+                // let the run complete; EV_ERROR is reserved for genuinely
+                // terminal failures (run_pipeline returning Err). The lost task's
+                // slot is reconciled visually by the finished-run progress state.
+                tracing::error!("download task panicked (run continues): {e}");
             }
         }
     }

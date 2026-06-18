@@ -104,6 +104,9 @@
   /* STATUS */
   --ok: #4b7c3a;
   --ok-soft: #e3ebd3;
+  /* Darker green for TEXT on --ok-soft (the bright --ok is ~3.6:1 — below AA);
+     the check icon + border keep the brighter --ok. Mirrors --warn-ink. */
+  --ok-ink: #36602b;
   --warn: #b4861e;
   /* Amber-tinted banner background. Must exist as its own token: warn banners
      previously borrowed --accent-soft, so a "no results" warning turned blue
@@ -174,6 +177,8 @@
   --accent-fg: #14110a;
   --accent-soft: #2a2418;
   --ok-soft: #1d2918;
+  /* Lighter green for text on the dark ok-soft in midnight. */
+  --ok-ink: #7cbf66;
   --warn-soft: #2a2412;
   /* Lighter amber for text on the dark warn-soft in midnight. */
   --warn-ink: #e3b964;
@@ -1858,7 +1863,7 @@ input,
 .df-banner.ok {
   background: var(--ok-soft);
   border-color: color-mix(in oklch, var(--ok) 35%, transparent);
-  color: var(--ok);
+  color: var(--ok-ink);
 }
 .df-banner.warn {
   background: var(--warn-soft);

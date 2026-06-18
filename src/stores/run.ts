@@ -90,6 +90,9 @@ export type Candidate = CandidatePayload;
 
 interface RunState {
   running: boolean;
+  /// True when the last finished run ended via user Stop (not a normal finish).
+  /// Lets the UI say "Cancelled" instead of "complete".
+  cancelled: boolean;
   query: string;
   subQueries: string[];
   found: number;
@@ -117,6 +120,7 @@ interface RunState {
 
 const [state, setState] = createStore<RunState>({
   running: false,
+  cancelled: false,
   query: "",
   subQueries: [],
   found: 0,
@@ -152,6 +156,7 @@ const COMPLETED_CAP = 8000;
 function reset(query: string) {
   setState({
     running: false,
+    cancelled: false,
     query,
     subQueries: [],
     found: 0,
@@ -415,6 +420,9 @@ function apply(ev: DfEvent) {
     case "cancelled":
       setState({
         running: false,
+        // Distinguish a user Stop from a normal finish so the UI can say
+        // "Cancelled" instead of misreporting "complete".
+        cancelled: ev.type === "cancelled",
         inFlight: {},
         active: 0,
         folder: ev.payload.folder,
@@ -438,7 +446,9 @@ function apply(ev: DfEvent) {
       break;
 
     case "error":
-      setState({ running: false, fatalError: ev.payload.message });
+      // Clear in-flight rows + active count too (mirroring complete/cancelled):
+      // a terminal error must never leave frozen in-flight DocRows on screen.
+      setState({ running: false, inFlight: {}, active: 0, fatalError: ev.payload.message });
       addLog("error", `Error: ${ev.payload.message}`);
       // Reset AI singletons so the next search can re-initialize them cleanly
       // without requiring an app restart after an inference crash.

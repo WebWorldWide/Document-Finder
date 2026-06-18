@@ -99,8 +99,13 @@ export default function WelcomeDialog() {
 
   // Embedding model is fastembed-managed (no registry card); it auto-downloads
   // on first use and these flags reflect that.
+  // A cached-but-failed-to-load embedding keeps embeddingDownloaded=true, so
+  // guard on the error too — otherwise the green "AI models ready" footer shows
+  // at the same time as the card's red "Couldn't load", and downloadDefaults()
+  // skips re-warming the errored model.
   const embeddingReady = () =>
-    modelsStore.state.embeddingLoaded || modelsStore.state.embeddingDownloaded;
+    !modelsStore.state.embeddingError &&
+    (modelsStore.state.embeddingLoaded || modelsStore.state.embeddingDownloaded);
   // Default LLMs (the only registry downloads) that still need fetching.
   const llmsToDownload = () =>
     modelsStore.state.models.filter((m) => m.is_default && m.status.kind !== "ready");

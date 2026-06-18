@@ -42,8 +42,18 @@ export default function SettingsView() {
   // quality, downgrade to "Balanced" — otherwise the Thorough tab renders both
   // active AND disabled (a dead highlighted control), and qualityToFlags() would
   // still launch runs promising an LLM pipeline that can't run.
+  //
+  // Gate on the model list having actually loaded (the registry is never empty,
+  // so models.length>0 means list_models resolved). Without this, the effect
+  // fires during the initial empty/loading window — or permanently if
+  // list_models errors — and silently overwrites a valid Thorough preference for
+  // a user who DOES have the LLM installed.
   createEffect(() => {
-    if (settings.quality === "thorough" && !modelsStore.llmReady) {
+    if (
+      modelsStore.state.models.length > 0 &&
+      settings.quality === "thorough" &&
+      !modelsStore.llmReady
+    ) {
       setSettings("quality", "balanced");
       saveSettings();
     }
