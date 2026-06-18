@@ -115,6 +115,15 @@ export function sourceColor(source: string): string {
   return `var(--color-source-${key.replace(/-/g, "_")}, #5f86b0)`;
 }
 
+/// Human label for a source id, stripping the `meta_search/<engine>` prefix the
+/// backend stamps on web results (so a download row shows "DuckDuckGo", not the
+/// raw "meta_search/web"). Mirrors sourceColor's prefix handling; SOURCE_LABELS
+/// has entries for both the bare engine keys and the aggregator.
+export function sourceLabel(source: string): string {
+  const key = source.startsWith("meta_search/") ? source.slice("meta_search/".length) : source;
+  return SOURCE_LABELS[key] ?? SOURCE_LABELS[source] ?? source;
+}
+
 /// One-line descriptions for the rich Sources panel on Discover.
 export const SOURCE_DESC: Record<string, string> = {
   arxiv: "Preprints in CS, physics, math, biology",

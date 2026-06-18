@@ -1499,7 +1499,16 @@ pub async fn run_pipeline(
                     })
                     .collect();
                 let llm_for_task = llm.clone();
-                let cancel_for_task = cancel.clone();
+                // Same child-token pattern as the expansion/spellfix branches: a
+                // parent Stop still propagates into the decode, and on the timeout
+                // arm we cancel the child OURSELVES so the detached blocking task
+                // bails at its next per-prompt check and RELEASES the singleton
+                // model mutex. A bare `cancel.clone()` here (the prior code) was
+                // never fired on timeout, so a slow decode kept the lock and
+                // starved the NEXT run's LLM stages (expansion/spellfix/filter all
+                // block on the same mutex) down to lexical-only / keep-all.
+                let gen_cancel = cancel.child_token();
+                let cancel_for_task = gen_cancel.clone();
                 let handle = tokio::task::spawn_blocking(move || {
                     let guard = llm_for_task.blocking_lock();
                     let mut out = Vec::with_capacity(prompts.len());
@@ -1516,11 +1525,16 @@ pub async fn run_pipeline(
                 // Bound the filter: `blocking_lock()` has no timeout, so a wedged
                 // decode holding the model mutex would otherwise stall the run
                 // indefinitely. On cancel or a 30s timeout, conservatively KEEP all
-                // borderline candidates (the detached task finishes harmlessly).
+                // borderline candidates. The user-cancel arm needs no explicit
+                // child cancel (the parent token already propagated); the timeout
+                // arm MUST cancel the child to free the lock from the runaway decode.
                 let keeps = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => vec![true; borderline.len()],
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => vec![true; borderline.len()],
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                        gen_cancel.cancel(); // free the model lock from the runaway decode
+                        vec![true; borderline.len()]
+                    }
                     r = handle => r.unwrap_or_else(|_| vec![true; borderline.len()]),
                 };
 

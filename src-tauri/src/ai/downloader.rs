@@ -60,12 +60,37 @@ pub async fn download(
     // Already-complete short-circuit: if the final file exists and either
     // the SHA matches or no SHA is pinned, we're done.
     if final_path.exists() {
-        if entry.sha256.is_empty() || verify_sha256(&final_path, entry.sha256).await? {
+        if entry.sha256.is_empty() {
             emit_status(&app, entry.id, "ready", Some("already downloaded".into()));
             return Ok(final_path);
         }
-        // Pinned hash didn't match — file is corrupt. Remove and re-download.
-        let _ = tokio::fs::remove_file(&final_path).await;
+        match verify_sha256(&final_path, entry.sha256).await {
+            Ok(true) => {
+                emit_status(&app, entry.id, "ready", Some("already downloaded".into()));
+                return Ok(final_path);
+            }
+            // Pinned hash genuinely didn't match — file is corrupt. Remove and
+            // re-download.
+            Ok(false) => {
+                let _ = tokio::fs::remove_file(&final_path).await;
+            }
+            // Could not READ the file to re-verify (transient: AV lock, EINTR, a
+            // flaky external/network volume). The old code used `?` here, which
+            // propagated the read error as a hard download failure and surfaced
+            // the already-downloaded model as "Failed" in the UI. Instead: don't
+            // hard-fail, and do NOT delete a probably-good multi-GB file. Leave it
+            // in place and fall through to re-download into `.partial` — the final
+            // atomic rename only replaces it on a verified success, so a failed
+            // re-download cannot lose the original. Mirrors the `.unwrap_or(false)`
+            // leniency the sibling `.partial` recovery already uses, minus its
+            // delete.
+            Err(e) => {
+                tracing::warn!(
+                    "could not re-verify existing model {}: {e}; will re-download",
+                    entry.id
+                );
+            }
+        }
     }
 
     // Complete-but-unrenamed `.partial` recovery: if the process was killed

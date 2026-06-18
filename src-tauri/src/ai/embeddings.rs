@@ -353,10 +353,40 @@ pub fn reset_embedding_model() {
     // kill+wait — never hold `client_lock` across a syscall, or a concurrent
     // `worker_request` could stall acquiring it. `reset_ai_state` offloads this
     // whole fn to `spawn_blocking` so the wait doesn't pin an async runtime thread.
-    let taken = {
-        let mut guard = client_lock().lock().unwrap_or_else(|e| e.into_inner());
-        guard.take()
-    };
+    //
+    // Acquire with a BOUNDED try_lock, not a blocking lock(): `worker_request`
+    // holds `client_lock` across its full per-request deadline, and a first-run
+    // Warm's deadline is WARM_TIMEOUT (covers the model download — up to minutes).
+    // A blocking lock() here would freeze the reset/retry command for that whole
+    // window. If we can't take the lock within ~3s a warm is actively (re)loading
+    // the worker — leave it running (that warm is already producing the fresh
+    // model the user asked for) and just clear the latches below; the next
+    // worker_request reuses the warmed worker, or reaps it if the warm failed.
+    let mut taken = None;
+    for _ in 0..30 {
+        match client_lock().try_lock() {
+            Ok(mut guard) => {
+                taken = guard.take();
+                break;
+            }
+            // Poisoned: recover the inner guard and proceed (matches the
+            // unwrap_or_else(into_inner) discipline used elsewhere).
+            Err(std::sync::TryLockError::Poisoned(p)) => {
+                taken = p.into_inner().take();
+                break;
+            }
+            // Held by an in-flight request/warm — back off briefly and retry.
+            Err(std::sync::TryLockError::WouldBlock) => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+    if taken.is_none() {
+        // Either there was no worker, or a long warm still holds the lock. Both
+        // are fine to fall through: the latch reset below is what lets the user
+        // retry, and an in-flight warm converges the worker state on its own.
+        tracing::info!("reset_embedding_model: no idle worker to reap (none, or warm in flight)");
+    }
     if let Some(mut c) = taken {
         let _ = c.child.kill();
         // Bounded reap: kill() sends SIGKILL (uncatchable) so the child normally
