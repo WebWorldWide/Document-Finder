@@ -58,6 +58,9 @@ const STAGE_LABEL: Record<string, string> = {
 function laneKey(source: string): string {
   if (source.startsWith("meta_search")) return "meta_search";
   if (META_SEARCH_COVERED.includes(source as SourceId)) return "meta_search";
+  // Pool-fallback docs (all web circuits open) arrive as searxng_local/pool —
+  // fold them onto the meta_search lane so its bar reflects the web results.
+  if (source === "searxng_local" || source === "searxng_pool") return "meta_search";
   return source;
 }
 
@@ -68,6 +71,13 @@ function laneKey(source: string): string {
 const SPEED_WINDOW = 32;
 const SPEED_INTERVAL_MS = 600;
 const SPEED_WINDOW_SEC = Math.round((SPEED_WINDOW * SPEED_INTERVAL_MS) / 1000);
+
+// macOS uses ⌘ as the modifier; the submit handler accepts Cmd OR Ctrl, but the
+// on-screen hint should show the key the user actually reaches for.
+const IS_MAC =
+  typeof navigator !== "undefined" &&
+  /Mac|iP(hone|ad|od)/.test(navigator.platform || navigator.userAgent || "");
+const MOD_KEY = IS_MAC ? "⌘" : "Ctrl";
 
 export default function FindTab() {
   const [query, setQuery] = createSignal("");
@@ -259,6 +269,33 @@ export default function FindTab() {
       total: d.total,
       ftype: ftypeFromPath(d.url),
     }));
+  // In-flight rows keyed by URL (a stable identity) rather than by list
+  // position. Downloads complete out of order, so an <Index> (position-keyed)
+  // reassigned each DOM row to a different file as the list reshuffled — a row's
+  // title/progress visibly swapped and the bar appeared to jump backward. <For>
+  // over the URL list gives each file a stable row for its whole lifecycle; the
+  // per-row data is looked up reactively so progress still updates live.
+  const inFlightUrls = () => Object.keys(rs().inFlight);
+  const renderInFlightRows = () => (
+    <For each={inFlightUrls()}>
+      {(url) => (
+        <Show when={rs().inFlight[url]}>
+          {(d) => (
+            <DocRow
+              doc={{
+                source: d().source,
+                title: d().title,
+                downloaded: d().downloaded,
+                total: d().total,
+                ftype: ftypeFromPath(d().url),
+              }}
+              kind="in-flight"
+            />
+          )}
+        </Show>
+      )}
+    </For>
+  );
   const savedDocs = (): StreamDoc[] =>
     rs()
       .completed.filter((c) => c.status === "done")
@@ -435,7 +472,7 @@ export default function FindTab() {
             </span>
             <span style={{ flex: 1 }} />
             <span class="df-query-hint">
-              <span class="df-kbd">Ctrl</span>
+              <span class="df-kbd">{MOD_KEY}</span>
               <span class="df-kbd">↵</span> to search
             </span>
             <Show
@@ -506,6 +543,7 @@ export default function FindTab() {
                     <button
                       class="df-btn sm"
                       onClick={() => toggleSource(src)}
+                      disabled={rs().running}
                       aria-pressed={on()}
                       style={
                         on()
@@ -635,7 +673,13 @@ export default function FindTab() {
                     <Show when={rs().failed > 0}>
                       <button
                         class="df-btn sm"
-                        onClick={() => void runStore.retryFailed()}
+                        onClick={() => {
+                          // Clear stale export banners so they don't float over
+                          // the retry run (handleSearch does the same for a search).
+                          setExportedTo(null);
+                          setExportError(null);
+                          void runStore.retryFailed();
+                        }}
                         title="Re-attempt the downloads that failed, into the same library"
                       >
                         <RotateCw size={12} /> Retry {rs().failed} failed
@@ -926,9 +970,7 @@ export default function FindTab() {
                           {inFlightDocs().length}
                         </span>
                       </div>
-                      <Index each={inFlightDocs()}>
-                        {(d) => <DocRow doc={d()} kind="in-flight" />}
-                      </Index>
+                      {renderInFlightRows()}
                     </div>
                   </Show>
                   <div class="df-stream-section">
@@ -955,13 +997,15 @@ export default function FindTab() {
                       <div
                         style={{ padding: "12px 0", "font-size": "12px", color: "var(--ink-3)" }}
                       >
-                        Nothing in flight — queue clearing.
+                        {!rs().running
+                          ? "Downloads complete."
+                          : downloadsStarted()
+                            ? "Queue clearing…"
+                            : "Waiting for downloads to start…"}
                       </div>
                     }
                   >
-                    <Index each={inFlightDocs()}>
-                      {(d) => <DocRow doc={d()} kind="in-flight" />}
-                    </Index>
+                    {renderInFlightRows()}
                   </Show>
                 </section>
                 <section

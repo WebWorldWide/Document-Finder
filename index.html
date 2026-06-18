@@ -6,11 +6,25 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta name="theme-color" content="#eef6ed" />
         <title>Document Finder</title>
-        <style>
-            /* Avoid white-flash before the app's stylesheet loads. Matches
-               --color-canvas in src/styles/globals.css (logo-mint). */
-            html, body { background: oklch(0.97 0.018 145); }
-        </style>
+        <script>
+            // Theme-aware pre-paint: set data-theme and a matching background
+            // BEFORE the bundle/stylesheet load, so a Midnight user doesn't get a
+            // bright flash (and a light-theme user doesn't get a dark one). Reads
+            // the same key/default as src/stores/theme.ts; that store re-applies
+            // the same value later (idempotent). Kept tiny + dependency-free.
+            (function () {
+                var t = null;
+                try {
+                    t = localStorage.getItem("df-theme-v2");
+                } catch (e) {}
+                if (t !== "paper" && t !== "slate" && t !== "midnight") t = "slate";
+                var bg = t === "midnight" ? "#0e1014" : t === "paper" ? "#f5f1e8" : "#eef0f4";
+                document.documentElement.dataset.theme = t;
+                var s = document.createElement("style");
+                s.textContent = "html,body{background:" + bg + ";}";
+                document.head.appendChild(s);
+            })();
+        </script>
     </head>
     <body>
         <div id="app"></div>

@@ -1,4 +1,4 @@
-import { createSignal, onMount, onCleanup, Show, Switch, Match, For } from "solid-js";
+import { createSignal, createEffect, onMount, onCleanup, Show, Switch, Match, For } from "solid-js";
 import {
   FolderOpen,
   FileText,
@@ -37,6 +37,17 @@ export default function SettingsView() {
   const [purging, setPurging] = createSignal(false);
   const [purgeMsg, setPurgeMsg] = createSignal<string | null>(null);
   const [purgeLibrary, setPurgeLibrary] = createSignal(false);
+
+  // If the LLM is removed (or never installed) while "Thorough" is the selected
+  // quality, downgrade to "Balanced" — otherwise the Thorough tab renders both
+  // active AND disabled (a dead highlighted control), and qualityToFlags() would
+  // still launch runs promising an LLM pipeline that can't run.
+  createEffect(() => {
+    if (settings.quality === "thorough" && !modelsStore.llmReady) {
+      setSettings("quality", "balanced");
+      saveSettings();
+    }
+  });
   // Tracked so the readiness poll is cleared if the user leaves Settings while a
   // model download is still warming (otherwise the interval leaks).
   let pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -265,7 +276,7 @@ export default function SettingsView() {
                   </>
                 )}
               </Show>{" "}
-              <span style={{ "font-family": "var(--font-mono)", color: "var(--ink-4)" }}>
+              <span style={{ "font-family": "var(--font-mono)", color: "var(--ink-3)" }}>
                 ≈ {settings.perSource}/source · {settings.maxTotal} max · {settings.concurrency}{" "}
                 parallel
               </span>

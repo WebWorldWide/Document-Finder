@@ -109,6 +109,10 @@
      previously borrowed --accent-soft, so a "no results" warning turned blue
      (or whatever the active accent is) instead of amber. */
   --warn-soft: #f7edd3;
+  /* Darker amber for TEXT on --warn-soft. The brighter --warn (#b4861e) is only
+     ~2.8:1 on the pale warn-soft in light themes — below AA — so banner/summary
+     body text uses this instead while dots/borders keep the brighter --warn. */
+  --warn-ink: #876110;
   --bad: #a13a2a;
   --bad-soft: #f1dcd6;
 
@@ -171,6 +175,8 @@
   --accent-soft: #2a2418;
   --ok-soft: #1d2918;
   --warn-soft: #2a2412;
+  /* Lighter amber for text on the dark warn-soft in midnight. */
+  --warn-ink: #e3b964;
   --bad-soft: #2e1816;
 }
 
@@ -1500,7 +1506,7 @@ input,
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--warn);
+  color: var(--warn-ink);
   font-weight: 500;
 }
 .df-issues summary::-webkit-details-marker {
@@ -1527,6 +1533,12 @@ input,
   font-family: var(--font-ui);
   flex-shrink: 0;
 }
+/* Several source identity colors are dark; lift toward white on the dark
+   midnight card (mirrors .df-doc-source) so the label that explains a failed
+   search stays readable. */
+[data-theme="midnight"] .df-issues li code {
+  color: color-mix(in oklch, var(--src-color, var(--ink-3)) 60%, white);
+}
 
 /* ========== Library ========== */
 .df-libgrid {
@@ -1542,7 +1554,6 @@ input,
     0 0 0 0.5px var(--line),
     0 1px 2px rgba(0, 0, 0, 0.03);
   transition: all 160ms;
-  cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: var(--pad-3);
@@ -1551,11 +1562,13 @@ input,
   width: 100%;
   color: inherit;
 }
+/* The card body is NOT interactive (the explicit Export/Show/Delete buttons
+   are) — so no pointer cursor / button-like lift, which would be a false
+   affordance. A faint border-glow on hover is enough to show it's a unit. */
 .df-libcard:hover {
-  transform: translateY(-1px);
   box-shadow:
     0 0 0 0.5px var(--line-2),
-    0 8px 24px -10px rgba(0, 0, 0, 0.12);
+    0 2px 8px -6px rgba(0, 0, 0, 0.08);
 }
 .df-libcard.active {
   box-shadow:
@@ -1710,6 +1723,12 @@ input,
   padding: 5px 10px;
   min-width: 220px;
 }
+/* The input drops the native focus ring (outline:0), so surface the focus on the
+   wrapper — otherwise Tab-ing to the library filter shows no indicator at all. */
+.df-inline-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
 .df-inline-search input {
   border: 0;
   outline: 0;
@@ -1844,7 +1863,7 @@ input,
 .df-banner.warn {
   background: var(--warn-soft);
   border-color: color-mix(in oklch, var(--warn) 35%, transparent);
-  color: var(--warn);
+  color: var(--warn-ink);
 }
 .df-banner.bad {
   background: var(--bad-soft);
