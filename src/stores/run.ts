@@ -180,8 +180,14 @@ function reset(query: string) {
 /// "meta_search/<engine>" (see meta_search.rs), but source_start/source_done
 /// report the bare aggregator id ("meta_search"). Collapsing the prefix here
 /// makes live `found` counts land on the same row as the start/done events.
+/// When every web-engine circuit is open, the aggregator falls back to the
+/// SearXNG pool, whose docs carry "searxng_local"/"searxng_pool" — fold those
+/// onto the "meta_search" row too, or its lane would read 0 while web docs
+/// stream into the totals.
 function baseSourceId(source: string): string {
-  return source.startsWith("meta_search/") ? "meta_search" : source;
+  if (source.startsWith("meta_search/")) return "meta_search";
+  if (source === "searxng_local" || source === "searxng_pool") return "meta_search";
+  return source;
 }
 
 function apply(ev: DfEvent) {

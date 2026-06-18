@@ -12,16 +12,26 @@ function SourceRow(props: {
 }) {
   const color = () => sourceColor(props.id);
   const showLive = () => props.running && props.status != null;
+  // While a run is active the source set is fixed (the backend already has its
+  // snapshot), so toggling here would only desync the live lanes/graph from what
+  // the search is actually querying. Lock the row during a run.
+  const locked = () => props.running;
   return (
     <div
       class={`df-srcrow ${props.on ? "on" : "off"}`}
-      style={{ "--src-color": color() }}
+      classList={{ locked: locked() }}
+      style={{ "--src-color": color(), ...(locked() ? { cursor: "default" } : {}) }}
       role="button"
-      tabindex={0}
+      tabindex={locked() ? -1 : 0}
       aria-pressed={props.on}
+      aria-disabled={locked()}
       aria-label={`${SOURCE_LABELS[props.id] ?? props.id} — ${props.on ? "enabled" : "disabled"}`}
-      onClick={() => props.onToggle()}
+      onClick={() => {
+        if (locked()) return;
+        props.onToggle();
+      }}
       onKeyDown={(e) => {
+        if (locked()) return;
         if (e.key === " " || e.key === "Enter") {
           e.preventDefault();
           props.onToggle();
@@ -121,11 +131,17 @@ export default function SourcePanel(props: {
       </div>
 
       <div class="df-srcactions">
-        <button onClick={() => props.onEnableAll()}>Enable all</button>
+        <button onClick={() => props.onEnableAll()} disabled={props.running}>
+          Enable all
+        </button>
         <span class="sep" />
-        <button onClick={() => props.onDisableAll()}>Disable all</button>
+        <button onClick={() => props.onDisableAll()} disabled={props.running}>
+          Disable all
+        </button>
         <span class="sep" />
-        <button onClick={() => props.onInvert()}>Invert</button>
+        <button onClick={() => props.onInvert()} disabled={props.running}>
+          Invert
+        </button>
         <span style={{ flex: 1 }} />
         <span style={{ color: "var(--ink-3)" }}>Per-source cap &amp; weights in Settings</span>
       </div>

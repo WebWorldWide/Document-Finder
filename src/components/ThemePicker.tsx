@@ -78,12 +78,14 @@ export default function ThemePicker() {
           <div class="df-seg">
             <button
               class={density() === "compact" ? "on" : ""}
+              aria-pressed={density() === "compact"}
               onClick={() => setDensity("compact")}
             >
               Compact
             </button>
             <button
               class={density() === "regular" ? "on" : ""}
+              aria-pressed={density() === "regular"}
               onClick={() => setDensity("regular")}
             >
               Regular
@@ -95,12 +97,14 @@ export default function ThemePicker() {
           <div class="df-seg">
             <button
               class={streamLayout() === "stacked" ? "on" : ""}
+              aria-pressed={streamLayout() === "stacked"}
               onClick={() => setStreamLayout("stacked")}
             >
               Stacked
             </button>
             <button
               class={streamLayout() === "split" ? "on" : ""}
+              aria-pressed={streamLayout() === "split"}
               onClick={() => setStreamLayout("split")}
             >
               Split

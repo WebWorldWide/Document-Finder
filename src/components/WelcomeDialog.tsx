@@ -71,12 +71,29 @@ export default function WelcomeDialog() {
     if (focusable.length === 0) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
+    // Treat the dialog container (tabindex=-1, where focus starts) as the first
+    // boundary too — otherwise a Shift+Tab while focus is still on the container
+    // falls through to the background behind the modal.
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === dialogRef)) {
       e.preventDefault();
       last.focus();
     } else if (!e.shiftKey && document.activeElement === last) {
       e.preventDefault();
       first.focus();
+    }
+  }
+
+  // Pull focus back into the dialog if it escapes — e.g. the focused control was
+  // reactively unmounted (the Download button after it's clicked), dropping focus
+  // to <body> outside the trap. Ignore moves to another element inside the dialog
+  // and window-blur (relatedTarget on another app), which we don't want to fight.
+  function handleFocusOut(e: FocusEvent) {
+    const next = e.relatedTarget as Node | null;
+    if (!dialogRef) return;
+    if (next === null || !dialogRef.contains(next)) {
+      // null relatedTarget from an unmount → refocus; but only while the document
+      // still has focus (don't steal it back when the user switched apps).
+      if (document.hasFocus()) queueMicrotask(() => dialogRef?.focus());
     }
   }
 
@@ -114,7 +131,7 @@ export default function WelcomeDialog() {
 
   return (
     <Show when={open()}>
-      <div class="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm">
+      <div class="fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm">
         <div
           ref={captureDialog}
           role="dialog"
@@ -122,6 +139,7 @@ export default function WelcomeDialog() {
           aria-labelledby={headingId}
           tabindex="-1"
           onKeyDown={handleKeyDown}
+          onFocusOut={handleFocusOut}
           class="material-linen border-stitched relative max-h-[88vh] w-full max-w-xl overflow-y-auto p-6 outline-none"
           style={{ "box-shadow": "0 24px 60px rgba(0,0,0,0.25), 0 0 0 0.5px var(--line)" }}
         >

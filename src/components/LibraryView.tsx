@@ -150,7 +150,11 @@ export default function LibraryView() {
           <div class="df-seg">
             <For each={SORTS}>
               {([k, label]) => (
-                <button class={sortBy() === k ? "on" : ""} onClick={() => setSortBy(k)}>
+                <button
+                  class={sortBy() === k ? "on" : ""}
+                  aria-pressed={sortBy() === k}
+                  onClick={() => setSortBy(k)}
+                >
                   {label}
                 </button>
               )}
@@ -168,7 +172,10 @@ export default function LibraryView() {
           </div>
         </Show>
 
-        <Show when={loading()}>
+        {/* Full-screen spinner ONLY on the first load (empty list). Background
+            refreshes (run-finished, post-delete) keep the existing grid mounted
+            so it doesn't flash blank — which read as "did my libraries vanish?". */}
+        <Show when={loading() && libraries().length === 0}>
           <div style={{ display: "flex", "justify-content": "center", padding: "64px 0" }}>
             <Loader2 size={24} class="spin" style={{ color: "var(--ink-3)" }} />
           </div>
@@ -207,7 +214,9 @@ export default function LibraryView() {
           </div>
         </Show>
 
-        <Show when={!loading() && sorted().length > 0}>
+        {/* Grid stays mounted during a background refresh (no !loading gate) and
+            hides on error so a stale grid can't render under the error banner. */}
+        <Show when={!error() && sorted().length > 0}>
           <div class="df-libgrid">
             <For each={sorted()}>
               {(lib) => {
@@ -258,7 +267,13 @@ export default function LibraryView() {
                       </button>
                       <button
                         class="df-btn sm ghost"
-                        onClick={() => api.revealInFinder(lib.path)}
+                        onClick={() =>
+                          api
+                            .revealInFinder(lib.path)
+                            .catch((e) =>
+                              setActionError(`Couldn't open this library's folder: ${String(e)}`),
+                            )
+                        }
                         disabled={isBusy()}
                       >
                         <FolderOpen size={12} /> Show

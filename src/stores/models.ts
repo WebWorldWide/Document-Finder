@@ -229,12 +229,27 @@ async function remove(modelId: string) {
 /// Settings "Download now" button). The df:model_status "embedding" event flips
 /// embeddingLoaded when ready. Returns the invoke promise so the caller can
 /// show a spinner and surface errors.
+let warmTimer: ReturnType<typeof setTimeout> | null = null;
 function warmEmbedding() {
   // Clear any prior failure so the row reflects this fresh attempt.
   setState("embeddingError", null);
   // Show a working indicator immediately; cleared by the terminal
   // embedding/embedding_failed status event.
   setState("embeddingWarming", true);
+  // Safety net: the backend normally emits a terminal event, but a build without
+  // the ai-embeddings feature emits nothing. Clear the flag after a timeout that
+  // exceeds the backend's ~300s warm ceiling so it never fires during a slow
+  // first-run download, but the card can't spin forever either.
+  if (warmTimer) clearTimeout(warmTimer);
+  warmTimer = setTimeout(() => {
+    warmTimer = null;
+    if (state.embeddingWarming) {
+      setState("embeddingWarming", false);
+      if (!state.embeddingLoaded && !state.embeddingDownloaded) {
+        setState("embeddingError", "Timed out loading the embedding model.");
+      }
+    }
+  }, 320_000);
   return api.warmEmbedding();
 }
 

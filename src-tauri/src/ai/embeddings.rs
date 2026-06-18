@@ -438,13 +438,21 @@ fn warm_inner(app: AppHandle) {
         // Release the WARMING dedup flag on EVERY exit, including a panic in the
         // warm task — a manual reset at the end would be skipped on unwind,
         // permanently disabling warm-up (and silently the semantic rerank) for
-        // the rest of the session.
-        let _warming_guard = WarmingResetGuard;
+        // the rest of the session. The guard ALSO emits a terminal
+        // `embedding_failed` event unless a terminal event was already emitted,
+        // so a panic / early-return / unexpected-response path can't leave the UI
+        // card spinning on "Downloading…" forever (the frontend `embeddingWarming`
+        // flag only clears on a terminal status event). Mirrors the download
+        // path's FailOnPanic guard.
+        let mut warming_guard = WarmingResetGuard {
+            app: app.clone(),
+            terminal_emitted: false,
+        };
         let cache = match cache_dir(&app) {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!("embedding warm: cache dir: {e}");
-                return;
+                return; // guard drops → emits embedding_failed
             }
         };
         match worker_request(&cache, &WorkerRequest::Warm) {
@@ -452,22 +460,36 @@ fn warm_inner(app: AppHandle) {
                 LOADED.store(true, Ordering::SeqCst);
                 tracing::info!("embedding model warmed and ready");
                 emit_status(&app, "embedding", "ready");
+                warming_guard.terminal_emitted = true;
             }
             Ok(_) => tracing::warn!("embedding warm: unexpected worker response"),
             Err(e) => {
                 tracing::warn!("embedding model warm failed: {e}");
                 emit_status(&app, "embedding_failed", &e.to_string());
+                warming_guard.terminal_emitted = true;
             }
         }
     });
 }
 
 /// Resets the `WARMING` dedup flag when dropped (normal return OR panic), so a
-/// crash in the warm task can't latch it `true` for the session.
-struct WarmingResetGuard;
+/// crash in the warm task can't latch it `true` for the session. Also emits a
+/// terminal `embedding_failed` event when no terminal event was emitted on the
+/// happy path, so the UI's "warming" indicator always resolves.
+struct WarmingResetGuard {
+    app: AppHandle,
+    terminal_emitted: bool,
+}
 impl Drop for WarmingResetGuard {
     fn drop(&mut self) {
         WARMING.store(false, Ordering::SeqCst);
+        if !self.terminal_emitted {
+            emit_status(
+                &self.app,
+                "embedding_failed",
+                "the embedding model could not be loaded",
+            );
+        }
     }
 }
 
