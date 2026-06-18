@@ -487,19 +487,36 @@ where
 {
     let initial_url = canonicalize_doc_url(&doc.url);
     let initial_ext = ext_from(&initial_url, "");
-    let mut out = dest_dir.join(format!("{}{}", doc.slug(), initial_ext));
+    let slug = doc.slug();
+    let mut out = dest_dir.join(format!("{}{}", slug, initial_ext));
 
     // Resume-skip: only honor an existing file if it passes magic-byte checks.
     // Older runs of this app saved HTML landing pages with .pdf extensions —
     // those need to be re-attempted (or rejected) rather than reused. A valid
     // existing file is reported as `Cached` (not `Saved`) and emits NO progress,
     // so its size is never charged to the live network-throughput graph.
-    if let Ok(meta) = tokio::fs::metadata(&out).await {
-        if meta.len() >= MIN_DOC_BYTES && existing_file_is_valid(&out).await {
-            return DownloadOutcome::Cached(out);
+    //
+    // Probe ALL candidate extensions, not just the URL-derived `initial_ext`:
+    // the file is ultimately stored under an extension reconciled from the
+    // Content-Type + magic bytes, which often differs from the URL path (e.g. a
+    // Gutenberg extensionless URL defaults to `.pdf` here but saves as `.epub`).
+    // Keying resume on `initial_ext` alone re-downloaded such docs in full on
+    // every re-run of the same query. Mirrors reuse_from_siblings' ext probe and
+    // its symlink discipline (skip planted symlinks rather than trust them).
+    const RESUME_EXTS: [&str; 4] = [".pdf", ".epub", ".html", ".txt"];
+    for ext in RESUME_EXTS {
+        let candidate = dest_dir.join(format!("{slug}{ext}"));
+        let Ok(meta) = tokio::fs::symlink_metadata(&candidate).await else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
         }
-        // Stale junk — wipe so the new download has a clean slot.
-        let _ = tokio::fs::remove_file(&out).await;
+        if meta.len() >= MIN_DOC_BYTES && existing_file_is_valid(&candidate).await {
+            return DownloadOutcome::Cached(candidate);
+        }
+        // Stale junk under this extension — wipe so the new download has a clean slot.
+        let _ = tokio::fs::remove_file(&candidate).await;
     }
 
     // Fetch loop: try the (canonicalized) document URL; if the server returns an
@@ -558,7 +575,7 @@ where
 
     let final_ext = ext_from(&target, &content_type);
     if final_ext != initial_ext {
-        out = dest_dir.join(format!("{}{}", doc.slug(), final_ext));
+        out = dest_dir.join(format!("{slug}{final_ext}"));
     }
     let total = resp
         .headers()
@@ -703,7 +720,7 @@ where
     match reconcile_doc_ext(&head, final_ext, claimed_binary) {
         Ok(real_ext) => {
             if real_ext != final_ext {
-                out = dest_dir.join(format!("{}{}", doc.slug(), real_ext));
+                out = dest_dir.join(format!("{slug}{real_ext}"));
             }
         }
         Err(()) => {

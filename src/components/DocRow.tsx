@@ -1,6 +1,6 @@
 import { Show } from "solid-js";
 import { Check } from "lucide-solid";
-import { SOURCE_LABELS, sourceColor, formatBytes, type FileType } from "@/lib/utils";
+import { sourceLabel, sourceColor, formatBytes, type FileType } from "@/lib/utils";
 
 export interface StreamDoc {
   source: string;
@@ -18,7 +18,7 @@ export interface StreamDoc {
 /** A single document row used in the live stream and the library detail. */
 export default function DocRow(props: { doc: StreamDoc; kind: "in-flight" | "saved" }) {
   const color = () => sourceColor(props.doc.source);
-  const label = () => SOURCE_LABELS[props.doc.source] ?? props.doc.source;
+  const label = () => sourceLabel(props.doc.source);
   const pct = () => {
     const t = props.doc.total ?? 0;
     return t > 0 ? Math.round(((props.doc.downloaded ?? 0) / t) * 100) : null;
