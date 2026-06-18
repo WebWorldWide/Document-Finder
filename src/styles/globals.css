@@ -105,6 +105,10 @@
   --ok: #4b7c3a;
   --ok-soft: #e3ebd3;
   --warn: #b4861e;
+  /* Amber-tinted banner background. Must exist as its own token: warn banners
+     previously borrowed --accent-soft, so a "no results" warning turned blue
+     (or whatever the active accent is) instead of amber. */
+  --warn-soft: #f7edd3;
   --bad: #a13a2a;
   --bad-soft: #f1dcd6;
 
@@ -166,6 +170,7 @@
   --accent-fg: #14110a;
   --accent-soft: #2a2418;
   --ok-soft: #1d2918;
+  --warn-soft: #2a2412;
   --bad-soft: #2e1816;
 }
 
@@ -1181,6 +1186,21 @@ input,
 [data-theme="midnight"] .df-ftype {
   background: rgba(0, 0, 0, 0.3);
 }
+/* The per-type chip colors above are dark (tuned for light themes); on the
+   midnight dark chip they were dark-on-dark and unreadable. Lift each to a
+   lighter tint that reads on the dark background. */
+[data-theme="midnight"] .df-ftype.pdf {
+  color: #e8907f;
+}
+[data-theme="midnight"] .df-ftype.epub {
+  color: #74c79a;
+}
+[data-theme="midnight"] .df-ftype.html {
+  color: #9fb6d4;
+}
+[data-theme="midnight"] .df-ftype.txt {
+  color: #cdbf83;
+}
 
 /* Telemetry — sub-queries + source lanes */
 .df-tel {
@@ -1394,6 +1414,11 @@ input,
 }
 [data-theme="midnight"] .df-doc-source {
   background: color-mix(in oklch, var(--src-color) 22%, transparent);
+  /* Several source identity colors are intentionally dark (internet_archive,
+     marginalia, doaj, europe_pmc) and were dark-on-dark here — the most-repeated
+     label in the UI. Lift the TEXT toward white; the ::before dot keeps the true
+     identity color. */
+  color: color-mix(in oklch, var(--src-color) 60%, white);
 }
 .df-doc-source::before {
   content: "";
@@ -1817,7 +1842,7 @@ input,
   color: var(--ok);
 }
 .df-banner.warn {
-  background: var(--accent-soft);
+  background: var(--warn-soft);
   border-color: color-mix(in oklch, var(--warn) 35%, transparent);
   color: var(--warn);
 }

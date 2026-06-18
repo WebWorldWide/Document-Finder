@@ -93,7 +93,15 @@ export default function FindTab() {
   });
 
   const hasRun = createMemo(
-    () => rs().running || rs().completed.length > 0 || Object.keys(rs().inFlight).length > 0,
+    () =>
+      rs().running ||
+      rs().completed.length > 0 ||
+      Object.keys(rs().inFlight).length > 0 ||
+      // A finished run that found candidates but downloaded none (everything was
+      // ranked off-topic) still has a story to tell — show the card so the
+      // found/off-topic stats explain why nothing was saved. (noResults() is
+      // found===0, so the two states stay mutually exclusive.)
+      (rs().folder !== null && rs().found > 0),
   );
 
   // ---- Live throughput sampler — samples cumulative bytes every 600ms while a
@@ -197,6 +205,20 @@ export default function FindTab() {
     const p = activePhase();
     if (!p) return rs().running ? "Working…" : null;
     return p.total ? `${p.label} ${p.count ?? 0}/${p.total}` : `${p.label}…`;
+  });
+
+  // Coarse status for screen readers. The visible stats block updates many times
+  // per second (found counter, per-tick phase count), so it is NOT a live region
+  // — that would flood assistive tech. This announces only stage transitions and
+  // the final summary, which change infrequently.
+  const liveStatus = createMemo(() => {
+    if (rs().running) {
+      if (downloadsStarted()) return "Downloading documents…";
+      const p = activePhase();
+      return p ? `${p.label}…` : "Working…";
+    }
+    if (rs().folder) return `Search complete — ${rs().done} saved, ${rs().failed} failed`;
+    return "";
   });
 
   const lanes = createMemo(() => {
@@ -307,6 +329,9 @@ export default function FindTab() {
   async function handleSearch() {
     if (!query().trim() || rs().running || settings.selectedSources.length === 0) return;
     setExportedTo(null);
+    // Also clear a prior export ERROR — otherwise a stale red "Export failed"
+    // banner floats above the new run for its whole duration.
+    setExportError(null);
     await runStore.startSearch(query());
   }
   // Confirm a Stop only when downloads are actively in flight — cancelling then
@@ -547,6 +572,44 @@ export default function FindTab() {
           </div>
         </Show>
 
+        {/* ISSUES — rendered at canvas level (not inside the run card) so they
+            stay visible even when the run card is hidden, e.g. an all-sources-
+            failed run has found===0 and no run card, yet the user must see why.
+            This is also what the no-results banner's "expand issues below" points
+            at. */}
+        <Show when={issues().length > 0}>
+          <div style={{ "margin-top": "16px" }}>
+            <details class="df-issues">
+              <summary>{issues().length === 1 ? "1 issue" : `${issues().length} issues`}</summary>
+              <ul>
+                <For each={issues()}>
+                  {(iss) => (
+                    <li
+                      style={{
+                        "--src-color": iss.source ? sourceColor(iss.source) : "var(--ink-3)",
+                      }}
+                    >
+                      <code>{iss.label}</code>
+                      <Show when={iss.tag}>
+                        <span
+                          style={{
+                            "font-family": "var(--font-mono)",
+                            "font-size": "9px",
+                            color: "var(--ink-3)",
+                          }}
+                        >
+                          {iss.tag}
+                        </span>
+                      </Show>
+                      <span style={{ color: "var(--ink-3)" }}>{iss.text}</span>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </details>
+          </div>
+        </Show>
+
         {/* RUN CARD */}
         <Show when={hasRun()}>
           <div class="df-run-card fade-in" style={{ "margin-top": "22px" }}>
@@ -604,7 +667,22 @@ export default function FindTab() {
                 </div>
               </div>
 
-              <div class="df-stats" role="status" aria-live="polite">
+              {/* Coarse SR announcer (visually hidden) — see liveStatus. */}
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  position: "absolute",
+                  width: "1px",
+                  height: "1px",
+                  overflow: "hidden",
+                  clip: "rect(0 0 0 0)",
+                  "white-space": "nowrap",
+                }}
+              >
+                {liveStatus()}
+              </div>
+              <div class="df-stats">
                 <div class="df-stat">
                   <span class="df-stat-num">{rs().found}</span>
                   <span class="df-stat-label">found</span>
@@ -667,7 +745,10 @@ export default function FindTab() {
               </div>
 
               <div class="df-progress-track">
-                <div class="df-progress-fill shimmer" style={{ width: `${barPct()}%` }} />
+                <div
+                  classList={{ "df-progress-fill": true, shimmer: rs().running }}
+                  style={{ width: `${barPct()}%` }}
+                />
               </div>
 
               {/* Pipeline rail */}
@@ -895,38 +976,6 @@ export default function FindTab() {
                   </div>
                 </section>
               </div>
-            </Show>
-
-            {/* ISSUES */}
-            <Show when={issues().length > 0}>
-              <details class="df-issues">
-                <summary>{issues().length === 1 ? "1 issue" : `${issues().length} issues`}</summary>
-                <ul>
-                  <For each={issues()}>
-                    {(iss) => (
-                      <li
-                        style={{
-                          "--src-color": iss.source ? sourceColor(iss.source) : "var(--ink-3)",
-                        }}
-                      >
-                        <code>{iss.label}</code>
-                        <Show when={iss.tag}>
-                          <span
-                            style={{
-                              "font-family": "var(--font-mono)",
-                              "font-size": "9px",
-                              color: "var(--ink-3)",
-                            }}
-                          >
-                            {iss.tag}
-                          </span>
-                        </Show>
-                        <span style={{ color: "var(--ink-3)" }}>{iss.text}</span>
-                      </li>
-                    )}
-                  </For>
-                </ul>
-              </details>
             </Show>
           </div>
         </Show>

@@ -22,6 +22,11 @@ interface ModelsState {
   /// Settings row can show a clear "couldn't load" state instead of the app
   /// just having vanished.
   embeddingError: string | null;
+  /// True between a warmEmbedding() call and its terminal status event
+  /// (embedding-ready or embedding_failed). The fastembed worker emits no
+  /// progress, so this drives a "working" indicator instead of the card looking
+  /// frozen on its idle caption while the model downloads/loads.
+  embeddingWarming: boolean;
   // Per-model bytes/sec for the UI ETA, keyed by model_id.
   bytesPerSec: Record<string, number>;
   // Last activity status for the model (e.g. "embedding 23/100", "llm_warming").
@@ -38,6 +43,7 @@ const [state, setState] = createStore<ModelsState>({
   embeddingLoaded: false,
   embeddingDownloaded: false,
   embeddingError: null,
+  embeddingWarming: false,
   bytesPerSec: {},
   activity: {},
 });
@@ -120,6 +126,7 @@ async function subscribeNow() {
     if (status === "embedding_failed") {
       setState("embeddingError", detail ?? "embedding model unavailable");
       setState("embeddingLoaded", false);
+      setState("embeddingWarming", false);
       return;
     }
     // Track non-disk activity events (embedding/llm_warming/etc) separately.
@@ -136,6 +143,8 @@ async function subscribeNow() {
         setState("embeddingDownloaded", true);
         // Clear any prior failure now that it's working.
         setState("embeddingError", null);
+        // Terminal success — stop the "working" indicator.
+        setState("embeddingWarming", false);
       }
       setState("activity", model_id, { status, detail });
       // Auto-clear after 5s of silence. Cancel any prior timer for this model so a
@@ -223,6 +232,9 @@ async function remove(modelId: string) {
 function warmEmbedding() {
   // Clear any prior failure so the row reflects this fresh attempt.
   setState("embeddingError", null);
+  // Show a working indicator immediately; cleared by the terminal
+  // embedding/embedding_failed status event.
+  setState("embeddingWarming", true);
   return api.warmEmbedding();
 }
 
@@ -256,6 +268,10 @@ export const modelsStore = {
   /// The last embedding-worker failure message, if any (for the Settings row).
   get embeddingError() {
     return state.embeddingError;
+  },
+  /// True while a warm is in flight (download/load), for a "working" indicator.
+  get embeddingWarming() {
+    return state.embeddingWarming;
   },
   /// Convenience: any LLM model in Ready status?
   get llmReady() {

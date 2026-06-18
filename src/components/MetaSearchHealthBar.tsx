@@ -67,18 +67,31 @@ export default function MetaSearchHealthBar() {
   });
 
   return (
-    <Show when={backends().length > 0}>
-      <div class="space-y-1">
-        <p class="mb-1.5 text-[10px] font-medium text-[var(--color-muted-foreground)]">
-          Backend health (last search)
-        </p>
+    <div class="space-y-1">
+      <p class="mb-1.5 text-[10px] font-medium text-[var(--color-muted-foreground)]">
+        Web-search engine health
+      </p>
+      {/* Health arrives via live events during a search (run from Discover), so on
+          a freshly-opened Settings tab there's nothing yet — show a hint rather
+          than hiding the section, which read as a missing/broken feature. */}
+      <Show
+        when={backends().length > 0}
+        fallback={
+          <p class="text-[10px] text-[var(--color-foreground-muted)]">
+            Run a search from Discover to see how each web engine performed here.
+          </p>
+        }
+      >
         <div class="flex flex-wrap gap-1.5">
           <For each={backends()}>
             {(b) => (
               <div
                 class="flex items-center gap-1 rounded px-2 py-0.5 text-[10px]"
                 style={{
-                  background: "var(--color-surface-raised, oklch(0.97 0 0))",
+                  background: "var(--color-surface-soft)",
+                  // Explicit text color — the label span would otherwise inherit
+                  // body --ink (near-white in midnight) and vanish on the pill.
+                  color: "var(--ink-2)",
                   border: `1px solid ${statusColor(b.status)}`,
                 }}
                 title={`${b.result_count} results · ${b.latency_ms}ms`}
@@ -104,7 +117,7 @@ export default function MetaSearchHealthBar() {
             )}
           </For>
         </div>
-      </div>
-    </Show>
+      </Show>
+    </div>
   );
 }

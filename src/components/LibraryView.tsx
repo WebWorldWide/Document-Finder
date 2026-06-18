@@ -12,6 +12,7 @@ import { ask, save } from "@tauri-apps/plugin-dialog";
 import { api, type LibraryInfo } from "@/lib/tauri";
 import { uiStore } from "@/stores/ui";
 import { settings } from "@/stores/settings";
+import { runStore } from "@/stores/run";
 import { compareLibraryRecency, formatBytes } from "@/lib/utils";
 import Banner from "./Banner";
 
@@ -58,6 +59,16 @@ export default function LibraryView() {
     });
   });
 
+  // Refresh the grid when a run finishes while the Library tab is open — without
+  // this, a search completing in the background leaves the grid showing pre-run
+  // data with no manual refresh control.
+  let wasRunning = runStore.state.running;
+  createEffect(() => {
+    const running = runStore.state.running;
+    if (wasRunning && !running) setLoadTick((n) => n + 1);
+    wasRunning = running;
+  });
+
   const sorted = createMemo(() => {
     let xs = libraries().slice();
     const q = filter().trim().toLowerCase();
@@ -81,7 +92,9 @@ export default function LibraryView() {
     setExportingPath(lib.path);
     try {
       const result = await api.exportLibraryZip(lib.path, dest);
-      await api.revealInFinder(result.dest);
+      // Reveal is a best-effort follow-up — a failure to open the OS file browser
+      // must NOT be reported as an export failure (the .zip is already written).
+      api.revealInFinder(result.dest).catch(() => {});
     } catch (e) {
       setActionError(`Couldn't export this library: ${String(e)}`);
     } finally {
@@ -203,20 +216,16 @@ export default function LibraryView() {
                 const isDeleting = () => deletingPath() === lib.path;
                 const isBusy = () => isExporting() || isDeleting();
                 return (
+                  // Plain card, not a role=button: there is no in-app detail view
+                  // for a selected library, so a card-level click had no real
+                  // effect AND its keydown handler swallowed Enter/Space on the
+                  // inner Export/Show/Delete buttons. The explicit buttons are the
+                  // interactive elements.
                   <div
-                    role="button"
-                    tabindex="0"
                     classList={{
                       "df-libcard": true,
                       active: isActive(),
                       "opacity-60 pointer-events-none": isDeleting(),
-                    }}
-                    onClick={() => uiStore.setActiveLibrary(lib)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        uiStore.setActiveLibrary(lib);
-                      }
                     }}
                   >
                     <div class="df-libcard-head">
