@@ -293,11 +293,17 @@ impl Source for ArxivSource {
                 // Stop (and skip the mandatory 3s inter-page sleep) on a short page
                 // OR once this page reaches the limit — the old code slept before a
                 // page that the `yielded >= limit` guard would never fetch.
-                let next_done = n < per_page || yielded + n >= limit;
+                // Track EMITTED docs, not raw parsed entries (`n`): entries whose
+                // PDF URL can't be built are filtered out by `builder_to_doc`, so
+                // counting raw entries would trip the limit guard early and skip
+                // available results. A short raw page (`n < per_page`) still ends
+                // pagination correctly.
+                let emitted = docs.len();
+                let next_done = n < per_page || yielded + emitted >= limit;
                 if !next_done {
                     tokio::time::sleep(PAGINATION_DELAY).await;
                 }
-                Some((Ok(docs), (start + per_page, yielded + n, next_done)))
+                Some((Ok(docs), (start + per_page, yielded + emitted, next_done)))
             }
         })
         .flat_map(|res: anyhow::Result<Vec<Document>>| match res {

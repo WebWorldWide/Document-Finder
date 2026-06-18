@@ -129,6 +129,12 @@ function addLog(level: LogEntry["level"], msg: string) {
   setState("log", (prev) => [...prev, { ts: Date.now(), level, msg }].slice(-200));
 }
 
+/// Hard cap on retained completed/failed items. Must comfortably exceed the
+/// largest possible run (Exhaustive `max_total` = 4000 docs, plus failures) so
+/// the list — which feeds the rendered results AND "Retry failed" — never
+/// silently drops items mid-run. Sized at 8000 (a few MB of metadata, trivial).
+const COMPLETED_CAP = 8000;
+
 function reset(query: string) {
   setState({
     running: false,
@@ -348,7 +354,7 @@ function apply(ev: DfEvent) {
           s.done = ev.payload.done;
           s.failed = ev.payload.failed;
           s.total = ev.payload.total;
-          s.completed = [...s.completed, item].slice(-500);
+          s.completed = [...s.completed, item].slice(-COMPLETED_CAP);
         }),
       );
       break;
@@ -379,7 +385,7 @@ function apply(ev: DfEvent) {
           s.done = ev.payload.done;
           s.failed = ev.payload.failed;
           s.total = ev.payload.total;
-          s.completed = [...s.completed, item].slice(-500);
+          s.completed = [...s.completed, item].slice(-COMPLETED_CAP);
         }),
       );
       break;
@@ -517,9 +523,11 @@ async function retryFailed() {
   }));
 
   reset(query);
-  // Seed `found` with the retry scope so the run card reads "N found · M saved"
-  // during the retry (there's no discovery phase to populate it).
-  setState({ running: true, folder, found: docs.length });
+  // Seed `found` AND `total` with the retry scope so the run card reads
+  // "N found · M saved" and the progress bar (done+failed / total) tracks from
+  // the first item — there's no discovery phase to populate them, and without
+  // `total` the bar would sit at 0% until the first download event arrives.
+  setState({ running: true, folder, found: docs.length, total: docs.length });
   pipelineStore.reset();
   void pipelineStore.ensureSubscribed();
 

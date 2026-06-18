@@ -29,6 +29,11 @@ describe("formatBytes", () => {
   it("scales up to GB", () => {
     expect(formatBytes(5 * 1024 ** 3)).toBe("5.0 GB");
   });
+
+  it("returns em-dash for non-finite input (no 'Infinity GB')", () => {
+    expect(formatBytes(Infinity)).toBe("—");
+    expect(formatBytes(NaN)).toBe("—");
+  });
 });
 
 describe("formatDuration", () => {

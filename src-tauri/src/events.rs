@@ -211,7 +211,8 @@ pub struct CandidatePayload {
     pub rrf: f32,
     pub authority: f32,
     pub score: f32,
-    /// "kept" | "rejected" | "borderline"
+    /// "kept" | "rejected" (the emitter only ever sets these two; the LLM
+    /// "borderline" band is an internal pre-filter notion, never a wire status).
     pub status: String,
     pub reject_reason: Option<String>,
     /// 1-indexed final rank within the kept set, or None if rejected.

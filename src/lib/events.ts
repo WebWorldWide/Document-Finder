@@ -127,7 +127,7 @@ export interface CandidatePayload {
   rrf: number;
   authority: number;
   score: number;
-  status: "kept" | "rejected" | "borderline";
+  status: "kept" | "rejected";
   reject_reason: string | null;
   final_rank: number | null;
 }
@@ -179,6 +179,29 @@ export interface PipelineStagePayload {
   count?: number;
   total?: number;
   message?: string;
+}
+
+/// Per-engine web-search health (df:meta_search_health). Consumed by a dedicated
+/// listener in MetaSearchHealthBar.tsx, NOT through listenAll/DfEvent — it's a
+/// standalone diagnostic stream, not part of the run reducer. Mirror of
+/// events.rs `MetaSearchHealthPayload`.
+export type MetaSearchHealthStatus =
+  | "ok"
+  // "empty" (healthy, zero results), "partial" (slow but returned results), and
+  // "throttled" (rate-limited, not broken) are non-failing states the backend
+  // emits so they don't trip the circuit breaker.
+  | "empty"
+  | "partial"
+  | "throttled"
+  | "timeout"
+  | "circuit_open"
+  | "error";
+
+export interface MetaSearchHealthPayload {
+  backend: string;
+  status: MetaSearchHealthStatus;
+  result_count: number;
+  latency_ms: number;
 }
 
 export type DfEvent =

@@ -107,7 +107,11 @@ impl Source for SemanticScholarSource {
                     return None;
                 }
                 let n = data.data.len();
-                let next_done = data.next.is_none() && n < per_page;
+                // Terminate on EITHER end signal: the API's `next` cursor being
+                // absent OR a short page. The old `&&` required both, so a FULL
+                // final page with `next: null` wasn't recognized as done and cost
+                // one wasted request to a non-existent next page.
+                let next_done = data.next.is_none() || n < per_page;
                 let mut docs = Vec::with_capacity(n);
                 for p in data.data {
                     let Some(url) = p.open_access_pdf.and_then(|o| o.url) else {

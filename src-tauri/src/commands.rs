@@ -738,7 +738,12 @@ fn write_zip_recursive(
                 continue;
             }
 
-            zw.start_file(new_rel.to_string_lossy().as_ref(), *options)?;
+            // ZIP entry names MUST use forward slashes (APPNOTE 4.4.17). On
+            // Windows `to_string_lossy` yields `dir\file`, which non-Windows
+            // unzippers treat as one filename with a literal backslash, flattening
+            // the archive's directory structure. Normalize to `/`.
+            let entry_name = new_rel.to_string_lossy().replace('\\', "/");
+            zw.start_file(&entry_name, *options)?;
             let mut f = std::fs::File::open(&path)?;
             std::io::copy(&mut f, zw)?;
             *count += 1;

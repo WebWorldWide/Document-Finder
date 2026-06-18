@@ -359,7 +359,16 @@ pub fn reset_embedding_model() {
     };
     if let Some(mut c) = taken {
         let _ = c.child.kill();
-        let _ = c.child.wait();
+        // Bounded reap: kill() sends SIGKILL (uncatchable) so the child normally
+        // exits at once, but guard against one stuck in uninterruptible sleep so
+        // reset_ai_state can't hang its offloading thread forever. After ~5s give
+        // up; the OS reaps the zombie when the app exits.
+        for _ in 0..50 {
+            match c.child.try_wait() {
+                Ok(Some(_)) | Err(_) => break,
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            }
+        }
     }
     LOADED.store(false, Ordering::SeqCst);
     UNAVAILABLE.store(false, Ordering::SeqCst);
@@ -458,13 +467,23 @@ pub fn rerank_blocking(
         texts.push(format!("{} {}", c.doc.doc.title, abstract_));
     }
 
+    let expected = texts.len();
     let WorkerResponse::Embeddings { vectors } =
         worker_request(&cache, &WorkerRequest::Embed { texts })?
     else {
         anyhow::bail!("embedding worker returned an unexpected response");
     };
-    if vectors.is_empty() {
-        anyhow::bail!("embedding worker returned no vectors");
+    // The worker must return exactly one vector per input text. A SHORT response
+    // (e.g. a partial failure that embedded only the query) would otherwise be
+    // accepted: `doc_embs` would be empty, `head` would be 0, and reranking would
+    // silently no-op while LOADED is set true — making a broken worker look
+    // healthy. (This also subsumes the empty-vectors check, since expected >= 1.)
+    if vectors.len() != expected {
+        anyhow::bail!(
+            "embedding worker returned {} vectors for {} texts",
+            vectors.len(),
+            expected
+        );
     }
     LOADED.store(true, Ordering::SeqCst);
 

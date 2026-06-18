@@ -150,7 +150,12 @@ impl Source for DOAJSource {
                         identifier: None,
                     });
                 }
-                Some((Ok(docs), (page + 1, yielded + n, next_done)))
+                // Advance `yielded` by EMITTED docs, not raw API hits (`n`):
+                // results without a fulltext link are filtered out above, so
+                // counting raw hits would trip the `yielded >= limit` guard early
+                // and stop paginating before `limit` real documents are collected.
+                let emitted = docs.len();
+                Some((Ok(docs), (page + 1, yielded + emitted, next_done)))
             }
         })
         .flat_map(|res: anyhow::Result<Vec<Document>>| match res {

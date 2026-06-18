@@ -61,6 +61,14 @@ function laneKey(source: string): string {
   return source;
 }
 
+// Throughput-sampler window: SPEED_WINDOW samples taken every
+// SPEED_INTERVAL_MS, so the rolling "avg" covers SPEED_WINDOW_SEC of history.
+// Kept as named constants so the "avg Ns" label can't drift from the real
+// window if either is retuned.
+const SPEED_WINDOW = 32;
+const SPEED_INTERVAL_MS = 600;
+const SPEED_WINDOW_SEC = Math.round((SPEED_WINDOW * SPEED_INTERVAL_MS) / 1000);
+
 export default function FindTab() {
   const [query, setQuery] = createSignal("");
   const [exporting, setExporting] = createSignal(false);
@@ -94,7 +102,7 @@ export default function FindTab() {
     if (!rs().running) return;
     let lastBytes = untrack(() => runStore.state.bytesDownloaded);
     let lastT = performance.now();
-    setSpeedHist(new Array(32).fill(0));
+    setSpeedHist(new Array(SPEED_WINDOW).fill(0));
     setSamplesSeen(0);
     const timer = window.setInterval(() => {
       const now = performance.now();
@@ -105,7 +113,7 @@ export default function FindTab() {
       lastT = now;
       setSpeedHist((h) => [...h.slice(1), Math.max(0, mbps)]);
       setSamplesSeen((n) => n + 1);
-    }, 600);
+    }, SPEED_INTERVAL_MS);
     onCleanup(() => clearInterval(timer));
   });
 
@@ -730,7 +738,7 @@ export default function FindTab() {
                 </div>
                 <div class="df-speed-item" style={{ "align-items": "flex-end" }}>
                   <span class="df-speed-num">{avgMbps().toFixed(2)}</span>
-                  <span class="df-speed-label">avg 19s</span>
+                  <span class="df-speed-label">avg {SPEED_WINDOW_SEC}s</span>
                 </div>
                 <div class="df-speed-item" style={{ "align-items": "flex-end" }}>
                   <span class="df-speed-num">{fmtEta(etaSec())}</span>
