@@ -8,8 +8,16 @@ export default function Banner(props: {
   onDismiss?: () => void;
 }) {
   const kind = () => props.kind ?? "ok";
+  // Errors announce assertively (interrupt the screen reader); ok/warn are
+  // polite. A polite region added at the same time as its content is often
+  // skipped, so genuine error feedback the user triggered would be missed.
+  const isError = () => kind() === "bad";
   return (
-    <div class={`df-banner ${kind()} fade-in`} role="status">
+    <div
+      class={`df-banner ${kind()} fade-in`}
+      role={isError() ? "alert" : "status"}
+      aria-live={isError() ? "assertive" : "polite"}
+    >
       <Show when={kind() === "ok"} fallback={<TriangleAlert size={15} />}>
         <Check size={15} />
       </Show>

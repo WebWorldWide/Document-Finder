@@ -4,6 +4,20 @@ import { api, type ExportResult } from "@/lib/tauri";
 import type { CandidatePayload, DfEvent } from "@/lib/events";
 import { settings, qualityToFlags } from "@/stores/settings";
 import { pipelineStore } from "@/stores/pipeline";
+import { uiStore } from "@/stores/ui";
+
+/// Re-read the on-disk library list into the shared uiStore after a run ends, so
+/// the Discover header stats, the Sidebar "Recent" list, and the Library nav
+/// count badge all reflect the library this run just created — instead of going
+/// stale until the user manually opens the Library tab.
+function refreshKnownLibraries() {
+  const root = settings.libraryRoot;
+  if (!root) return;
+  api
+    .listLibraries(root)
+    .then((libs) => uiStore.setKnownLibraries(libs))
+    .catch(() => {});
+}
 
 export interface InFlight {
   url: string;
@@ -412,6 +426,9 @@ function apply(ev: DfEvent) {
           ? `Cancelled. Saved ${ev.payload.done} file(s).`
           : `Done. ${ev.payload.done} saved, ${ev.payload.failed} failed.`,
       );
+      // The run wrote (or updated) a library on disk — refresh the shared list so
+      // the header/sidebar/badge stop showing pre-run counts.
+      refreshKnownLibraries();
       break;
 
     case "error":
@@ -562,7 +579,10 @@ async function exportZip(): Promise<ExportResult | null> {
   if (!dest) return null;
 
   const result = await api.exportLibraryZip(state.folder, dest);
-  await api.revealInFinder(result.dest);
+  // Reveal is best-effort: a failure to open the OS file browser must not bubble
+  // up and make a SUCCESSFUL export look failed (the caller shows an error banner
+  // on throw). The .zip is already written at this point.
+  await api.revealInFinder(result.dest).catch(() => {});
   return result;
 }
 

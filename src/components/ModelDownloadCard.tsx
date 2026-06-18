@@ -49,7 +49,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
               classList={{
                 "bg-[var(--color-primary)]/12 text-[var(--color-primary)]":
                   m().kind === "embedding",
-                "bg-amber-500/12 text-amber-700": m().kind === "llm",
+                "bg-amber-500/12 text-[color:var(--warn)]": m().kind === "llm",
               }}
             >
               {m().kind}
@@ -146,7 +146,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
         <button
           onClick={() => modelsStore.download(m().id)}
           class="btn-tactile mt-3 flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold"
-          style={{ background: "var(--color-primary)", color: "white" }}
+          style={{ background: "var(--color-primary)", color: "var(--accent-fg)" }}
         >
           <Download size={12} />
           Download {formatBytes(m().approx_bytes)}

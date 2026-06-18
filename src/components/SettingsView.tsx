@@ -232,6 +232,7 @@ export default function SettingsView() {
                   <button
                     type="button"
                     onClick={() => setDownloadIntensity(level)}
+                    aria-pressed={activeIntensity() === level}
                     style={{
                       "font-size": "10px",
                       padding: "2px 2px",
@@ -347,13 +348,12 @@ export default function SettingsView() {
                 label="Balanced"
                 caption={
                   !modelsStore.embeddingReady
-                    ? "needs embedding model"
+                    ? "downloads model on first search"
                     : modelsStore.llmReady
                       ? "+ rerank & broad sub-queries"
                       : "+ semantic rerank · ~5s"
                 }
                 active={settings.quality === "balanced"}
-                disabled={!modelsStore.embeddingReady}
               />
               <QualityTab
                 q="thorough"
@@ -736,6 +736,8 @@ function QualityTab(props: {
         saveSettings();
       }}
       disabled={props.disabled}
+      aria-pressed={props.active}
+      aria-disabled={props.disabled}
       class="pill-toggle"
       classList={{ "is-active": props.active }}
       style={{

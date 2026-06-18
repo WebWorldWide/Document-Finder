@@ -1,5 +1,5 @@
 import { Show, For, onMount, createSignal } from "solid-js";
-import { X, CheckCircle2, Brain } from "lucide-solid";
+import { X, CheckCircle2, Brain, Download, AlertCircle, RotateCw, Loader2 } from "lucide-solid";
 import { modelsStore } from "@/stores/models";
 import { settings, setSettings, saveSettings } from "@/stores/settings";
 import ModelDownloadCard from "./ModelDownloadCard";
@@ -31,10 +31,14 @@ export default function WelcomeDialog() {
   // also made the modal vanish out from under the user mid-download.
   const open = () => !settings.aiOnboardingDismissed && modelsStore.state.models.length > 0;
 
+  // The BGE embedding isn't in the registry (fastembed-managed), so add its
+  // approximate on-disk size to the headline total — otherwise "~total" only
+  // counts the LLM and undercounts what the "Download both" action fetches.
+  const EMBED_APPROX_BYTES = 66_000_000;
   const totalModelSize = () =>
     modelsStore.state.models
       .filter((m) => m.is_default)
-      .reduce((acc, m) => acc + m.approx_bytes, 0);
+      .reduce((acc, m) => acc + m.approx_bytes, 0) + EMBED_APPROX_BYTES;
 
   function dismiss() {
     setSettings("aiOnboardingDismissed", true);
@@ -83,6 +87,18 @@ export default function WelcomeDialog() {
   // Default LLMs (the only registry downloads) that still need fetching.
   const llmsToDownload = () =>
     modelsStore.state.models.filter((m) => m.is_default && m.status.kind !== "ready");
+  // Something is mid-fetch (a default LLM downloading/verifying, or the embedding
+  // warming) — the per-model card / embedding row shows its own progress, so the
+  // aggregate "Download" button hides to avoid a second click re-issuing the
+  // in-flight download.
+  const anyLlmBusy = () =>
+    modelsStore.state.embeddingWarming ||
+    modelsStore.state.models.some(
+      (m) => m.is_default && (m.status.kind === "downloading" || m.status.kind === "verifying"),
+    );
+  // How many distinct things the aggregate button would still fetch (missing
+  // LLMs + the embedding if it isn't ready) — drives an accurate label.
+  const toDownloadCount = () => llmsToDownload().length + (embeddingReady() ? 0 : 1);
   // Everything the AI features need is already present.
   const allReady = () => llmsToDownload().length === 0 && embeddingReady();
 
@@ -170,33 +186,83 @@ export default function WelcomeDialog() {
             <Show when={modelsOpen()}>
               <div class="mt-3 space-y-2 border-t border-[var(--color-border)] pt-3">
                 {/* Embedding model — fastembed-managed, not a registry download
-                    card. Shown as a passive row so "two models"/"Download both"
-                    is honest; it fetches + warms automatically (often before this
-                    dialog is even read), so there's no separate download button. */}
-                <div class="surface-raised-subtle flex items-center gap-2 p-2.5">
-                  <Show
-                    when={
-                      modelsStore.state.embeddingLoaded || modelsStore.state.embeddingDownloaded
-                    }
-                    fallback={
-                      <span class="shrink-0 text-[10px] text-[var(--color-foreground-muted)]">
-                        Auto
-                      </span>
-                    }
-                  >
-                    <CheckCircle2
-                      size={14}
-                      class="shrink-0"
-                      style={{ color: "var(--color-success)" }}
-                    />
-                  </Show>
-                  <div class="flex-1 text-[11px] leading-tight">
-                    <span class="font-semibold">Semantic-search model (BGE-Small)</span>
-                    <span class="ml-1 text-[var(--color-foreground-muted)]">
-                      {modelsStore.state.embeddingLoaded || modelsStore.state.embeddingDownloaded
-                        ? "· ready, managed automatically"
-                        : "· downloads automatically on first search"}
+                    card. Rendered as a FIRST-CLASS card with the same visual
+                    weight as the LLM card below, so "two models" / "Download both"
+                    reads clearly. It has no Download button because it fetches +
+                    warms automatically (often before this dialog is even read). */}
+                <div class="surface-raised-subtle p-4">
+                  <div class="flex items-center gap-2">
+                    <h3 class="truncate text-sm font-semibold">
+                      Semantic-search model (BGE-Small)
+                    </h3>
+                    <span class="rounded-full bg-[var(--color-primary)]/12 px-1.5 py-0.5 text-[9px] font-medium text-[var(--color-primary)] uppercase">
+                      embedding
                     </span>
+                    <span class="rounded-full bg-[var(--color-foreground)]/6 px-1.5 py-0.5 text-[9px] font-medium text-[var(--color-foreground-muted)]">
+                      default
+                    </span>
+                    <span
+                      class="rounded-full bg-[var(--color-foreground)]/6 px-1.5 py-0.5 text-[9px] font-medium text-[var(--color-foreground-muted)]"
+                      title="Model weights license"
+                    >
+                      MIT
+                    </span>
+                  </div>
+                  <p class="mt-1 text-[11px] leading-relaxed text-[var(--color-foreground-muted)]">
+                    Powers semantic reranking so the most relevant results rise to the top. Managed
+                    automatically — no manual download.
+                  </p>
+                  <div class="mt-3 flex items-center gap-2 text-[10px] text-[var(--color-foreground-muted)]">
+                    <Show
+                      when={!modelsStore.state.embeddingError}
+                      fallback={
+                        <>
+                          <AlertCircle
+                            size={11}
+                            class="shrink-0"
+                            style={{ color: "var(--color-destructive)" }}
+                          />
+                          <span style={{ color: "var(--color-destructive)" }}>
+                            Couldn&rsquo;t load (see Settings)
+                          </span>
+                          <button
+                            onClick={() => void modelsStore.warmEmbedding()}
+                            class="btn-tactile ml-1 flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium"
+                            style={{ color: "var(--color-primary)" }}
+                          >
+                            <RotateCw size={10} /> Retry
+                          </button>
+                        </>
+                      }
+                    >
+                      <Show
+                        when={
+                          modelsStore.state.embeddingLoaded || modelsStore.state.embeddingDownloaded
+                        }
+                        fallback={
+                          <Show
+                            when={modelsStore.state.embeddingWarming}
+                            fallback={
+                              <>
+                                <Download
+                                  size={11}
+                                  style={{ color: "var(--color-foreground-muted)" }}
+                                />
+                                <span class="font-mono">~66 MB</span>
+                                <span>·</span>
+                                <span>downloads automatically on first search</span>
+                              </>
+                            }
+                          >
+                            <Loader2 size={11} class="spin shrink-0" />
+                            <span>Downloading…</span>
+                          </Show>
+                        }
+                      >
+                        <CheckCircle2 size={11} style={{ color: "var(--color-success)" }} />
+                        <span>Ready · managed automatically</span>
+                      </Show>
+                    </Show>
                   </div>
                 </div>
                 <For each={modelsStore.state.models.filter((m) => m.is_default)}>
@@ -211,13 +277,25 @@ export default function WelcomeDialog() {
                     </div>
                   }
                 >
-                  <button
-                    onClick={() => void downloadDefaults()}
-                    class="btn-tactile mt-2 w-full px-3 py-2 text-xs font-semibold"
-                    style={{ background: "var(--color-primary)", color: "white" }}
+                  {/* Hidden while a download is already in flight — the per-model
+                      card shows progress + cancel, and a second click here would
+                      re-issue the in-flight fetch. */}
+                  <Show
+                    when={!anyLlmBusy()}
+                    fallback={
+                      <p class="mt-2 py-2 text-center text-[11px] text-[var(--color-foreground-muted)]">
+                        Downloading… you can keep using the app.
+                      </p>
+                    }
                   >
-                    {embeddingReady() ? "Download model" : "Download both"}
-                  </button>
+                    <button
+                      onClick={() => void downloadDefaults()}
+                      class="btn-tactile mt-2 w-full px-3 py-2 text-xs font-semibold"
+                      style={{ background: "var(--color-primary)", color: "var(--accent-fg)" }}
+                    >
+                      {toDownloadCount() > 1 ? "Download both" : "Download model"}
+                    </button>
+                  </Show>
                 </Show>
               </div>
             </Show>
