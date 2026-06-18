@@ -228,15 +228,18 @@ pub fn load_blocking(path: &Path) -> anyhow::Result<Arc<AsyncMutex<LlmModel>>> {
         }
     }
 
-    // Slow path: initialize under write lock.
+    // Slow path: do the heavy load (mmap + metadata parse — seconds) WITHOUT
+    // holding the lock, so a concurrent `try_get()` reader isn't blocked for the
+    // whole load. Only take the write lock to insert, re-checking in case another
+    // thread won the race (its freshly-loaded model is then dropped — a rare,
+    // bounded waste, since runs are serialized).
+    let loaded = Arc::new(AsyncMutex::new(LlmModel::load(path)?));
     let mut guard = model_lock().write().unwrap_or_else(|e| e.into_inner());
     if let Some(ref m) = *guard {
         return Ok(m.clone());
     }
-
-    let model = Arc::new(AsyncMutex::new(LlmModel::load(path)?));
-    *guard = Some(model.clone());
-    Ok(model)
+    *guard = Some(loaded.clone());
+    Ok(loaded)
 }
 
 pub fn try_get() -> Option<Arc<AsyncMutex<LlmModel>>> {

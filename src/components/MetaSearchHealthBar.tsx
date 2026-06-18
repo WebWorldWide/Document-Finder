@@ -1,15 +1,6 @@
 import { createSignal, onCleanup, onMount, For, Show } from "solid-js";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-
-interface MetaSearchHealthPayload {
-  backend: string;
-  // "empty" (healthy, zero results), "partial" (slow but returned results), and
-  // "throttled" (rate-limited, not broken) are non-failing states the backend
-  // emits so they don't trip the breaker.
-  status: "ok" | "empty" | "partial" | "throttled" | "timeout" | "circuit_open" | "error";
-  result_count: number;
-  latency_ms: number;
-}
+import type { MetaSearchHealthPayload } from "@/lib/events";
 
 interface BackendStatus extends MetaSearchHealthPayload {
   ts: number;

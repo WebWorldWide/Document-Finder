@@ -1500,7 +1500,7 @@ pub async fn run_pipeline(
                     .collect();
                 let llm_for_task = llm.clone();
                 let cancel_for_task = cancel.clone();
-                let keeps = tokio::task::spawn_blocking(move || {
+                let handle = tokio::task::spawn_blocking(move || {
                     let guard = llm_for_task.blocking_lock();
                     let mut out = Vec::with_capacity(prompts.len());
                     for p in &prompts {
@@ -1512,9 +1512,17 @@ pub async fn run_pipeline(
                         out.push(guard.yes_no(p, &cancel_for_task).unwrap_or(true));
                     }
                     out
-                })
-                .await
-                .unwrap_or_else(|_| vec![true; borderline.len()]);
+                });
+                // Bound the filter: `blocking_lock()` has no timeout, so a wedged
+                // decode holding the model mutex would otherwise stall the run
+                // indefinitely. On cancel or a 30s timeout, conservatively KEEP all
+                // borderline candidates (the detached task finishes harmlessly).
+                let keeps = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => vec![true; borderline.len()],
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => vec![true; borderline.len()],
+                    r = handle => r.unwrap_or_else(|_| vec![true; borderline.len()]),
+                };
 
                 let mut rejected_by_llm = 0u64;
                 for (i, idx) in borderline.iter().enumerate() {

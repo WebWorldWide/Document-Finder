@@ -40,7 +40,13 @@ export default function SettingsView() {
   // Tracked so the readiness poll is cleared if the user leaves Settings while a
   // model download is still warming (otherwise the interval leaks).
   let pollTimer: ReturnType<typeof setInterval> | undefined;
+  // Set on unmount: guards the `setInterval` created AFTER the warm `await`
+  // below. Without it, leaving Settings mid-download runs onCleanup (clearing
+  // nothing), then the await resolves and starts a fresh interval that leaks
+  // forever because onCleanup has already fired.
+  let disposed = false;
   onCleanup(() => {
+    disposed = true;
     if (pollTimer) clearInterval(pollTimer);
   });
 
@@ -54,6 +60,9 @@ export default function SettingsView() {
       setWarming(false);
       return;
     }
+    // The component may have unmounted during the await above; don't start a
+    // poll that onCleanup will never get to clear.
+    if (disposed) return;
     // warm runs in the background; poll readiness so the row updates live, and
     // clear the spinner once THIS attempt reaches a terminal state. Stop only on
     // "loaded" or "failed" (or after ~45s) — NOT on "downloaded", which the

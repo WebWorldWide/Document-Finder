@@ -654,14 +654,23 @@ where
     }
     drop(file);
 
-    // Validate the TEMP file before promoting it.
-    let size = match tokio::fs::metadata(&tmp).await {
-        Ok(m) => m.len(),
+    // Validate the TEMP file before promoting it. Use symlink_metadata (NOT
+    // metadata) and reject a symlink: if something swapped our `.part` for a
+    // symlink between sync_all and the rename, following it would let the final
+    // `rename` publish a link pointing outside the library. Mirrors the symlink
+    // discipline in reuse_from_siblings / commands.rs.
+    let tmp_meta = match tokio::fs::symlink_metadata(&tmp).await {
+        Ok(m) => m,
         Err(e) => {
             let _ = tokio::fs::remove_file(&tmp).await;
             return DownloadOutcome::Failed(format!("Couldn't read the saved file: {e}"));
         }
     };
+    if tmp_meta.file_type().is_symlink() {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return DownloadOutcome::Failed("The saved file was unexpectedly replaced.".to_string());
+    }
+    let size = tmp_meta.len();
     if size == 0 {
         let _ = tokio::fs::remove_file(&tmp).await;
         return DownloadOutcome::Failed("The server returned no data.".to_string());

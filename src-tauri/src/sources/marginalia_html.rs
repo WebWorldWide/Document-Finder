@@ -32,12 +32,14 @@ impl MarginaliaHtmlSource {
     }
 }
 
-// Marginalia wraps each result in a `search-result` div; the title link
-// is the first <a href="..."> inside an <h2>.
-static RESULT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?is)<h2[^>]*>\s*<a\s+[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>\s*</h2>"#)
-        .unwrap()
-});
+// Marginalia puts each result title in an <h2> containing an <a href="...">.
+// Two-stage (extract the h2 block, then find the anchor + href inside) so the
+// match doesn't require the anchor to sit IMMEDIATELY after <h2> — markup like
+// `<h2><span class="badge">PDF</span><a ...>` would defeat a single-stage regex
+// and silently drop every Marginalia result. Mirrors the other five scrapers.
+static H2_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?is)<h2\b[^>]*>(.*?)</h2>"#).unwrap());
+static ANCHOR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?is)<a\s+([^>]*)>(.*?)</a>"#).unwrap());
+static HREF_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)href="(https?://[^"]+)""#).unwrap());
 
 #[async_trait]
 impl Source for MarginaliaHtmlSource {
@@ -99,13 +101,22 @@ impl Source for MarginaliaHtmlSource {
                 // Raw result rows, counted separately from filtered `docs` so we
                 // only stop on a genuinely empty page.
                 let mut raw = 0usize;
-                for cap in RESULT_RE.captures_iter(&body) {
+                for h2 in H2_RE.captures_iter(&body) {
+                    let inner = h2.get(1).map(|m| m.as_str()).unwrap_or("");
+                    let Some(anchor) = ANCHOR_RE.captures(inner) else {
+                        continue;
+                    };
                     raw += 1;
                     if yielded + count >= limit {
                         break;
                     }
-                    let url = cap.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
-                    let title_html = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+                    let attrs = anchor.get(1).map(|m| m.as_str()).unwrap_or("");
+                    let title_html = anchor.get(2).map(|m| m.as_str()).unwrap_or("");
+                    let url = HREF_RE
+                        .captures(attrs)
+                        .and_then(|c| c.get(1))
+                        .map(|m| m.as_str().to_string())
+                        .unwrap_or_default();
                     if url.is_empty() || !looks_like_doc(&url) {
                         continue;
                     }
@@ -149,6 +160,20 @@ impl Source for MarginaliaHtmlSource {
 mod tests {
     use super::*;
 
+    // Helper mirroring the production loop: pull (url, title) out of an <h2>.
+    fn extract(html: &str) -> Option<(String, String)> {
+        let h2 = H2_RE.captures(html)?;
+        let inner = h2.get(1).map(|m| m.as_str()).unwrap_or("");
+        let anchor = ANCHOR_RE.captures(inner)?;
+        let attrs = anchor.get(1).map(|m| m.as_str()).unwrap_or("");
+        let title_html = anchor.get(2).map(|m| m.as_str()).unwrap_or("");
+        let url = HREF_RE
+            .captures(attrs)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().to_string())?;
+        Some((url, clean_title(title_html)))
+    }
+
     #[test]
     fn extracts_marginalia_anchor() {
         let html = r#"
@@ -159,11 +184,22 @@ mod tests {
                 <p>...</p>
             </div>
         "#;
-        let cap = RESULT_RE.captures(html).expect("matches");
-        assert_eq!(&cap[1], "https://stanford.edu/old/papers/network.pdf");
-        assert_eq!(
-            clean_title(cap.get(2).unwrap().as_str()),
-            "A 1996 paper on small-world networks"
-        );
+        let (url, title) = extract(html).expect("matches");
+        assert_eq!(url, "https://stanford.edu/old/papers/network.pdf");
+        assert_eq!(title, "A 1996 paper on small-world networks");
+    }
+
+    #[test]
+    fn extracts_anchor_not_immediately_after_h2() {
+        // The single-stage regex this replaced required the <a> to sit right
+        // after <h2>; markup with an interleaved badge silently dropped the row.
+        let html = r#"
+            <h2><span class="badge">PDF</span><a href="https://mit.edu/report.pdf">
+                Typewritten lab report
+            </a></h2>
+        "#;
+        let (url, title) = extract(html).expect("matches despite leading badge");
+        assert_eq!(url, "https://mit.edu/report.pdf");
+        assert_eq!(title, "Typewritten lab report");
     }
 }

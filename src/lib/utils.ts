@@ -1,5 +1,9 @@
 export function formatBytes(bytes: number): string {
   if (!bytes) return "—";
+  // Guard against Infinity/NaN from a bad rate/division: the loop below is
+  // bounded by `i`, so this can't hang, but it would otherwise render the
+  // literal "Infinity GB".
+  if (!Number.isFinite(bytes)) return "—";
   const units = ["B", "KB", "MB", "GB"];
   let v = bytes;
   let i = 0;
