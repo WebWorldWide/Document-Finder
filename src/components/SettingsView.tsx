@@ -491,7 +491,7 @@ export default function SettingsView() {
                   />
                   <span style={{ "font-weight": 500 }}>Embedding model</span>
                   <span style={{ color: "var(--ink-3)" }}>
-                    · not downloaded · ~33 MB, fetched automatically on first semantic search
+                    · not downloaded · ~66 MB, fetched automatically on first semantic search
                   </span>
                   <span style={{ flex: 1 }} />
                   <button

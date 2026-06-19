@@ -210,8 +210,8 @@
     <div class="sec-head">
       <h2 class="sec-title">Sources</h2>
       <p class="sec-sub">
-        Seven open-access sources, queried in parallel and deduplicated by DOI
-        and content hash. No API keys.
+        Eight open-access sources plus a built-in web meta-search, queried in
+        parallel and deduplicated by DOI and content hash. No API keys.
       </p>
     </div>
 
@@ -243,6 +243,15 @@
         <p>~200M papers with semantic relevance ranking and citation graphs.</p>
         <div class="srcstat"><b class="mono">200M</b><span>papers</span></div>
       </div>
+      <div class="srccard" style="--c:var(--src-europepmc)">
+        <div class="srccard-head">
+          <span class="srcdot"></span>
+          <span class="srcname">Europe PMC</span>
+          <span class="srcid mono">europepmc.org</span>
+        </div>
+        <p>Life-science papers and preprints with open full text — biomedicine, genomics, clinical.</p>
+        <div class="srcstat"><b class="mono">40M+</b><span>abstracts</span></div>
+      </div>
       <div class="srccard" style="--c:var(--src-ia)">
         <div class="srccard-head">
           <span class="srcdot"></span>
@@ -260,6 +269,15 @@
         </div>
         <p>Directory of Open Access Journals — vetted, peer-reviewed publications only.</p>
         <div class="srcstat"><b class="mono">20K</b><span>journals</span></div>
+      </div>
+      <div class="srccard" style="--c:var(--src-zenodo)">
+        <div class="srccard-head">
+          <span class="srcdot"></span>
+          <span class="srcname">Zenodo</span>
+          <span class="srcid mono">zenodo.org</span>
+        </div>
+        <p>CERN&rsquo;s open repository — papers, preprints, datasets and theses across every field.</p>
+        <div class="srcstat"><b class="mono">3M+</b><span>records</span></div>
       </div>
       <div class="srccard" style="--c:var(--src-gut)">
         <div class="srccard-head">
@@ -314,16 +332,19 @@
         <span class="step-num mono">02</span>
         <h3>Fan out across every source.</h3>
         <p>
-          Seven sources, queried in parallel, with per-source rate limiting and
-          retries. You watch the progress bars fill, the source lanes climb,
-          and the queue drain in real time. Stop any time.
+          Eight open-access sources plus web meta-search, queried in parallel,
+          with per-source rate limiting and retries. You watch the progress bars
+          fill, the source lanes climb, and the queue drain in real time. Stop any
+          time.
         </p>
         <div class="step-art lanes">
           <div class="lane" style="--c:var(--src-arxiv)"><i style="height:88%"></i><span>arXiv</span><b class="mono">14</b></div>
           <div class="lane" style="--c:var(--src-openalex)"><i style="height:62%"></i><span>OpenAlex</span><b class="mono">9</b></div>
           <div class="lane" style="--c:var(--src-semantic)"><i style="height:48%"></i><span>Semantic</span><b class="mono">7</b></div>
+          <div class="lane" style="--c:var(--src-europepmc)"><i style="height:30%"></i><span>EuPMC</span><b class="mono">4</b></div>
           <div class="lane" style="--c:var(--src-ia)"><i style="height:24%"></i><span>IA</span><b class="mono">3</b></div>
           <div class="lane" style="--c:var(--src-doaj)"><i style="height:38%"></i><span>DOAJ</span><b class="mono">5</b></div>
+          <div class="lane" style="--c:var(--src-zenodo)"><i style="height:18%"></i><span>Zenodo</span><b class="mono">2</b></div>
           <div class="lane" style="--c:var(--src-gut)"><i style="height:8%"></i><span>Gut.</span><b class="mono">1</b></div>
           <div class="lane" style="--c:var(--src-web)"><i style="height:34%"></i><span>Web</span><b class="mono">4</b></div>
         </div>
@@ -360,13 +381,13 @@
     <div class="feats">
       <div class="feat">
         <div class="feat-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></div>
-        <h3>Parallel by default</h3>
-        <p>Concurrent downloads with adaptive backoff and silent retries. A big run streams in while you watch, not after.</p>
+        <h3>Parallel &amp; resilient</h3>
+        <p>Concurrent downloads with adaptive backoff and silent retries. A big run streams in while you watch, not after — then retry any failures in one click, and skip re-downloading documents you already have across libraries.</p>
       </div>
       <div class="feat">
         <div class="feat-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></div>
         <h3>Local first</h3>
-        <p>Your queries, your library, your machine. Optional on-device AI (a small embedding model plus a 3B LLM) reranks results and expands queries — fully offline, no API keys, no telemetry.</p>
+        <p>Your queries, your library, your machine. Optional on-device AI (a small embedding model plus a 1.5B LLM) reranks results and expands queries — fully offline, no API keys, no telemetry.</p>
       </div>
       <div class="feat">
         <div class="feat-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></div>
@@ -385,8 +406,8 @@
       </div>
       <div class="feat">
         <div class="feat-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2.6"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 4.7 1.7 1.7 0 0 0 10 3.1V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></div>
-        <h3>Themeable</h3>
-        <p>Warm and Apple-HIG themes, each in light and dark, with full reduced-motion support. It should look the way you like.</p>
+        <h3>Accessible &amp; themeable</h3>
+        <p>Three themes — Paper, Slate and Midnight — with nine accent colors and a compact/regular density. WCAG-AA contrast, full keyboard navigation, screen-reader live regions, and reduced-motion support throughout.</p>
       </div>
     </div>
   </div>
@@ -415,11 +436,11 @@
       </div>
       <div class="spec">
         <div class="spec-k">Local AI</div>
-        <div class="spec-v">Optional, downloaded on first use, run offline: <span class="mono">bge-small</span> (~33 MB) reranks results, <span class="mono">Qwen 2.5 3B</span> (~2 GB) expands queries. No API keys, ever.</div>
+        <div class="spec-v">Optional, downloaded on first use, run offline: <span class="mono">BGE-small</span> reranks results, <span class="mono">Qwen 2.5 1.5B</span> (~1.1 GB, Apache-2.0) expands and filters queries. No API keys, ever.</div>
       </div>
       <div class="spec">
         <div class="spec-k">Sources</div>
-        <div class="spec-v">Seven open-access APIs plus a built-in web meta-search over six engines. No keys, no quotas.</div>
+        <div class="spec-v">Eight open-access APIs (arXiv, OpenAlex, Semantic Scholar, Europe PMC, Internet Archive, DOAJ, Zenodo, Gutenberg) plus a built-in web meta-search over six engines. No keys, no quotas.</div>
       </div>
       <div class="spec">
         <div class="spec-k">Storage</div>
