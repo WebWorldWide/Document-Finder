@@ -43,6 +43,10 @@ describe("formatDuration", () => {
     expect(formatDuration(450)).toBe("450ms");
   });
 
+  it("rounds a fractional ms (the ETA caller passes a float)", () => {
+    expect(formatDuration(833.3333333333334)).toBe("833ms");
+  });
+
   it("uses seconds with one decimal under 60s", () => {
     expect(formatDuration(2_500)).toBe("2.5s");
   });

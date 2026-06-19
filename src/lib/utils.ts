@@ -15,7 +15,9 @@ export function formatBytes(bytes: number): string {
 }
 
 export function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
+  // Round: the ETA caller passes a float (remainingBytes/bytesPerSec*1000), so an
+  // un-rounded sub-second value rendered as a 16-digit "833.3333333333334ms".
+  if (ms < 1000) return `${Math.round(ms)}ms`;
   const s = ms / 1000;
   if (s < 60) return `${s.toFixed(1)}s`;
   return `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
