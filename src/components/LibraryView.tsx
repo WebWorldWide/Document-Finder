@@ -25,6 +25,11 @@ export default function LibraryView() {
   const [exportingPath, setExportingPath] = createSignal<string | null>(null);
   const [deletingPath, setDeletingPath] = createSignal<string | null>(null);
   const [actionError, setActionError] = createSignal<string | null>(null);
+  const [exportOk, setExportOk] = createSignal<{
+    dest: string;
+    files: number;
+    bytes: number;
+  } | null>(null);
   const [loadTick, setLoadTick] = createSignal(0);
   const [filter, setFilter] = createSignal("");
   const [sortBy, setSortBy] = createSignal<SortKey>("updated");
@@ -84,6 +89,7 @@ export default function LibraryView() {
 
   async function handleExport(lib: LibraryInfo) {
     setActionError(null);
+    setExportOk(null);
     const dest = await save({
       defaultPath: `${lib.name}.zip`,
       filters: [{ name: "ZIP archive", extensions: ["zip"] }],
@@ -92,6 +98,10 @@ export default function LibraryView() {
     setExportingPath(lib.path);
     try {
       const result = await api.exportLibraryZip(lib.path, dest);
+      // Confirm success on-screen — reveal-in-Finder is best-effort and can do
+      // nothing visible (sandbox / headless Linux), leaving the user unsure the
+      // .zip was written.
+      setExportOk({ dest: result.dest, files: result.files, bytes: result.size_bytes });
       // Reveal is a best-effort follow-up — a failure to open the OS file browser
       // must NOT be reported as an export failure (the .zip is already written).
       api.revealInFinder(result.dest).catch(() => {});
@@ -115,10 +125,15 @@ export default function LibraryView() {
     setDeletingPath(lib.path);
     try {
       await api.deleteLibrary(lib.path);
+      // Optimistically drop the card NOW so it can't be re-clicked (Delete/Export
+      // on an already-gone path) during the async refetch window; clear the
+      // deleting latch too since the card is gone. The refetch reconciles disk.
+      setLibraries((xs) => xs.filter((l) => l.path !== lib.path));
+      setDeletingPath(null);
       setLoadTick((n) => n + 1);
     } catch (e) {
       setActionError(`Couldn't delete this library: ${String(e)}`);
-    } finally {
+      // Only re-enable the card on failure (it still exists).
       setDeletingPath(null);
     }
   }
@@ -170,6 +185,17 @@ export default function LibraryView() {
               {actionError()}
             </Banner>
           </div>
+        </Show>
+
+        <Show when={exportOk()}>
+          {(ok) => (
+            <div style={{ "margin-bottom": "16px" }}>
+              <Banner kind="ok" onDismiss={() => setExportOk(null)}>
+                Exported {ok().files} file{ok().files === 1 ? "" : "s"} ({formatBytes(ok().bytes)})
+                to <code>{ok().dest}</code>
+              </Banner>
+            </div>
+          )}
         </Show>
 
         {/* Full-screen spinner ONLY on the first load (empty list). Background

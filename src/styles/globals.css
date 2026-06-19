@@ -190,6 +190,10 @@
   /* Lighter red for error TEXT in midnight (the brick-red --bad #a13a2a is
      ~2.5:1 on the dark surfaces). Dots/borders/icons keep --bad. */
   --bad-ink: #e8907f;
+  /* --color-destructive is used as error TEXT/icon color in components (never as
+     a fill), so lift it in midnight too — otherwise the same dark-red-on-dark
+     contrast failure recurs in the model/embedding error states. */
+  --color-destructive: #e8907f;
 }
 
 /* ACCENT SWAPS */
@@ -720,7 +724,7 @@ input,
 }
 .df-btn.danger {
   border-color: color-mix(in oklch, var(--bad) 40%, transparent);
-  color: var(--bad);
+  color: var(--bad-ink);
   background: transparent;
 }
 .df-btn.danger:hover {
@@ -943,7 +947,7 @@ input,
   color: var(--src-color);
 }
 .df-srcrow-status.err {
-  color: var(--bad);
+  color: var(--bad-ink);
 }
 .df-srcrow-status-dot {
   width: 6px;
@@ -992,6 +996,17 @@ input,
 .df-srcactions button:hover {
   background: var(--hover);
   color: var(--ink);
+}
+/* These bare buttons aren't .df-btn, so the global disabled dimming doesn't
+   reach them — give them an explicit locked state during a run (they set
+   disabled={running} but otherwise looked fully active). */
+.df-srcactions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.df-srcactions button:disabled:hover {
+  background: transparent;
+  color: var(--ink-2);
 }
 .df-srcactions .sep {
   width: 0.5px;
@@ -1097,7 +1112,7 @@ input,
   color: var(--ok);
 }
 .df-stat-num.bad {
-  color: var(--bad);
+  color: var(--bad-ink);
 }
 .df-stat-label {
   font-size: 11px;

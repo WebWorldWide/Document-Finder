@@ -138,14 +138,19 @@ export default function ModelDownloadCard(props: { model: ModelInfo; hideDownloa
           return (
             <div class="mt-3 space-y-2">
               <p class="text-[10px] text-[var(--color-destructive)]">{failedStatus.msg}</p>
-              <button
-                onClick={() => modelsStore.download(m().id)}
-                class="btn-tactile flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
-                style={{ color: "var(--color-primary)" }}
-              >
-                <RefreshCw size={11} />
-                Retry (resumes from partial)
-              </button>
+              {/* Inside the welcome dialog the aggregate "Download" button is the
+                  single re-download trigger, so suppress the per-card retry there
+                  too (mirrors the not-downloaded button's hideDownload guard). */}
+              <Show when={!props.hideDownload}>
+                <button
+                  onClick={() => modelsStore.download(m().id)}
+                  class="btn-tactile flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
+                  style={{ color: "var(--color-primary)" }}
+                >
+                  <RefreshCw size={11} />
+                  Retry (resumes from partial)
+                </button>
+              </Show>
             </div>
           );
         }}

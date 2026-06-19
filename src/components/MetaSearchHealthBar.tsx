@@ -45,7 +45,7 @@ function statusTextColor(status: BackendStatus["status"]): string {
       return "var(--warn-ink)";
     case "circuit_open":
     case "error":
-      return "var(--bad)";
+      return "var(--bad-ink)";
     default:
       return "var(--ink-2)";
   }

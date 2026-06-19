@@ -44,6 +44,11 @@ import {
 import { humanizeDownloadError, humanizeSourceKind, issueKindTag } from "@/lib/errors";
 
 const PRIMARY_SOURCES: SourceId[] = ALL_SOURCES.filter((s) => !META_SEARCH_COVERED.includes(s));
+// Bulk "Enable all" / "Invert" exclude the standalone `searxng` source: when
+// meta_search (the default) is on, the backend drops searxng as already-covered,
+// so auto-enabling it just shows a checked source that does nothing. It stays
+// individually toggleable in the grid for anyone who wants it on its own.
+const BULK_SOURCES: SourceId[] = PRIMARY_SOURCES.filter((s) => s !== "searxng");
 
 const STAGE_LABEL: Record<string, string> = {
   llm_expand: "Expand",
@@ -60,8 +65,11 @@ function laneKey(source: string): string {
   if (source.startsWith("meta_search")) return "meta_search";
   if (META_SEARCH_COVERED.includes(source as SourceId)) return "meta_search";
   // Pool-fallback docs (all web circuits open) arrive as searxng_local/pool —
-  // fold them onto the meta_search lane so its bar reflects the web results.
-  if (source === "searxng_local" || source === "searxng_pool") return "meta_search";
+  // fold them onto whichever aggregator the run used: meta_search, or the
+  // standalone `searxng` source when that's what's enabled.
+  if (source === "searxng_local" || source === "searxng_pool") {
+    return runStore.state.sources.includes("meta_search") ? "meta_search" : "searxng";
+  }
   return source;
 }
 
@@ -309,10 +317,11 @@ export default function FindTab() {
       )}
     </For>
   );
+  const SAVED_SHOWN = 40;
   const savedDocs = (): StreamDoc[] =>
     rs()
       .completed.filter((c) => c.status === "done")
-      .slice(-40)
+      .slice(-SAVED_SHOWN)
       .reverse()
       .map((c) => ({
         source: c.source,
@@ -322,6 +331,21 @@ export default function FindTab() {
         // Carry the on-disk size so DocRow can render it next to the checkmark.
         bytes: c.bytes,
       }));
+  // The saved stream caps at SAVED_SHOWN rows; surface the remainder (with a
+  // jump to the full Library) so "Saved 120" above 40 rows doesn't look like 80
+  // files vanished.
+  const savedOverflow = () => Math.max(0, rs().done - savedDocs().length);
+  const renderSavedOverflow = () => (
+    <Show when={savedOverflow() > 0}>
+      <button
+        class="df-btn sm ghost"
+        style={{ "margin-top": "6px" }}
+        onClick={() => void handleOpenLibrary()}
+      >
+        +{savedOverflow()} more — open Library
+      </button>
+    </Show>
+  );
 
   const issues = createMemo(() => {
     const out: { source?: string; label: string; tag?: string; text: string }[] = [];
@@ -359,7 +383,7 @@ export default function FindTab() {
 
   // ---- source toggles ----
   function enableAll() {
-    setSettings("selectedSources", (prev) => [...new Set([...prev, ...PRIMARY_SOURCES])]);
+    setSettings("selectedSources", (prev) => [...new Set([...prev, ...BULK_SOURCES])]);
     saveSettings();
   }
   function disableAll() {
@@ -369,7 +393,7 @@ export default function FindTab() {
   function invert() {
     setSettings("selectedSources", (prev) => {
       const set = new Set(prev);
-      for (const s of PRIMARY_SOURCES) {
+      for (const s of BULK_SOURCES) {
         if (set.has(s)) set.delete(s);
         else set.add(s);
       }
@@ -1031,6 +1055,7 @@ export default function FindTab() {
                       <span style={{ color: "var(--ok)", "font-weight": 700 }}>{rs().done}</span>
                     </div>
                     <Index each={savedDocs()}>{(d) => <DocRow doc={d()} kind="saved" />}</Index>
+                    {renderSavedOverflow()}
                   </div>
                 </div>
               }
@@ -1070,6 +1095,7 @@ export default function FindTab() {
                   <div style={{ "max-height": "360px", "overflow-y": "auto" }}>
                     <Index each={savedDocs()}>{(d) => <DocRow doc={d()} kind="saved" />}</Index>
                   </div>
+                  {renderSavedOverflow()}
                 </section>
               </div>
             </Show>

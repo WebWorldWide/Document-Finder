@@ -4,6 +4,7 @@ import { render } from "solid-js/web";
 import App from "./App";
 import { listenAll } from "./lib/events";
 import { runStore } from "./stores/run";
+import { uiStore } from "./stores/ui";
 
 listenAll((ev) => runStore.apply(ev))
   .then((fn) => {
@@ -14,5 +15,6 @@ listenAll((ev) => runStore.apply(ev))
     // silently never update (no progress, no results). Surface it instead of
     // leaving an unhandled rejection and a frozen-looking app.
     console.error("Failed to register Tauri event listeners — live updates disabled:", e);
+    uiStore.setListenersReady(false);
   });
 render(() => <App />, document.getElementById("app")!);
