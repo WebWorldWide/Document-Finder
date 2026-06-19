@@ -62,8 +62,14 @@ static STOPWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     .collect()
 });
 
+// Unicode-aware: `\p{L}` (any letter) + `\p{M}` (combining marks, for decomposed
+// accents) so an accented or non-Latin query ("política económica", "気候変動")
+// tokenizes to WHOLE words instead of ASCII fragments split at the accent. This
+// matches `ranking::tokenize`'s Unicode `is_alphanumeric()`; an ASCII-only regex
+// here gave query terms like "pol"/"tica" that never match the document tokens
+// "política", zeroing TF-IDF for every non-English search.
 static WORD_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?:[A-Za-z][A-Za-z'-]+|\b\d{4}\b)").unwrap());
+    Lazy::new(|| Regex::new(r"(?:\p{L}[\p{L}\p{M}'-]+|\b\d{4}\b)").unwrap());
 static SPLIT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)[,;]|\s+and\s+|\s+&\s+").unwrap());
 
 /// Strip filler words from a natural-language query.
@@ -322,6 +328,23 @@ mod tests {
     fn parse_drops_stopwords_and_short() {
         let kw = parse_query("Please find all the books on therapy training.");
         assert_eq!(kw, vec!["therapy", "training"]);
+    }
+
+    #[test]
+    fn parse_keeps_accented_and_non_latin_words_whole() {
+        // Accented words must stay whole (not split at the accent into "pol"/"tica")
+        // so query tokens match the Unicode-aware document tokens in ranking.
+        assert_eq!(
+            parse_query("Política económica internacional"),
+            vec!["política", "económica", "internacional"]
+        );
+        assert_eq!(parse_query("café société"), vec!["café", "société"]);
+        // CJK runs stay whole; years still parse; ASCII unchanged.
+        assert_eq!(parse_query("気候変動 2021"), vec!["気候変動", "2021"]);
+        assert_eq!(
+            parse_query("covid-19 vaccines 2021"),
+            vec!["covid-", "vaccines", "2021"]
+        );
     }
 
     #[test]
