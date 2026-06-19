@@ -1403,6 +1403,20 @@ pub async fn run_pipeline(
             Ok((reranked, Err(e))) => {
                 tracing::warn!("semantic rerank failed, falling back to Tier 1: {}", e);
                 ranked = reranked;
+                // We only entered this block because is_loaded() was true, so an
+                // Err here means the worker became unavailable mid-rerank (e.g. the
+                // documented macOS ort-abort latch). Emit a terminal embedding_failed
+                // so the UI stops claiming "ready / + semantic rerank" for a model
+                // that's actually disabled for the rest of the session, and offers a
+                // retry — instead of every later search silently degrading to lexical.
+                let _ = app.emit(
+                    crate::events::EV_MODEL_STATUS,
+                    crate::events::ModelStatusPayload {
+                        model_id: "bge-small-en-v1.5".to_string(),
+                        status: "embedding_failed".to_string(),
+                        detail: Some(format!("rerank failed: {e}")),
+                    },
+                );
                 emit_stage(
                     &app,
                     "semantic_rerank",
@@ -1418,6 +1432,17 @@ pub async fn run_pipeline(
                 // ranking so the run still produces (correctly-ordered) downloads
                 // instead of silently dropping every candidate.
                 ranked = fallback;
+                // A panic in the rerank thread means the model is unusable this
+                // session — surface it (same reasoning as the Err arm above) so the
+                // UI doesn't keep advertising semantic rerank as available.
+                let _ = app.emit(
+                    crate::events::EV_MODEL_STATUS,
+                    crate::events::ModelStatusPayload {
+                        model_id: "bge-small-en-v1.5".to_string(),
+                        status: "embedding_failed".to_string(),
+                        detail: Some(format!("rerank task panicked: {e}")),
+                    },
+                );
                 emit_stage(
                     &app,
                     "semantic_rerank",
