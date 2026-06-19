@@ -119,8 +119,12 @@ fn lexical_normalize(p: &Path) -> PathBuf {
 /// error if the system's Documents directory cannot be determined. Used as the
 /// default confinement root when the user hasn't configured a custom one.
 pub fn library_root() -> Result<PathBuf, String> {
+    // Fall back to the home dir when Documents can't be resolved — on a minimal
+    // Linux install without xdg-user-dirs, document_dir() is None, which would
+    // otherwise dead-end the very first search with a cryptic error.
     dirs::document_dir()
-        .ok_or_else(|| "Cannot resolve system Documents directory".to_string())
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| "Cannot resolve a Documents or home directory".to_string())
         .map(|d| d.join("Document Finder"))
 }
 

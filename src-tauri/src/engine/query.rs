@@ -57,6 +57,20 @@ static STOPWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "every",
         "kind",
         "kinds",
+        // Common 2-char function words — added so the >=2 length gate (which keeps
+        // meaningful 2-char terms like ML/AI/5G/3D/VR/UX) doesn't readmit fillers.
+        // Ambiguous 2-char tokens (us/no/id) are deliberately left searchable.
+        "at",
+        "by",
+        "it",
+        "as",
+        "we",
+        "he",
+        "do",
+        "if",
+        "so",
+        "up",
+        "am",
     ]
     .into_iter()
     .collect()
@@ -79,7 +93,12 @@ pub fn parse_query(q: &str) -> Vec<String> {
     WORD_RE
         .find_iter(&lower)
         .map(|m| m.as_str().to_string())
-        .filter(|w| !STOPWORDS.contains(w.as_str()) && w.chars().count() > 2)
+        // Keep >=2-char tokens to AGREE with ranking::tokenize / has_searchable_token:
+        // a stricter >2 here silently dropped meaningful 2-char acronyms (ML/AI/5G/
+        // 3D/VR/UX) from the ranking keyword set while ranking kept them in documents,
+        // so the discriminating term contributed zero TF-IDF. STOPWORDS covers the
+        // 2-char fillers.
+        .filter(|w| !STOPWORDS.contains(w.as_str()) && w.chars().count() >= 2)
         .collect()
 }
 
@@ -361,6 +380,17 @@ mod tests {
             parse_query("covid-19 vaccines 2021"),
             vec!["covid-19", "vaccines", "2021"]
         );
+    }
+
+    #[test]
+    fn parse_keeps_two_char_acronyms_but_drops_fillers() {
+        // Meaningful 2-char terms must reach the ranker (matching ranking::tokenize),
+        // while 2-char function words stay filtered.
+        assert_eq!(parse_query("ML safety"), vec!["ml", "safety"]);
+        assert_eq!(parse_query("AI ethics"), vec!["ai", "ethics"]);
+        assert_eq!(parse_query("5G networks"), vec!["5g", "networks"]);
+        // Fillers dropped; the real term survives.
+        assert_eq!(parse_query("we love AI"), vec!["love", "ai"]);
     }
 
     #[test]
