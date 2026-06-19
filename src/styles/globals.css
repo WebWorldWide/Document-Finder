@@ -738,6 +738,17 @@ input,
 .df-btn.danger:hover {
   background: var(--bad-soft);
 }
+/* Advanced web-engine toggles: enabled state colored by the engine's identity
+   (--src-color set inline). The label text lifts toward white in midnight so a
+   dark identity color isn't dark-on-dark (mirrors .df-doc-source). */
+.df-web-engine.on {
+  border-color: var(--src-color);
+  color: var(--src-color);
+  background: color-mix(in oklch, var(--src-color) 8%, transparent);
+}
+[data-theme="midnight"] .df-web-engine.on {
+  color: color-mix(in oklch, var(--src-color) 60%, white);
+}
 .df-btn.sm {
   padding: 5px 10px;
   font-size: 11.5px;

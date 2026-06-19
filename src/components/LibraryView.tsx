@@ -237,7 +237,10 @@ export default function LibraryView() {
           </div>
         </Show>
 
-        <Show when={!loading() && !error() && sorted().length === 0}>
+        {/* Keep the empty/"No matches" card visible during a BACKGROUND refresh
+            (libraries already loaded) — only suppress it during the first load,
+            where the spinner shows instead. Mirrors the grid staying mounted. */}
+        <Show when={!error() && sorted().length === 0 && !(loading() && libraries().length === 0)}>
           <div class="df-empty">
             <div class="df-empty-mark">
               <LibraryIcon size={28} />
@@ -283,13 +286,14 @@ export default function LibraryView() {
                       "opacity-60 pointer-events-none": isDeleting(),
                     }}
                     title="Open this library's folder"
-                    onClick={() =>
+                    onClick={() => {
+                      setActionError(null); // a successful reveal shouldn't leave a stale error up
                       api
                         .revealInFinder(lib.path)
                         .catch((e) =>
                           setActionError(`Couldn't open this library's folder: ${String(e)}`),
-                        )
-                    }
+                        );
+                    }}
                   >
                     <div class="df-libcard-head">
                       <div class="df-libcard-q" title={lib.query ?? lib.name}>
@@ -321,13 +325,14 @@ export default function LibraryView() {
                       </button>
                       <button
                         class="df-btn sm ghost"
-                        onClick={() =>
+                        onClick={() => {
+                          setActionError(null);
                           api
                             .revealInFinder(lib.path)
                             .catch((e) =>
                               setActionError(`Couldn't open this library's folder: ${String(e)}`),
-                            )
-                        }
+                            );
+                        }}
                         disabled={isBusy()}
                       >
                         <FolderOpen size={12} /> Show
