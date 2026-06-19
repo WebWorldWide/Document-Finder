@@ -197,7 +197,14 @@ function reset(query: string) {
 /// stream into the totals.
 function baseSourceId(source: string): string {
   if (source.startsWith("meta_search/")) return "meta_search";
-  if (source === "searxng_local" || source === "searxng_pool") return "meta_search";
+  if (source === "searxng_local" || source === "searxng_pool") {
+    // Pool docs belong to whichever aggregator the run used: the meta_search
+    // aggregator (its pool fallback) OR the standalone `searxng` source. Route to
+    // the one actually in this run's source set so a standalone-searxng run's
+    // hits don't land on a phantom "meta_search" row. (When both are enabled the
+    // backend drops searxng as already-covered, so meta_search is correct.)
+    return state.sources.includes("meta_search") ? "meta_search" : "searxng";
+  }
   return source;
 }
 

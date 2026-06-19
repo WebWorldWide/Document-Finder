@@ -1,4 +1,4 @@
-import { Show, For, onMount } from "solid-js";
+import { Show, For, createEffect } from "solid-js";
 import { Compass, Library as LibraryIcon, Settings as SettingsIcon } from "lucide-solid";
 import Logo from "@/components/Logo";
 import { uiStore } from "@/stores/ui";
@@ -14,12 +14,16 @@ const navItems = [
 ];
 
 export default function Sidebar() {
-  // Lazy-prime the library list so the count + Recent section show real data
-  // on first paint if libraries already exist on disk.
-  onMount(() => {
-    if (uiStore.knownLibraries.length === 0 && settings.libraryRoot) {
+  // Lazy-prime the library list so the count + Recent section show real data on
+  // first paint if libraries already exist on disk. A createEffect (not onMount)
+  // so it re-fires when settings.libraryRoot arrives ASYNCHRONOUSLY — on a fresh
+  // launch the root starts "" and is filled in once defaultLibraryDir() resolves;
+  // a one-shot onMount would read the empty root and never retry.
+  createEffect(() => {
+    const root = settings.libraryRoot;
+    if (root && uiStore.knownLibraries.length === 0) {
       api
-        .listLibraries(settings.libraryRoot)
+        .listLibraries(root)
         .then((libs) => uiStore.setKnownLibraries(libs))
         .catch(() => {});
     }
@@ -112,7 +116,16 @@ export default function Sidebar() {
       </Show>
 
       <div class="df-side-footer">
-        <span class="df-status-dot" /> Backend ready
+        <Show
+          when={uiStore.listenersReady}
+          fallback={
+            <>
+              <span class="df-status-dot warn" /> Live updates unavailable — restart
+            </>
+          }
+        >
+          <span class="df-status-dot" /> Backend ready
+        </Show>
       </div>
     </nav>
   );
