@@ -430,6 +430,12 @@ input,
   background: var(--hover);
   color: var(--ink);
 }
+/* Match the app's deliberate accent focus ring (the nav buttons otherwise fell
+   back to a low-contrast UA default over the sidebar surface). */
+.df-nav-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .df-nav-item[aria-current="page"] {
   background: var(--card);
   color: var(--ink);
@@ -824,7 +830,10 @@ input,
   background: var(--card);
 }
 .df-srcrow.off {
-  opacity: 0.5;
+  /* 0.5 composited the source NAME (essential text on a toggle button, not a
+     truly-disabled control) below AA; 0.7 keeps it readable while still reading
+     as de-emphasized vs the accent-bordered "on" rows. */
+  opacity: 0.7;
 }
 .df-srcrow.on {
   border-left-color: var(--src-color);
@@ -1553,6 +1562,19 @@ input,
 .df-issues summary::-webkit-details-marker {
   display: none;
 }
+/* Replacement disclosure marker — the default triangle is hidden above, so add a
+   rotating chevron; without it "N issues" reads as static text the user won't
+   know to click (and the no-results banner tells them to "expand issues"). */
+.df-issues summary::before {
+  content: "▸";
+  display: inline-block;
+  font-size: 9px;
+  transition: transform 120ms ease;
+  color: var(--warn-ink);
+}
+.df-issues[open] summary::before {
+  transform: rotate(90deg);
+}
 .df-issues ul {
   margin: var(--pad-3) 0 0;
   padding: 0;
@@ -1595,6 +1617,7 @@ input,
     0 0 0 0.5px var(--line),
     0 1px 2px rgba(0, 0, 0, 0.03);
   transition: all 160ms;
+  cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: var(--pad-3);
@@ -1603,13 +1626,13 @@ input,
   width: 100%;
   color: inherit;
 }
-/* The card body is NOT interactive (the explicit Export/Show/Delete buttons
-   are) — so no pointer cursor / button-like lift, which would be a false
-   affordance. A faint border-glow on hover is enough to show it's a unit. */
+/* The card body opens the library folder on click — a genuine action, so the
+   pointer cursor + a slight lift on hover are honest affordances. */
 .df-libcard:hover {
+  transform: translateY(-1px);
   box-shadow:
     0 0 0 0.5px var(--line-2),
-    0 2px 8px -6px rgba(0, 0, 0, 0.08);
+    0 6px 18px -10px rgba(0, 0, 0, 0.12);
 }
 .df-libcard.active {
   box-shadow:
@@ -1893,7 +1916,7 @@ input,
 .df-swatch:hover {
   transform: scale(1.08);
 }
-.df-swatch[aria-checked="true"] {
+.df-swatch[aria-pressed="true"] {
   box-shadow:
     0 0 0 2px var(--card),
     0 0 0 4px var(--ink);

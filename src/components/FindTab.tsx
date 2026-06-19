@@ -409,6 +409,7 @@ export default function FindTab() {
 
   async function handleSearch() {
     if (!query().trim() || rs().running || settings.selectedSources.length === 0) return;
+    setStopping(false); // clear any stranded "Stopping…" latch from a prior run
     setExportedTo(null);
     // Also clear a prior export ERROR — otherwise a stale red "Export failed"
     // banner floats above the new run for its whole duration.
@@ -426,6 +427,10 @@ export default function FindTab() {
         { title: "Stop search", kind: "warning" },
       );
       if (!ok) return;
+      // The run may have finished naturally while the confirm dialog was open —
+      // don't latch "Stopping…" on an already-ended run (the reset effect won't
+      // fire again, and the latch would strand the NEXT run's Stop button).
+      if (!rs().running) return;
     }
     setStopping(true);
     void api.cancelRun();
@@ -1115,10 +1120,21 @@ export default function FindTab() {
                     Saved{" "}
                     <span style={{ color: "var(--ok-ink)", "font-weight": 700 }}>{rs().done}</span>
                   </div>
-                  <div style={{ "max-height": "360px", "overflow-y": "auto" }}>
-                    <Index each={savedDocs()}>{(d) => <DocRow doc={d()} kind="saved" />}</Index>
-                  </div>
-                  {renderSavedOverflow()}
+                  <Show
+                    when={savedDocs().length > 0}
+                    fallback={
+                      <div
+                        style={{ padding: "12px 0", "font-size": "12px", color: "var(--ink-3)" }}
+                      >
+                        {rs().running ? "Nothing saved yet…" : "No documents were saved."}
+                      </div>
+                    }
+                  >
+                    <div style={{ "max-height": "360px", "overflow-y": "auto" }}>
+                      <Index each={savedDocs()}>{(d) => <DocRow doc={d()} kind="saved" />}</Index>
+                    </div>
+                    {renderSavedOverflow()}
+                  </Show>
                 </section>
               </div>
             </Show>

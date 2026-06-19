@@ -270,17 +270,26 @@ export default function LibraryView() {
                 const isDeleting = () => deletingPath() === lib.path;
                 const isBusy = () => isExporting() || isDeleting();
                 return (
-                  // Plain card, not a role=button: there is no in-app detail view
-                  // for a selected library, so a card-level click had no real
-                  // effect AND its keydown handler swallowed Enter/Space on the
-                  // inner Export/Show/Delete buttons. The explicit buttons are the
-                  // interactive elements.
+                  // Clicking the card opens its folder (the obvious "see my
+                  // documents" action — there's no in-app detail view). Mouse-only
+                  // affordance: NO role=button/tabindex/keydown on the card itself
+                  // (that previously swallowed Enter/Space on the inner buttons);
+                  // keyboard users use the explicit, focusable "Show" button. The
+                  // actions wrapper stops propagation so its buttons act alone.
                   <div
                     classList={{
                       "df-libcard": true,
                       active: isActive(),
                       "opacity-60 pointer-events-none": isDeleting(),
                     }}
+                    title="Open this library's folder"
+                    onClick={() =>
+                      api
+                        .revealInFinder(lib.path)
+                        .catch((e) =>
+                          setActionError(`Couldn't open this library's folder: ${String(e)}`),
+                        )
+                    }
                   >
                     <div class="df-libcard-head">
                       <div class="df-libcard-q" title={lib.query ?? lib.name}>

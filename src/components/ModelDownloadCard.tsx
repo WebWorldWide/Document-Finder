@@ -168,7 +168,12 @@ export default function ModelDownloadCard(props: { model: ModelInfo; hideDownloa
         <button
           onClick={() => modelsStore.download(m().id)}
           class="btn-tactile mt-3 flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold"
-          style={{ background: "var(--color-primary)", color: "var(--accent-fg)" }}
+          style={{
+            // Darken the fill 12% like .df-btn.accent so near-white text clears
+            // AA on the light-theme accents (raw sky/electric/amber are <4.5:1).
+            background: "color-mix(in oklch, var(--color-primary) 88%, black)",
+            color: "var(--accent-fg)",
+          }}
         >
           <Download size={12} />
           Download {formatBytes(m().approx_bytes)}
