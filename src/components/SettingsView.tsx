@@ -94,7 +94,10 @@ export default function SettingsView() {
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(() => {
       tries += 1;
-      void modelsStore.refresh();
+      // Poll ONLY embedding readiness — NOT full refresh() — so the model cards
+      // don't remount every 1.5s during a warm. embeddingState is also driven
+      // out-of-band by the df:model_status listener.
+      modelsStore.refreshEmbeddingStatus();
       const st = modelsStore.embeddingState;
       // Keep the spinner until the worker reaches a terminal state (loaded/failed,
       // which the df:model_status listener flips out-of-band) — capped at ~300s to
@@ -146,11 +149,22 @@ export default function SettingsView() {
     void modelsStore.ensureSubscribed();
   });
 
+  // Upper bounds matching each field's input max=, enforced here because the
+  // HTML max attribute only constrains the steppers — a TYPED value (e.g. 500
+  // parallel downloads) would otherwise sail past it and be persisted/launched.
+  const NUM_MAX: Record<"perSource" | "maxTotal" | "concurrency", number> = {
+    perSource: 500,
+    maxTotal: 10000,
+    concurrency: 32,
+  };
   function numInput(field: "perSource" | "maxTotal" | "concurrency") {
     return (e: InputEvent & { currentTarget: HTMLInputElement }) => {
       const v = parseInt(e.currentTarget.value, 10);
       if (!isNaN(v) && v > 0) {
-        setSettings(field, v);
+        const clamped = Math.min(v, NUM_MAX[field]);
+        setSettings(field, clamped);
+        // Snap the visible input back if we clamped a typed over-max value.
+        if (clamped !== v) e.currentTarget.value = String(clamped);
         saveSettings();
       }
     };
@@ -209,7 +223,7 @@ export default function SettingsView() {
                 }
               />
               <Show when={libRootError()}>
-                <span class="help" style={{ color: "var(--bad)" }}>
+                <span class="help" style={{ color: "var(--bad-ink)" }}>
                   {libRootError()}
                 </span>
               </Show>
@@ -445,6 +459,14 @@ export default function SettingsView() {
               }}
             >
               <Switch>
+                {/* A warm in flight takes precedence over the on-disk state, so a
+                    "Try again" on cached-but-failed weights shows a spinner —
+                    not an instant false-positive "downloaded" caption. */}
+                <Match when={modelsStore.embeddingWarming}>
+                  <Loader2 size={12} class="spin" />
+                  <span style={{ "font-weight": 500 }}>Embedding model</span>
+                  <span style={{ color: "var(--ink-3)" }}>· loading…</span>
+                </Match>
                 <Match when={modelsStore.embeddingState === "loaded"}>
                   <CheckCircle2 size={12} style={{ color: "var(--ok)" }} />
                   <span style={{ "font-weight": 500 }}>Embedding model</span>
@@ -484,9 +506,9 @@ export default function SettingsView() {
                   </button>
                 </Match>
                 <Match when={modelsStore.embeddingState === "failed"}>
-                  <AlertCircle size={12} style={{ color: "var(--bad)" }} />
+                  <AlertCircle size={12} style={{ color: "var(--bad-ink)" }} />
                   <span style={{ "font-weight": 500 }}>Embedding model</span>
-                  <span style={{ color: "var(--bad)" }}>
+                  <span style={{ color: "var(--bad-ink)" }}>
                     · couldn't load — semantic rerank unavailable (see logs)
                   </span>
                   <span style={{ flex: 1 }} />
@@ -511,7 +533,7 @@ export default function SettingsView() {
                   gap: "8px",
                   padding: "10px 12px",
                   "border-radius": "var(--r-2)",
-                  color: "var(--bad)",
+                  color: "var(--bad-ink)",
                   background: "var(--bad-soft)",
                   "font-size": "12px",
                 }}
@@ -642,7 +664,12 @@ export default function SettingsView() {
           {/* Danger zone — clean uninstall */}
           <section class="df-section">
             <h2
-              style={{ color: "var(--bad)", display: "flex", "align-items": "center", gap: "6px" }}
+              style={{
+                color: "var(--bad-ink)",
+                display: "flex",
+                "align-items": "center",
+                gap: "6px",
+              }}
             >
               <AlertCircle size={16} /> Danger zone
             </h2>
@@ -657,7 +684,7 @@ export default function SettingsView() {
                 gap: "8px",
                 "font-size": "12px",
                 margin: "10px 0",
-                color: "var(--bad)",
+                color: "var(--bad-ink)",
               }}
             >
               <input
@@ -675,7 +702,7 @@ export default function SettingsView() {
               class="df-btn sm"
               disabled={purging()}
               onClick={() => void handlePurge()}
-              style={{ background: "var(--bad-soft)", color: "var(--bad)" }}
+              style={{ background: "var(--bad-soft)", color: "var(--bad-ink)" }}
             >
               <Show when={purging()} fallback={<Trash2 size={12} />}>
                 <Loader2 size={12} class="animate-spin" />

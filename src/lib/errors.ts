@@ -9,6 +9,11 @@ import { SOURCE_LABELS } from "./utils";
 export function humanizeDownloadError(raw: string | undefined | null): string {
   if (!raw) return "The download didn't complete.";
   const r = raw.toLowerCase();
+  // The offline pre-check writes a deliberately friendly, offline-specific
+  // message; pass it through verbatim instead of collapsing it into the generic
+  // "couldn't reach the server" line (it contains the word "connect", which the
+  // network branch below would otherwise match).
+  if (r.includes("offline")) return raw;
   // Match an ACTUAL HTTP status (the backend formats these as "(HTTP 404)"), not
   // any stray 3-digit number — otherwise a message like "only 500 bytes — likely
   // an error page" gets misread as a 5xx server problem.

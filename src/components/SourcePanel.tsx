@@ -111,7 +111,8 @@ export default function SourcePanel(props: {
         <span style={{ flex: 1 }} />
         <Show when={totalHits() > 0}>
           <span style={{ color: "var(--ink-3)" }}>
-            last run · <strong>{totalHits()}</strong> hits across all sources
+            {props.running ? "this run" : "last run"} · <strong>{totalHits()}</strong> hits across
+            all sources
           </span>
         </Show>
       </div>

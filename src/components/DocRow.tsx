@@ -54,7 +54,7 @@ export default function DocRow(props: { doc: StreamDoc; kind: "in-flight" | "sav
           </div>
         </Show>
         <Show when={props.kind === "saved" && props.doc.error}>
-          <span class="df-doc-bytes" style={{ color: "var(--bad)" }} title={props.doc.error}>
+          <span class="df-doc-bytes" style={{ color: "var(--bad-ink)" }} title={props.doc.error}>
             {props.doc.error}
           </span>
         </Show>

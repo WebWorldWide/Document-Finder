@@ -94,6 +94,10 @@ interface RunState {
   /// Lets the UI say "Cancelled" instead of "complete".
   cancelled: boolean;
   query: string;
+  /// Source set this run was launched with (snapshot of selectedSources at
+  /// start). The run card's "By source" lanes read THIS, not the live settings,
+  /// so toggling sources after a run can't reshape the finished run's graph.
+  sources: string[];
   subQueries: string[];
   found: number;
   done: number;
@@ -122,6 +126,7 @@ const [state, setState] = createStore<RunState>({
   running: false,
   cancelled: false,
   query: "",
+  sources: [],
   subQueries: [],
   found: 0,
   done: 0,
@@ -158,6 +163,7 @@ function reset(query: string) {
     running: false,
     cancelled: false,
     query,
+    sources: [],
     subQueries: [],
     found: 0,
     done: 0,
@@ -499,6 +505,9 @@ async function startSearch(query: string) {
   }
 
   reset(query.trim());
+  // Snapshot the source set this run uses, so the run card's lanes stay fixed to
+  // it even if the user re-toggles sources after the run.
+  setState("sources", [...settings.selectedSources]);
   // Pipeline strip should clear from the previous run before stage events
   // for the new run start arriving.
   pipelineStore.reset();
@@ -561,6 +570,8 @@ async function retryFailed() {
   // the first item — there's no discovery phase to populate them, and without
   // `total` the bar would sit at 0% until the first download event arrives.
   setState({ running: true, folder, found: docs.length, total: docs.length });
+  // Lanes for the retry reflect the sources of the docs being retried.
+  setState("sources", Array.from(new Set(docs.map((d) => baseSourceId(d.source)))));
   pipelineStore.reset();
   void pipelineStore.ensureSubscribed();
 

@@ -60,6 +60,21 @@ const activityTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 // fires multiple times. Sharing one promise collapses them to a single subscribe.
 let subscribing: Promise<void> | null = null;
 
+/// Poll ONLY the embedding readiness probes (no model-list re-fetch). The warm
+/// poll uses this so it doesn't call full refresh() every 1.5s — which replaced
+/// state.models with new object references and tore down/recreated every
+/// ModelDownloadCard (dropping hover/focus, resetting an in-flight LLM bar).
+function refreshEmbeddingStatus() {
+  api
+    .isEmbeddingLoaded()
+    .then((loaded) => setState("embeddingLoaded", loaded))
+    .catch(() => {});
+  api
+    .embeddingDownloaded()
+    .then((dl) => setState("embeddingDownloaded", dl))
+    .catch(() => {});
+}
+
 async function refresh() {
   setState("loading", true);
   setState("error", null);
@@ -70,14 +85,7 @@ async function refresh() {
     reconcileLlmModel(list.map((m) => m.id));
     // Embedding readiness is decoupled from the registry list — fastembed
     // owns its own model cache. Best-effort poll; ignore errors.
-    api
-      .isEmbeddingLoaded()
-      .then((loaded) => setState("embeddingLoaded", loaded))
-      .catch(() => {});
-    api
-      .embeddingDownloaded()
-      .then((dl) => setState("embeddingDownloaded", dl))
-      .catch(() => {});
+    refreshEmbeddingStatus();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("listModels failed", e);
@@ -258,6 +266,7 @@ export const modelsStore = {
     return state;
   },
   refresh,
+  refreshEmbeddingStatus,
   ensureSubscribed,
   download,
   cancel,

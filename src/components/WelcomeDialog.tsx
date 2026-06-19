@@ -29,7 +29,16 @@ export default function WelcomeDialog() {
   // dismissed it. The dismiss flag is the real source of truth for "has the user
   // been through onboarding"; tying visibility to a background cache side-effect
   // also made the modal vanish out from under the user mid-download.
-  const open = () => !settings.aiOnboardingDismissed && modelsStore.state.models.length > 0;
+  // Show once the model list has finished its first load attempt — NOT gated on
+  // it succeeding. If list_models errors (or a non-AI build returns empty), the
+  // onboarding must still appear so the user sees the (AI-independent) web-search
+  // reassurance, can dismiss it, and the dismiss flag gets persisted — otherwise
+  // the app silently re-attempts the welcome every launch with nothing shown.
+  // The AI section renders its own empty/error fallback below.
+  const open = () =>
+    !settings.aiOnboardingDismissed &&
+    !modelsStore.state.loading &&
+    (modelsStore.state.models.length > 0 || modelsStore.state.error !== null);
 
   // The BGE embedding isn't in the registry (fastembed-managed), so add its
   // approximate on-disk size to the headline total — otherwise "~total" only
@@ -288,9 +297,19 @@ export default function WelcomeDialog() {
                     </Show>
                   </div>
                 </div>
-                <For each={modelsStore.state.models.filter((m) => m.is_default)}>
-                  {(model) => <ModelDownloadCard model={model} />}
-                </For>
+                <Show
+                  when={modelsStore.state.models.some((m) => m.is_default)}
+                  fallback={
+                    <p class="surface-raised-subtle p-3 text-[11px] text-[var(--color-foreground-muted)]">
+                      Couldn&rsquo;t load the model list right now — you can manage AI models later
+                      in Settings.
+                    </p>
+                  }
+                >
+                  <For each={modelsStore.state.models.filter((m) => m.is_default)}>
+                    {(model) => <ModelDownloadCard model={model} hideDownload />}
+                  </For>
+                </Show>
                 <Show
                   when={!allReady()}
                   fallback={

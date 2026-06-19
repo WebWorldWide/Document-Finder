@@ -118,6 +118,10 @@
   --warn-ink: #876110;
   --bad: #a13a2a;
   --bad-soft: #f1dcd6;
+  /* Text-grade red. In light themes --bad already reads fine, so this aliases
+     it; the midnight block lifts it to a readable tint (the brick-red --bad is
+     ~2.5:1 dark-on-dark there). Dots/borders/icons keep the saturated --bad. */
+  --bad-ink: #a13a2a;
 
   /* ---- Legacy --color-* aliases → editorial tokens (transition safety net
    * for components mid-migration; arbitrary-value utilities like
@@ -183,6 +187,9 @@
   /* Lighter amber for text on the dark warn-soft in midnight. */
   --warn-ink: #e3b964;
   --bad-soft: #2e1816;
+  /* Lighter red for error TEXT in midnight (the brick-red --bad #a13a2a is
+     ~2.5:1 on the dark surfaces). Dots/borders/icons keep --bad. */
+  --bad-ink: #e8907f;
 }
 
 /* ACCENT SWAPS */
@@ -689,9 +696,13 @@ input,
   background: var(--ink-2);
 }
 .df-btn.accent {
-  background: var(--accent);
+  /* Darken the fill ~12% so near-white --accent-fg clears WCAG AA (the raw
+     light-theme accents — sky/electric/amber/teal — were ~3.4-4.5:1 with white
+     text on the 12.5px/600 label). Only the solid fill is darkened; the accent
+     hue is unchanged everywhere else (borders, dots, links). */
+  background: color-mix(in oklch, var(--accent) 88%, black);
   color: var(--accent-fg);
-  border-color: var(--accent);
+  border-color: color-mix(in oklch, var(--accent) 88%, black);
   padding: 10px 18px;
   font-weight: 600;
 }
@@ -797,6 +808,14 @@ input,
 }
 .df-srcrow:hover {
   background: var(--hover);
+}
+/* Locked during a run: toggling is ignored, so don't present an interactive
+   hover/pointer affordance, and dim slightly like a native disabled control. */
+.df-srcrow.locked {
+  cursor: default;
+}
+.df-srcrow.locked:hover {
+  background: var(--card);
 }
 .df-srcrow.off {
   opacity: 0.5;
@@ -1495,7 +1514,7 @@ input,
   color: var(--ok);
 }
 .df-doc-status.bad {
-  color: var(--bad);
+  color: var(--bad-ink);
 }
 
 /* ========== Issues disclosure ========== */
@@ -1873,7 +1892,7 @@ input,
 .df-banner.bad {
   background: var(--bad-soft);
   border-color: color-mix(in oklch, var(--bad) 35%, transparent);
-  color: var(--bad);
+  color: var(--bad-ink);
 }
 .df-banner svg {
   flex-shrink: 0;
@@ -2056,9 +2075,11 @@ input,
   color: var(--ink);
 }
 .pill-toggle.is-active {
-  background: var(--accent);
+  /* Same AA darken as .df-btn.accent — white-ish --accent-fg on the raw light
+     accents was below 4.5:1. */
+  background: color-mix(in oklch, var(--accent) 88%, black);
   color: var(--accent-fg);
-  border-color: var(--accent);
+  border-color: color-mix(in oklch, var(--accent) 88%, black);
 }
 .tag-pill {
   border-radius: 99px;

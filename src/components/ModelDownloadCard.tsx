@@ -4,7 +4,7 @@ import type { ModelInfo } from "@/lib/tauri";
 import { modelsStore } from "@/stores/models";
 import { formatBytes, formatDuration } from "@/lib/utils";
 
-export default function ModelDownloadCard(props: { model: ModelInfo }) {
+export default function ModelDownloadCard(props: { model: ModelInfo; hideDownload?: boolean }) {
   const m = () => props.model;
 
   const pct = createMemo(() => {
@@ -30,7 +30,10 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
   const sizeLine = createMemo(() => {
     const s = m().status;
     if (s.kind === "downloading") {
-      return `${formatBytes(s.downloaded)} / ${formatBytes(s.total || m().approx_bytes)}`;
+      // formatBytes(0) is an em-dash ("—"); show "0 B" at the start of a
+      // download so the line reads "0 B / 1.0 GB", not "— / 1.0 GB".
+      const dl = s.downloaded > 0 ? formatBytes(s.downloaded) : "0 B";
+      return `${dl} / ${formatBytes(s.total || m().approx_bytes)}`;
     }
     if (s.kind === "ready") {
       return formatBytes(m().on_disk_bytes || m().approx_bytes);
@@ -100,6 +103,13 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
       <div class="mt-3 flex items-center gap-2 text-[10px] text-[var(--color-foreground-muted)]">
         <StatusIcon status={m().status} />
         <span class="font-mono">{sizeLine()}</span>
+        {/* SHA-256 verify takes a few seconds for a 1 GB GGUF — label it so the
+            card doesn't look like it reset to idle (the % pill + bar are
+            downloading-only and disappear during verify). */}
+        <Show when={m().status.kind === "verifying"}>
+          <span>·</span>
+          <span class="italic">Verifying…</span>
+        </Show>
         <Show when={m().status.kind === "downloading"}>
           <span>·</span>
           <Show when={speed()} fallback={<span class="italic">Starting…</span>}>
@@ -141,8 +151,15 @@ export default function ModelDownloadCard(props: { model: ModelInfo }) {
         }}
       </Show>
 
-      {/* Primary action when not downloaded yet */}
-      <Show when={m().status.kind === "not_downloaded" || m().status.kind === "cancelled"}>
+      {/* Primary action when not downloaded yet. Suppressed inside the welcome
+          dialog (hideDownload) so the single aggregate "Download both" button is
+          the only download trigger there — avoids two competing affordances. */}
+      <Show
+        when={
+          !props.hideDownload &&
+          (m().status.kind === "not_downloaded" || m().status.kind === "cancelled")
+        }
+      >
         <button
           onClick={() => modelsStore.download(m().id)}
           class="btn-tactile mt-3 flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold"

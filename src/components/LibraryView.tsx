@@ -176,7 +176,11 @@ export default function LibraryView() {
             refreshes (run-finished, post-delete) keep the existing grid mounted
             so it doesn't flash blank — which read as "did my libraries vanish?". */}
         <Show when={loading() && libraries().length === 0}>
-          <div style={{ display: "flex", "justify-content": "center", padding: "64px 0" }}>
+          <div
+            role="status"
+            aria-label="Loading your libraries"
+            style={{ display: "flex", "justify-content": "center", padding: "64px 0" }}
+          >
             <Loader2 size={24} class="spin" style={{ color: "var(--ink-3)" }} />
           </div>
         </Show>
@@ -244,7 +248,7 @@ export default function LibraryView() {
                     </div>
                     <div class="df-libcard-meta">
                       <span>
-                        <strong>{lib.n_docs}</strong> documents
+                        <strong>{lib.n_docs}</strong> document{lib.n_docs === 1 ? "" : "s"}
                       </span>
                       <span style={{ color: "var(--ink-4)" }}>·</span>
                       <span>{formatBytes(lib.size_bytes)}</span>

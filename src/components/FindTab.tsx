@@ -257,7 +257,14 @@ export default function FindTab() {
     }
     return totals;
   });
-  const laneSources = () => PRIMARY_SOURCES.filter((s) => settings.selectedSources.includes(s));
+  // The run card's lanes track the source set the RUN used (snapshot in
+  // runStore), not the live selection — so re-toggling sources after a run can't
+  // reshape the finished run's graph. Falls back to the live selection before a
+  // run has started (so the pre-run panel preview still renders).
+  const laneSources = () => {
+    const snap = rs().sources.length > 0 ? rs().sources : settings.selectedSources;
+    return PRIMARY_SOURCES.filter((s) => snap.includes(s));
+  };
   // Before downloads begin, the bars track per-source FOUND counts (live
   // discovery); once downloads start, they track saved + in-flight files.
   const laneMax = () => {
@@ -399,11 +406,24 @@ export default function FindTab() {
     () => rs().completed.filter((c) => c.status === "done" && c.extractError).length,
   );
   // A finished run that produced nothing — folder is set (a run happened) but
-  // no candidates were found and nothing downloaded.
+  // no candidates were found and nothing downloaded. Excludes the cancelled case
+  // (handled separately) so a user Stop isn't blamed as "no documents found".
   const noResults = createMemo(
     () =>
       !rs().running &&
+      !rs().cancelled &&
       rs().folder !== null &&
+      rs().found === 0 &&
+      rs().completed.length === 0 &&
+      !rs().fatalError,
+  );
+  // The user Stopped before anything was found/saved — a deliberate outcome, so
+  // show a neutral note instead of the "no documents found, try broader terms"
+  // banner (which would wrongly blame their query/connection).
+  const cancelledEmpty = createMemo(
+    () =>
+      !rs().running &&
+      rs().cancelled &&
       rs().found === 0 &&
       rs().completed.length === 0 &&
       !rs().fatalError,
@@ -590,7 +610,7 @@ export default function FindTab() {
           </details>
 
           <Show when={settings.selectedSources.length === 0}>
-            <p style={{ "margin-top": "10px", "font-size": "12px", color: "var(--bad)" }}>
+            <p style={{ "margin-top": "10px", "font-size": "12px", color: "var(--bad-ink)" }}>
               Enable at least one source to start a search.
             </p>
           </Show>
@@ -631,6 +651,15 @@ export default function FindTab() {
               <strong>No documents found.</strong> Try broader or different terms, enable more
               sources, or check your connection. A source may have been rate-limited — expand any
               issues below for details.
+            </Banner>
+          </div>
+        </Show>
+
+        {/* CANCELLED EMPTY — user Stopped before anything was saved. */}
+        <Show when={cancelledEmpty()}>
+          <div style={{ "margin-top": "22px" }}>
+            <Banner kind="warn">
+              <strong>Search cancelled</strong> before any documents were saved.
             </Banner>
           </div>
         </Show>
