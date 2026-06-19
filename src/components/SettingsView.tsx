@@ -24,6 +24,7 @@ import {
   type Quality,
 } from "@/stores/settings";
 import { modelsStore } from "@/stores/models";
+import { uiStore } from "@/stores/ui";
 import ModelDownloadCard from "./ModelDownloadCard";
 import MetaSearchHealthBar from "./MetaSearchHealthBar";
 import ThemePicker from "./ThemePicker";
@@ -131,6 +132,16 @@ export default function SettingsView() {
         if (pollTimer) clearInterval(pollTimer);
         pollTimer = undefined;
         setWarming(false);
+        // Announce the outcome for screen-reader users — the status icon/caption
+        // swap below is silent on its own (matches the export/download announces
+        // in FindTab/LibraryView).
+        uiStore.announce(
+          st === "loaded"
+            ? "Embedding model ready."
+            : st === "failed"
+              ? "Embedding model failed to load. Semantic rerank is unavailable."
+              : "Embedding model is still loading in the background.",
+        );
       }
     }, 1500);
   }
@@ -315,7 +326,7 @@ export default function SettingsView() {
                       border: "none",
                       background: "transparent",
                       cursor: "pointer",
-                      color: activeIntensity() === level ? "var(--accent)" : "var(--ink-3)",
+                      color: activeIntensity() === level ? "var(--accent-ink)" : "var(--ink-3)",
                       "font-weight": activeIntensity() === level ? 600 : 400,
                     }}
                   >

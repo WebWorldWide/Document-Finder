@@ -890,7 +890,7 @@ export default function FindTab() {
                       </>
                     }
                   >
-                    <span style={{ color: "var(--accent)", "font-weight": 600 }}>
+                    <span style={{ color: "var(--accent-ink)", "font-weight": 600 }}>
                       {phaseLabel()}
                     </span>
                   </Show>

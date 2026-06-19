@@ -181,8 +181,12 @@ export default function ModelDownloadCard(props: { model: ModelInfo; hideDownloa
         </button>
       </Show>
 
-      {/* Cancel while downloading */}
-      <Show when={m().status.kind === "downloading" || m().status.kind === "verifying"}>
+      {/* Cancel while downloading. NOT shown during "verifying": the cancel token
+          is only checked in the byte-streaming loop, so the SHA-256 verify + final
+          rename run to completion regardless — a Cancel click there would be a
+          silent no-op (the model still becomes Ready). The verify window is a few
+          seconds; hiding the button keeps the control honest. */}
+      <Show when={m().status.kind === "downloading"}>
         <button
           onClick={() => modelsStore.cancel(m().id)}
           class="btn-tactile mt-3 flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"

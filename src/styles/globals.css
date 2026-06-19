@@ -105,6 +105,12 @@
   --accent: #3b82f6;
   --accent-fg: #f4f7ff;
   --accent-soft: #dbeafe;
+  /* Text-grade accent: the raw saturated --accent is only ~3.7:1 on white
+     (sky/amber fail WCAG-AA for normal text), so accent-colored TEXT uses this
+     darkened variant — verified ≥5.8:1 on white across all 9 accents. Mirrors
+     the --ok-ink/--warn-ink/--bad-ink pattern. Midnight resets it to --accent
+     (the dark-theme accents are already calibrated for the dark surface). */
+  --accent-ink: color-mix(in oklch, var(--accent) 82%, black);
   --accent-ring: rgba(59, 130, 246, 0.18);
 
   /* STATUS */
@@ -176,6 +182,9 @@
 /* THEME: Midnight (dark) */
 [data-theme="midnight"] {
   color-scheme: dark;
+  /* The midnight accents are already tuned for the dark surface, so accent text
+     uses the raw accent here rather than the light-theme darkened variant. */
+  --accent-ink: var(--accent);
   --bg: #0e1014;
   --canvas: #151820;
   --card: #1c2029;
@@ -752,7 +761,9 @@ input,
    dark identity color isn't dark-on-dark (mirrors .df-doc-source). */
 .df-web-engine.on {
   border-color: var(--src-color);
-  color: var(--src-color);
+  /* Darken the engine label for AA on the light tint (brave/marginalia were
+     ~3.5-4.4:1); midnight lifts toward white below. Border/fill keep identity. */
+  color: color-mix(in oklch, var(--src-color) 78%, black);
   background: color-mix(in oklch, var(--src-color) 8%, transparent);
 }
 [data-theme="midnight"] .df-web-engine.on {
@@ -1102,7 +1113,7 @@ input,
   margin-right: 8px;
 }
 .df-run-q span.q-val {
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 .df-pulse {
   width: 8px;
@@ -1487,7 +1498,11 @@ input,
   padding: 2px 8px 2px 6px;
   border-radius: 99px;
   background: color-mix(in oklch, var(--src-color) 12%, transparent);
-  color: var(--src-color);
+  /* Several source identity colors are too light to clear WCAG-AA as text on the
+     light pill/card (web/arxiv/brave/marginalia were ~3.3-3.8:1). Darken the TEXT
+     for light themes (verified ≥5.8:1); midnight overrides toward white below.
+     The ::before dot keeps the true identity color. */
+  color: color-mix(in oklch, var(--src-color) 78%, black);
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -1528,7 +1543,7 @@ input,
   text-decoration: none;
 }
 .df-doc-title a:hover {
-  color: var(--accent);
+  color: var(--accent-ink);
   text-decoration: underline;
 }
 .df-doc-progress {
@@ -1617,7 +1632,9 @@ input,
   align-items: baseline;
 }
 .df-issues li code {
-  color: var(--src-color, var(--ink-3));
+  /* Darken the source-identity label for AA on the light card (raw token is
+     ~3.8:1); midnight lifts it toward white below. */
+  color: color-mix(in oklch, var(--src-color, var(--ink-3)) 78%, black);
   font-weight: 600;
   font-family: var(--font-ui);
   flex-shrink: 0;
@@ -2136,7 +2153,7 @@ input,
 }
 .btn-tactile.is-active {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 .focus-ring-inset:focus-visible {
   outline: 2px solid var(--accent);

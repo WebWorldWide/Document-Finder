@@ -65,9 +65,10 @@ export default function Sidebar() {
                 <span
                   class="df-nav-count"
                   style={{
-                    // Darkened accent (matches .df-btn.accent) so the small label
-                    // clears AA on light themes; the pulse dot stays full accent.
-                    color: "color-mix(in oklch, var(--accent) 88%, black)",
+                    // Text-grade accent so the small label clears AA on light
+                    // themes (and stays calibrated in midnight); the dot keeps
+                    // full accent.
+                    color: "var(--accent-ink)",
                     display: "flex",
                     "align-items": "center",
                     gap: "4px",
