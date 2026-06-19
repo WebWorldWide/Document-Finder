@@ -123,7 +123,14 @@ export default function ModelDownloadCard(props: { model: ModelInfo; hideDownloa
       </div>
 
       <Show when={m().status.kind === "downloading"}>
-        <div class="progress-capsule-track mt-2 h-2.5 w-full overflow-hidden">
+        <div
+          class="progress-capsule-track mt-2 h-2.5 w-full overflow-hidden"
+          role="progressbar"
+          aria-valuenow={pct()}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`Downloading ${m().display_name}`}
+        >
           <div
             class="progress-capsule-fill h-full transition-all duration-300"
             style={{ width: `${pct()}%` }}

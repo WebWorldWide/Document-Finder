@@ -179,7 +179,11 @@ async function subscribeNow() {
       return;
     }
 
+    // Captured inside patchStatus (which already has the model) so the announce
+    // below doesn't read the reactive store in this untracked listener scope.
+    let displayName = "Model";
     patchStatus(model_id, (m) => {
+      displayName = m.display_name;
       switch (status) {
         case "ready":
           m.status = { kind: "ready" };
@@ -199,6 +203,17 @@ async function subscribeNow() {
           break;
       }
     });
+    // Announce terminal LLM-download transitions for screen-reader users — the
+    // card's icon/%/bar swap is silent on its own (matches the embedding-warm and
+    // model-delete announces). A "ready"/"failed" status event only fires after an
+    // actual download, so this never spams on startup (the list reports disk state).
+    if (status === "ready" || status === "failed") {
+      uiStore.announce(
+        status === "ready"
+          ? `${displayName} downloaded and ready.`
+          : `${displayName} download failed${detail ? `: ${detail}` : ""}.`,
+      );
+    }
   });
 }
 

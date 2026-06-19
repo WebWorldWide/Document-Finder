@@ -339,7 +339,11 @@ export default function WelcomeDialog() {
                   <Show
                     when={!anyLlmBusy()}
                     fallback={
-                      <p class="mt-2 py-2 text-center text-[11px] text-[var(--color-foreground-muted)]">
+                      <p
+                        class="mt-2 py-2 text-center text-[11px] text-[var(--color-foreground-muted)]"
+                        role="status"
+                        aria-live="polite"
+                      >
                         Downloading… you can keep using the app.
                       </p>
                     }
