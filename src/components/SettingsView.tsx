@@ -10,7 +10,7 @@ import {
   AlertCircle,
   Trash2,
 } from "lucide-solid";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, open } from "@tauri-apps/plugin-dialog";
 import { api, type LogInfo } from "@/lib/tauri";
 import {
   settings,
@@ -34,6 +34,29 @@ export default function SettingsView() {
   const [logInfo, setLogInfo] = createSignal<LogInfo | null>(null);
   const [warming, setWarming] = createSignal(false);
   const [libRootError, setLibRootError] = createSignal<string | null>(null);
+  // Local draft for the library-folder field. Typing must NOT write the global
+  // settings.libraryRoot per keystroke: the always-mounted Sidebar reacts to it
+  // and would fire list_libraries against every half-typed path (returning [] and
+  // flickering the Recent list + Library badge to empty). We commit only on
+  // change/blur (or the picker). Kept in sync when the committed root changes
+  // (async default on first launch, or a successful commit).
+  const [libRootDraft, setLibRootDraft] = createSignal(settings.libraryRoot);
+  createEffect(() => setLibRootDraft(settings.libraryRoot));
+  const commitLibRoot = (path: string) =>
+    setLibraryRoot(path)
+      .then(() => setLibRootError(null))
+      .catch((err) => setLibRootError(String(err)));
+  const browseLibRoot = async () => {
+    try {
+      const picked = await open({
+        directory: true,
+        defaultPath: settings.libraryRoot || undefined,
+      });
+      if (typeof picked === "string") commitLibRoot(picked);
+    } catch (err) {
+      setLibRootError(String(err));
+    }
+  };
   const [purging, setPurging] = createSignal(false);
   const [purgeMsg, setPurgeMsg] = createSignal<string | null>(null);
   const [purgeLibrary, setPurgeLibrary] = createSignal(false);
@@ -217,21 +240,26 @@ export default function SettingsView() {
               extracted text.
             </p>
             <div class="df-field">
-              <label>Folder path</label>
-              <input
-                class="mono"
-                type="text"
-                value={settings.libraryRoot}
-                onInput={(e) => {
-                  setSettings("libraryRoot", e.currentTarget.value);
-                  saveSettings();
-                }}
-                onChange={(e) =>
-                  setLibraryRoot(e.currentTarget.value)
-                    .then(() => setLibRootError(null))
-                    .catch((err) => setLibRootError(String(err)))
-                }
-              />
+              <label for="lib-root">Folder path</label>
+              <div style={{ display: "flex", gap: "6px", "align-items": "stretch" }}>
+                <input
+                  id="lib-root"
+                  class="mono"
+                  type="text"
+                  style={{ flex: 1, "min-width": 0 }}
+                  value={libRootDraft()}
+                  onInput={(e) => setLibRootDraft(e.currentTarget.value)}
+                  onChange={(e) => commitLibRoot(e.currentTarget.value)}
+                />
+                <button
+                  type="button"
+                  class="df-btn ghost sm"
+                  style={{ flex: "none", gap: "5px" }}
+                  onClick={browseLibRoot}
+                >
+                  <FolderOpen size={13} /> Browse…
+                </button>
+              </div>
               <Show when={libRootError()}>
                 <span class="help" style={{ color: "var(--bad-ink)" }}>
                   {libRootError()}
@@ -333,8 +361,9 @@ export default function SettingsView() {
               </summary>
               <div class="df-field-row" style={{ "margin-top": "10px" }}>
                 <div class="df-field">
-                  <label>Per source</label>
+                  <label for="depth-persource">Per source</label>
                   <input
+                    id="depth-persource"
                     type="number"
                     min="1"
                     value={settings.perSource}
@@ -344,8 +373,9 @@ export default function SettingsView() {
                   <span class="help">Docs per source, per sub-query</span>
                 </div>
                 <div class="df-field">
-                  <label>Max total</label>
+                  <label for="depth-maxtotal">Max total</label>
                   <input
+                    id="depth-maxtotal"
                     type="number"
                     min="1"
                     value={settings.maxTotal}
@@ -355,8 +385,9 @@ export default function SettingsView() {
                   <span class="help">Hard cap across all sources</span>
                 </div>
                 <div class="df-field">
-                  <label>Parallel downloads</label>
+                  <label for="depth-concurrency">Parallel downloads</label>
                   <input
+                    id="depth-concurrency"
                     type="number"
                     min="1"
                     max="32"
@@ -427,7 +458,9 @@ export default function SettingsView() {
               {settings.quality === "fast" &&
                 "Casts a wide net with no AI models needed: every search automatically fans out into several related sub-queries across all sources, then ranks by keyword relevance. Returns immediately."}
               {settings.quality === "balanced" &&
-                "Everything in Fast's broad sub-query fan-out, plus semantic reranking via the embedding model — top results are re-scored by query meaning, not just keyword overlap. When the local LLM is installed, it widens the fan-out even further with AI-generated sub-queries (no slowdown — it runs alongside discovery)."}
+                (modelsStore.embeddingState === "failed"
+                  ? "Everything in Fast's broad sub-query fan-out. Semantic reranking is currently unavailable — the embedding model failed to load (retry it under AI models below), so results fall back to keyword ranking. When the local LLM is installed, it still widens the fan-out with AI-generated sub-queries."
+                  : "Everything in Fast's broad sub-query fan-out, plus semantic reranking via the embedding model — top results are re-scored by query meaning, not just keyword overlap. When the local LLM is installed, it widens the fan-out even further with AI-generated sub-queries (no slowdown — it runs alongside discovery).")}
               {settings.quality === "thorough" &&
                 "Full AI pipeline: the LLM fans your search into the widest set of sub-queries, then semantic reranking, then an LLM pass that judges borderline results. Broadest and most precise; several seconds slower."}
             </p>

@@ -93,7 +93,9 @@
   --card-2: #f9f5ec;
   --ink: #1a1815;
   --ink-2: #4a463d;
-  --ink-3: #7c766b;
+  /* Darkened from #7c766b so muted text clears WCAG-AA (4.5:1) on the lighter
+     --card-2 / --canvas surfaces, not just on white --card (now ~5.0:1). */
+  --ink-3: #6f6a5f;
   --ink-4: #b0aa9d;
   --line: #e6dfd0;
   --line-2: #d6cdb9;
@@ -161,7 +163,9 @@
   --card-2: #f1f3f7;
   --ink: #15181f;
   --ink-2: #3e4452;
-  --ink-3: #6c7384;
+  /* Darkened from #6c7384 so muted text clears WCAG-AA (4.5:1) on the lighter
+     --card-2 / --canvas surfaces, not just on white --card (now ~5.2:1). */
+  --ink-3: #5f6678;
   --ink-4: #a8aebc;
   --line: #dde0e8;
   --line-2: #c8cdd9;
@@ -972,6 +976,12 @@ input,
 }
 .df-srcrow-status.live {
   color: var(--src-color);
+}
+/* Several source identity colors are intentionally dark and were dark-on-dark
+   here on the midnight card. Lift the live status TEXT toward white for AA
+   (mirrors .df-doc-source / .df-issues li code); the dot keeps true identity. */
+[data-theme="midnight"] .df-srcrow-status.live {
+  color: color-mix(in oklch, var(--src-color) 60%, white);
 }
 .df-srcrow-status.err {
   color: var(--bad-ink);

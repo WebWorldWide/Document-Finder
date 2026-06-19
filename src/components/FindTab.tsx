@@ -998,23 +998,31 @@ export default function FindTab() {
             {/* TELEMETRY */}
             <Show when={rs().subQueries.length > 0 || laneSources().length > 0}>
               <div class="df-tel">
-                <div class="df-tel-block">
-                  <div class="df-tel-label">Sub-queries ({rs().subQueries.length})</div>
-                  <For each={rs().subQueries}>
-                    {(sq, i) => (
-                      <div class="df-subq-row">
-                        <span class="df-subq-row-num">{String(i() + 1).padStart(2, "0")}</span>
-                        <span class="df-subq-row-text">
-                          <span>{sq}</span>
-                          <span class="df-subq-row-dots" style={{ "--src-color": "var(--accent)" }}>
-                            <i class={rs().running ? "live" : "done"} />
+                {/* Retry-failed re-runs without a discovery phase, so subQueries
+                    stays empty while laneSources() is non-empty — guard this block
+                    independently so a retry never renders a dead "Sub-queries (0)". */}
+                <Show when={rs().subQueries.length > 0}>
+                  <div class="df-tel-block">
+                    <div class="df-tel-label">Sub-queries ({rs().subQueries.length})</div>
+                    <For each={rs().subQueries}>
+                      {(sq, i) => (
+                        <div class="df-subq-row">
+                          <span class="df-subq-row-num">{String(i() + 1).padStart(2, "0")}</span>
+                          <span class="df-subq-row-text">
+                            <span>{sq}</span>
+                            <span
+                              class="df-subq-row-dots"
+                              style={{ "--src-color": "var(--accent)" }}
+                            >
+                              <i class={rs().running ? "live" : "done"} />
+                            </span>
                           </span>
-                        </span>
-                        <span class="df-subq-row-count" />
-                      </div>
-                    )}
-                  </For>
-                </div>
+                          <span class="df-subq-row-count" />
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
                 <div class="df-tel-block">
                   <div class="df-tel-label">By source</div>
                   <div class="df-lanes">
