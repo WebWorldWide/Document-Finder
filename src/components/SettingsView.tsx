@@ -25,6 +25,7 @@ import {
 } from "@/stores/settings";
 import { modelsStore } from "@/stores/models";
 import { uiStore } from "@/stores/ui";
+import { runStore } from "@/stores/run";
 import ModelDownloadCard from "./ModelDownloadCard";
 import MetaSearchHealthBar from "./MetaSearchHealthBar";
 import ThemePicker from "./ThemePicker";
@@ -148,20 +149,35 @@ export default function SettingsView() {
 
   async function handlePurge() {
     setPurgeMsg(null);
-    const msg = purgeLibrary()
+    // Snapshot the choice (the checkbox is disabled during the purge, so it can't
+    // change) and reuse it for the confirm message, the command, and the state
+    // reconciliation below.
+    const includeLibrary = purgeLibrary();
+    const msg = includeLibrary
       ? "Delete ALL Document Finder data including your downloaded document library? This permanently erases models, caches, logs, and every downloaded document and database. This cannot be undone."
       : "Delete Document Finder's app data (AI models, caches, run logs)? Your document library will be kept. This cannot be undone.";
     const ok = await ask(msg, { title: "Erase Document Finder data", kind: "warning" });
     if (!ok) return;
     setPurging(true);
     try {
-      const report = await api.purgeAllData(purgeLibrary());
+      const report = await api.purgeAllData(includeLibrary);
       // localStorage is the only place settings/theme persist — wipe it too so
       // preferences don't outlive a full erase.
       try {
         localStorage.clear();
       } catch {
         /* ignore */
+      }
+      // When the library itself was erased, reconcile the shared in-memory state
+      // so the sidebar count/Recent list, the Discover header stats, and the run
+      // card immediately match the "Erased" message — they're otherwise stale
+      // (pointing at just-deleted paths) until the Library tab re-lists from disk.
+      // Only on the include-library branch: keeping the library leaves the counts
+      // correct, and clearing them would be wrong.
+      if (includeLibrary) {
+        uiStore.setKnownLibraries([]);
+        uiStore.setActiveLibrary(null);
+        runStore.reset();
       }
       const removed = report?.removed?.length ?? 0;
       const failed = report?.failed?.length ?? 0;
