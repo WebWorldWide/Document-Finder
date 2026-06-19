@@ -158,7 +158,12 @@ pub struct DefaultDirsResp {
 /// Returns the default library root, e.g. ~/Documents/Document Finder/library.
 #[tauri::command]
 pub fn default_library_dir() -> Result<DefaultDirsResp, String> {
-    let docs = dirs::document_dir().ok_or("could not find Documents directory")?;
+    // Fall back to the home dir on a minimal Linux box where xdg-user-dirs isn't
+    // installed (document_dir() is None there) — otherwise the first-run library
+    // setup fails and the first search dead-ends with a cryptic error.
+    let docs = dirs::document_dir()
+        .or_else(dirs::home_dir)
+        .ok_or("could not find a Documents or home directory")?;
     let lib = docs.join("Document Finder").join("library");
     std::fs::create_dir_all(&lib).map_err(|e| e.to_string())?;
     Ok(DefaultDirsResp {
