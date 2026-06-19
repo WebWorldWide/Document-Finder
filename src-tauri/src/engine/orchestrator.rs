@@ -733,9 +733,17 @@ async fn download_and_extract(
                 if let Some(doi) =
                     super::dedup::extract_doi(doc.identifier.as_deref().unwrap_or(""))
                 {
-                    if let Some(oa_url) =
-                        super::downloader::resolve_oa_pdf_via_unpaywall(&client, &doi).await
-                    {
+                    // Race the lookup against Stop. Unlike the rest of the task,
+                    // resolve_oa_pdf_via_unpaywall takes no cancel token and is
+                    // bounded only by its internal 8s timeout, so without this a
+                    // Stop during this fallback could leave the "Stopping…" button
+                    // hung for up to 8s per in-flight task.
+                    let lookup = tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => None,
+                        r = super::downloader::resolve_oa_pdf_via_unpaywall(&client, &doi) => r,
+                    };
+                    if let Some(oa_url) = lookup {
                         if oa_url != doc.url {
                             let mut alt = doc.clone();
                             alt.url = oa_url;

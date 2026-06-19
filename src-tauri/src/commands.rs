@@ -70,18 +70,37 @@ fn confinement_root(state: &AppState) -> Result<PathBuf, String> {
 
 /// Reject directories too broad to serve as the confinement root. That root is
 /// the deletion boundary for `delete_library`, `export_library_zip`, and
-/// `purge_all_data(include_library)`, so letting a (renderer-supplied) root be a
-/// drive/filesystem root, the home dir, or the Documents dir itself would turn a
-/// later purge into a recursive wipe of unrelated user data. A dedicated
-/// *subfolder* is fine. `path` is expected to be already canonicalized.
+/// `purge_all_data(include_library)`, so letting a (renderer- or picker-supplied)
+/// root be a drive/filesystem root, the home dir, or any well-known top-level
+/// user/app dir would turn a later purge into a recursive wipe of unrelated user
+/// data (e.g. pointing the library at ~/Downloads, then erasing the library would
+/// delete everything in Downloads). A dedicated *subfolder* is fine. `path` is
+/// expected to be already canonicalized.
 fn is_sensitive_root(path: &Path) -> bool {
     // Filesystem root or a bare drive root (e.g. `C:\`) has no parent.
     if path.parent().is_none() {
         return true;
     }
-    for special in [dirs::home_dir(), dirs::document_dir()]
-        .into_iter()
-        .flatten()
+    // The home dir and every standard user-content / app-data dir. Using a
+    // dedicated subfolder of any of these (the default ~/Documents/Document
+    // Finder) is fine; the bare dir itself is not, because it holds the user's
+    // (or other apps') unrelated files.
+    for special in [
+        dirs::home_dir(),
+        dirs::document_dir(),
+        dirs::download_dir(),
+        dirs::desktop_dir(),
+        dirs::picture_dir(),
+        dirs::audio_dir(),
+        dirs::video_dir(),
+        dirs::public_dir(),
+        dirs::data_dir(),
+        dirs::data_local_dir(),
+        dirs::config_dir(),
+        dirs::cache_dir(),
+    ]
+    .into_iter()
+    .flatten()
     {
         if special.canonicalize().ok().as_deref() == Some(path) {
             return true;

@@ -35,6 +35,34 @@ export function compareLibraryRecency(a: string, b: string): number {
   return bs - as || bn - an;
 }
 
+/** Unix-seconds run timestamp embedded in a library folder name as the
+ *  `-{secs}-{nanos}` suffix, or null if the name has no such suffix. */
+export function libraryTimestamp(name: string): number | null {
+  const m = /-(\d+)-(\d+)$/.exec(name);
+  return m ? Number(m[1]) : null;
+}
+
+/** Compact relative age ("just now", "5m ago", "3h ago", "2d ago") for recent
+ *  items, falling back to an absolute date past a week. Lets the Library distinguish
+ *  multiple libraries created from the SAME query (re-searching a topic) — they'd
+ *  otherwise show identical titles. `secs` is unix seconds; `nowMs` is injectable
+ *  for tests. */
+export function formatRelativeTime(secs: number, nowMs: number = Date.now()): string {
+  const deltaMs = nowMs - secs * 1000;
+  const min = deltaMs / 60000;
+  if (min < 1) return "just now";
+  if (min < 60) return `${Math.floor(min)}m ago`;
+  const hr = min / 60;
+  if (hr < 24) return `${Math.floor(hr)}h ago`;
+  const day = hr / 24;
+  if (day < 7) return `${Math.floor(day)}d ago`;
+  return new Date(secs * 1000).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 export const SOURCE_LABELS: Record<string, string> = {
   arxiv: "arXiv",
   openalex: "OpenAlex",

@@ -13,7 +13,12 @@ import { api, type LibraryInfo } from "@/lib/tauri";
 import { uiStore } from "@/stores/ui";
 import { settings } from "@/stores/settings";
 import { runStore } from "@/stores/run";
-import { compareLibraryRecency, formatBytes } from "@/lib/utils";
+import {
+  compareLibraryRecency,
+  formatBytes,
+  libraryTimestamp,
+  formatRelativeTime,
+} from "@/lib/utils";
 import Banner from "./Banner";
 
 type SortKey = "updated" | "docs" | "size";
@@ -322,6 +327,12 @@ export default function LibraryView() {
                       </span>
                       <span style={{ color: "var(--ink-4)" }}>·</span>
                       <span>{formatBytes(lib.size_bytes)}</span>
+                      {/* Run age — distinguishes multiple libraries from the same
+                          query (re-searching a topic) that share an identical title. */}
+                      <Show when={libraryTimestamp(lib.name) !== null}>
+                        <span style={{ color: "var(--ink-4)" }}>·</span>
+                        <span>{formatRelativeTime(libraryTimestamp(lib.name)!)}</span>
+                      </Show>
                     </div>
                     <div
                       class="df-libcard-actions"

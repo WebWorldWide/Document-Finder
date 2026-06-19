@@ -7,6 +7,8 @@ import {
   formatBytes,
   formatDuration,
   sourceColor,
+  libraryTimestamp,
+  formatRelativeTime,
 } from "@/lib/utils";
 
 describe("formatBytes", () => {
@@ -83,5 +85,32 @@ describe("sourceColor", () => {
 
   it("strips meta_search/ prefix so candidate badges color by the engine", () => {
     expect(sourceColor("meta_search/brave")).toContain("--color-source-brave");
+  });
+});
+
+describe("libraryTimestamp", () => {
+  it("extracts the unix-seconds suffix from a library folder name", () => {
+    expect(libraryTimestamp("photosynthesis-1700000000-123456789")).toBe(1700000000);
+  });
+
+  it("returns null when there is no timestamp suffix", () => {
+    expect(libraryTimestamp("photosynthesis")).toBeNull();
+    expect(libraryTimestamp("")).toBeNull();
+  });
+});
+
+describe("formatRelativeTime", () => {
+  const now = 1700000000000; // fixed "now" in ms
+  it("shows 'just now' under a minute", () => {
+    expect(formatRelativeTime(now / 1000 - 30, now)).toBe("just now");
+  });
+  it("shows minutes, hours, and days for recent items", () => {
+    expect(formatRelativeTime(now / 1000 - 5 * 60, now)).toBe("5m ago");
+    expect(formatRelativeTime(now / 1000 - 3 * 3600, now)).toBe("3h ago");
+    expect(formatRelativeTime(now / 1000 - 2 * 86400, now)).toBe("2d ago");
+  });
+  it("falls back to an absolute date past a week", () => {
+    const out = formatRelativeTime(now / 1000 - 30 * 86400, now);
+    expect(out).not.toMatch(/ago|just now/);
   });
 });

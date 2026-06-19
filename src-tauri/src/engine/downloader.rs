@@ -239,7 +239,7 @@ static ANCHOR_DOWNLOADISH: Lazy<Regex> = Lazy::new(|| {
 
 /// Read at most `cap` bytes of a response body as lossy UTF-8. Used to scan an
 /// HTML landing page without pulling an unbounded body into memory.
-async fn read_body_capped(resp: reqwest::Response, cap: usize) -> Option<String> {
+async fn read_body_bytes_capped(resp: reqwest::Response, cap: usize) -> Option<Vec<u8>> {
     let mut stream = resp.bytes_stream();
     let mut buf: Vec<u8> = Vec::new();
     while let Some(chunk) = stream.next().await {
@@ -249,7 +249,7 @@ async fn read_body_capped(resp: reqwest::Response, cap: usize) -> Option<String>
             break;
         }
     }
-    Some(String::from_utf8_lossy(&buf).into_owned())
+    Some(buf)
 }
 
 /// Resolve a relative or absolute href against `base`, returning an absolute URL.
@@ -531,6 +531,9 @@ where
     // policy (see `sources::make_client` / `make_download_client`).
     let mut target = initial_url;
     let mut resolved_once = false;
+    // Set once we've confirmed (via magic bytes) that a Content-Type: text/html
+    // response is ACTUALLY a document, so the re-fetch skips the content-type gate.
+    let mut force_accept = false;
     let (resp, content_type) = loop {
         if let Err(reason) = crate::util::url_safety::validate_download_url(&target).await {
             return DownloadOutcome::Failed(format!("Blocked for safety: {reason}"));
@@ -546,15 +549,29 @@ where
             .unwrap_or("")
             .to_string();
 
-        if reject_content_type(&target, &content_type).is_some() {
+        if !force_accept && reject_content_type(&target, &content_type).is_some() {
             // Landing page / JSON / XML. Try to resolve a PDF link from the
             // HTML body — but only once, to bound work and avoid loops.
             if !resolved_once {
                 let base = resp.url().clone();
-                let resolved = match read_body_capped(resp, HTML_RESOLVE_CAP).await {
-                    Some(html) => resolve_pdf_from_html(&html, &base),
-                    None => None,
-                };
+                let body = read_body_bytes_capped(resp, HTML_RESOLVE_CAP).await;
+                // Some OA endpoints (extensionless /download, /bitstream, OJS
+                // galley links) serve a REAL PDF/EPUB body under Content-Type:
+                // text/html. Trust the magic bytes over the header — exactly like
+                // the post-download reconcile step — and re-fetch + accept it as a
+                // document rather than dropping a valid file with a misleading
+                // "opened a web page" error. (Scan only the first 1 KB so an HTML
+                // page that merely mentions "%PDF" in its body isn't mis-detected.)
+                if let Some(b) = &body {
+                    let head = &b[..b.len().min(1024)];
+                    if sniff_doc_ext(head).is_some() {
+                        force_accept = true;
+                        continue;
+                    }
+                }
+                let resolved = body
+                    .as_ref()
+                    .and_then(|b| resolve_pdf_from_html(&String::from_utf8_lossy(b), &base));
                 if let Some(pdf_url) = resolved {
                     // Skip if the resolved link points back at the URL we just
                     // requested OR the page's own (post-redirect) final URL —
