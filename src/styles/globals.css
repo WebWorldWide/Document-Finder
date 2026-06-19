@@ -182,9 +182,11 @@
 /* THEME: Midnight (dark) */
 [data-theme="midnight"] {
   color-scheme: dark;
-  /* The midnight accents are already tuned for the dark surface, so accent text
-     uses the raw accent here rather than the light-theme darkened variant. */
-  --accent-ink: var(--accent);
+  /* Accent TEXT lifts 12% toward white over the raw accent: a few midnight accents
+     (crimson/plum) sat just under AA (~4.3:1) as text on the lighter --card-2 /
+     sidebar. This lifts every accent's text ≥5:1 on all dark surfaces while leaving
+     the raw --accent for dots/borders/fills/buttons (which use --accent-fg) intact. */
+  --accent-ink: color-mix(in oklch, var(--accent) 88%, white);
   --bg: #0e1014;
   --canvas: #151820;
   --card: #1c2029;
@@ -268,6 +270,10 @@
   --accent-soft: #182a44;
 }
 [data-theme="midnight"][data-accent="blue"] {
+  /* Was missing (every other accent has a midnight --accent), so blue fell back
+     to the light-theme navy #2549c9 — near-invisible as dots/borders/links/text
+     on the dark card (2.0:1). This brighter blue clears AA on every surface. */
+  --accent: #6d9bff;
   --accent-soft: #16203a;
 }
 [data-theme="midnight"][data-accent="ink"] {

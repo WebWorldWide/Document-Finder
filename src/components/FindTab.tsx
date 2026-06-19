@@ -507,13 +507,18 @@ export default function FindTab() {
   async function handleOpenLibrary() {
     const folder = rs().folder;
     if (!folder) return;
+    // setActiveLibrary is optional metadata (highlights the active card); the
+    // Library view re-lists from disk on mount and surfaces its own error. So
+    // navigate REGARDLESS of whether open_library succeeds — gating navigation on
+    // it made the "Library" / "+N more" buttons silently dead when it failed
+    // (e.g. the db was just purged), with no feedback at all.
     try {
       const info = await api.openLibrary(folder);
       uiStore.setActiveLibrary(info);
-      uiStore.setView("library");
-    } catch {
-      /* ignore */
+    } catch (e) {
+      uiStore.announce(`Couldn't open that library: ${String(e)}`);
     }
+    uiStore.setView("library");
   }
 
   return (
