@@ -115,6 +115,11 @@ export default function WelcomeDialog() {
   const embeddingReady = () =>
     !modelsStore.state.embeddingError &&
     (modelsStore.state.embeddingLoaded || modelsStore.state.embeddingDownloaded);
+  // The registry list actually loaded a default model (not the error/empty
+  // state). Guards "ready"/size claims so we never assert all-ready or a precise
+  // total when list_models failed and the LLM genuinely isn't installed.
+  const hasDefaultModel = () =>
+    modelsStore.state.error === null && modelsStore.state.models.some((m) => m.is_default);
   // Default LLMs (the only registry downloads) that still need fetching.
   const llmsToDownload = () =>
     modelsStore.state.models.filter((m) => m.is_default && m.status.kind !== "ready");
@@ -130,8 +135,10 @@ export default function WelcomeDialog() {
   // How many distinct things the aggregate button would still fetch (missing
   // LLMs + the embedding if it isn't ready) — drives an accurate label.
   const toDownloadCount = () => llmsToDownload().length + (embeddingReady() ? 0 : 1);
-  // Everything the AI features need is already present.
-  const allReady = () => llmsToDownload().length === 0 && embeddingReady();
+  // Everything the AI features need is already present. Requires the LLM list to
+  // have actually loaded a default — otherwise a failed list (llmsToDownload
+  // filters an empty array → length 0) would falsely report "AI models ready".
+  const allReady = () => hasDefaultModel() && llmsToDownload().length === 0 && embeddingReady();
 
   function downloadDefaults() {
     // Only fetch what's actually missing — re-issuing a download for an
@@ -204,7 +211,8 @@ export default function WelcomeDialog() {
               <Brain size={18} class="mt-0.5 shrink-0" style={{ color: "var(--color-primary)" }} />
               <div class="flex-1">
                 <p class="text-sm font-semibold">
-                  AI models (~{formatBytes(totalModelSize())} total)
+                  AI models
+                  <Show when={hasDefaultModel()}> (~{formatBytes(totalModelSize())} total)</Show>
                 </p>
                 <p class="mt-0.5 text-[11px] leading-relaxed text-[var(--color-foreground-muted)]">
                   Two local models power semantic reranking and LLM query expansion + borderline

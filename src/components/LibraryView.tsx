@@ -102,11 +102,15 @@ export default function LibraryView() {
       // nothing visible (sandbox / headless Linux), leaving the user unsure the
       // .zip was written.
       setExportOk({ dest: result.dest, files: result.files, bytes: result.size_bytes });
+      uiStore.announce(
+        `Exported ${result.files} file${result.files === 1 ? "" : "s"} to ${result.dest}`,
+      );
       // Reveal is a best-effort follow-up — a failure to open the OS file browser
       // must NOT be reported as an export failure (the .zip is already written).
       api.revealInFinder(result.dest).catch(() => {});
     } catch (e) {
       setActionError(`Couldn't export this library: ${String(e)}`);
+      uiStore.announce(`Export failed: ${String(e)}`);
     } finally {
       setExportingPath(null);
     }
@@ -114,6 +118,7 @@ export default function LibraryView() {
 
   async function handleDelete(lib: LibraryInfo) {
     setActionError(null);
+    setExportOk(null); // clear a stale "Exported …" banner from a prior action
     const ok = await ask(
       `Delete library "${lib.query ?? lib.name}"? This permanently removes ${lib.n_docs} document${
         lib.n_docs === 1 ? "" : "s"
@@ -212,16 +217,24 @@ export default function LibraryView() {
         </Show>
 
         <Show when={!loading() && error()}>
-          <Banner kind="bad">
-            <div>
-              We couldn&rsquo;t read your library folder. {error()}
-              <div style={{ "margin-top": "8px" }}>
-                <button class="df-btn sm" onClick={() => setLoadTick((n) => n + 1)}>
-                  <RefreshCw size={12} /> Retry
-                </button>
+          <div style={{ "margin-bottom": "16px" }}>
+            <Banner kind="bad">
+              <div>
+                {/* If we already have a list on screen, a refetch failure is
+                    non-destructive — keep the grid and say so, rather than wiping
+                    the user's libraries off the screen. */}
+                {libraries().length > 0
+                  ? "Couldn't refresh — showing your last loaded libraries."
+                  : "We couldn't read your library folder."}{" "}
+                {error()}
+                <div style={{ "margin-top": "8px" }}>
+                  <button class="df-btn sm" onClick={() => setLoadTick((n) => n + 1)}>
+                    <RefreshCw size={12} /> Retry
+                  </button>
+                </div>
               </div>
-            </div>
-          </Banner>
+            </Banner>
+          </div>
         </Show>
 
         <Show when={!loading() && !error() && sorted().length === 0}>
@@ -246,7 +259,9 @@ export default function LibraryView() {
 
         {/* Grid stays mounted during a background refresh (no !loading gate) and
             hides on error so a stale grid can't render under the error banner. */}
-        <Show when={!error() && sorted().length > 0}>
+        {/* Grid stays mounted even on a refetch error (the banner above explains
+            it) — only the empty-list error state hides it. */}
+        <Show when={sorted().length > 0}>
           <div class="df-libgrid">
             <For each={sorted()}>
               {(lib) => {

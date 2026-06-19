@@ -245,6 +245,9 @@ export default function SettingsView() {
               step="1"
               value={sliderIndex()}
               aria-label="Download depth"
+              aria-valuetext={
+                activeIntensity() ? INTENSITY_PRESETS[activeIntensity()!].label : "Custom"
+              }
               style={{
                 width: "100%",
                 "accent-color": "var(--accent)",

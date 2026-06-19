@@ -17,15 +17,21 @@ export default function Sidebar() {
   // Lazy-prime the library list so the count + Recent section show real data on
   // first paint if libraries already exist on disk. A createEffect (not onMount)
   // so it re-fires when settings.libraryRoot arrives ASYNCHRONOUSLY — on a fresh
-  // launch the root starts "" and is filled in once defaultLibraryDir() resolves;
-  // a one-shot onMount would read the empty root and never retry.
+  // launch the root starts "" and is filled in once defaultLibraryDir() resolves.
+  // Guarded by a one-shot-per-root latch (NOT knownLibraries.length): an empty
+  // result writes a fresh [] reference which would re-trigger an effect that read
+  // .length, busy-looping list_libraries IPC forever on a library-less install.
+  let primedRoot = "";
   createEffect(() => {
     const root = settings.libraryRoot;
-    if (root && uiStore.knownLibraries.length === 0) {
+    if (root && root !== primedRoot) {
+      primedRoot = root;
       api
         .listLibraries(root)
         .then((libs) => uiStore.setKnownLibraries(libs))
-        .catch(() => {});
+        .catch(() => {
+          primedRoot = ""; // allow a retry if the fetch failed
+        });
     }
   });
 

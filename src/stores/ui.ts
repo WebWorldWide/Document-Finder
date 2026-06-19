@@ -13,6 +13,16 @@ const [knownLibraries, setKnownLibraries] = createSignal<LibraryInfo[]>([]);
 // instead of claiming "Backend ready". Set from main.tsx.
 const [listenersReady, setListenersReady] = createSignal(true);
 
+// A single, ALWAYS-MOUNTED screen-reader announcer (rendered in App). Banners
+// are <Show>-mounted with their text, which polite live regions announce
+// unreliably; components call announce() to push the text into this pre-existing
+// region instead. The reset-then-set re-triggers announcement of identical text.
+const [announcement, setAnnouncement] = createSignal("");
+function announce(msg: string) {
+  setAnnouncement("");
+  queueMicrotask(() => setAnnouncement(msg));
+}
+
 export const uiStore = {
   get view() {
     return view();
@@ -30,6 +40,10 @@ export const uiStore = {
     return listenersReady();
   },
   setListenersReady,
+  get announcement() {
+    return announcement();
+  },
+  announce,
   /// Aggregate stats across all loaded libraries — count + total bytes + total docs.
   get lifetimeStats() {
     const libs = knownLibraries();

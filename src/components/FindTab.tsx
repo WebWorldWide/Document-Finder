@@ -207,6 +207,12 @@ export default function FindTab() {
     const st = pipelineStore.stages.download.state;
     return st === "started" || st === "progress" || st === "done";
   };
+  // Whether the "By source" lanes should show SAVED counts vs FOUND counts. The
+  // backend emits a download stage even when 0 candidates are kept, so
+  // downloadsStarted() alone would flip an all-off-topic finish to all-zero
+  // saved bars that contradict the "found N" headline — require something
+  // actually saved/in-flight before switching to the saved view.
+  const showSaved = () => downloadsStarted() && (rs().done > 0 || rs().active > 0);
 
   // Bar tracks download completion once downloads begin; before that it tracks
   // the active stage's progress (e.g. ranking 181/500) so it visibly advances.
@@ -277,8 +283,7 @@ export default function FindTab() {
   // discovery); once downloads start, they track saved + in-flight files.
   const laneMax = () => {
     const ls = laneSources();
-    if (downloadsStarted())
-      return Math.max(1, ...ls.map((s) => lanes()[s].done + lanes()[s].inflight));
+    if (showSaved()) return Math.max(1, ...ls.map((s) => lanes()[s].done + lanes()[s].inflight));
     return Math.max(1, ...ls.map((s) => lanes()[s].found));
   };
 
@@ -457,11 +462,16 @@ export default function FindTab() {
     setExportError(null);
     try {
       const result = await runStore.exportZip();
-      if (result) setExportedTo(result.dest);
+      if (result) {
+        setExportedTo(result.dest);
+        uiStore.announce(`Exported to ${result.dest}`);
+      }
     } catch (e) {
       // Was silently swallowed with a misleading "surfaced elsewhere" comment;
       // export errors have no other surface, so show them here.
-      setExportError(humanizeDownloadError(String(e)));
+      const msg = humanizeDownloadError(String(e));
+      setExportError(msg);
+      uiStore.announce(`Export failed. ${msg}`);
     } finally {
       setExporting(false);
     }
@@ -990,7 +1000,7 @@ export default function FindTab() {
                         const v = () => lanes()[s];
                         // Solid bar = found during discovery, saved during/after
                         // download; the in-flight overlay only shows downloads.
-                        const primary = () => (downloadsStarted() ? v().done : v().found);
+                        const primary = () => (showSaved() ? v().done : v().found);
                         return (
                           <div
                             class="df-lane"
@@ -1021,9 +1031,7 @@ export default function FindTab() {
                         <div style={{ flex: 1, "min-width": 0 }}>
                           <div class="df-lane-key">{SOURCE_LABELS[s].slice(0, 4)}</div>
                           <div class="df-lane-val">
-                            {downloadsStarted()
-                              ? lanes()[s].done + lanes()[s].inflight
-                              : lanes()[s].found}
+                            {showSaved() ? lanes()[s].done + lanes()[s].inflight : lanes()[s].found}
                           </div>
                         </div>
                       )}
@@ -1052,10 +1060,23 @@ export default function FindTab() {
                   <div class="df-stream-section">
                     <div class="df-stream-label">
                       Saved{" "}
-                      <span style={{ color: "var(--ok)", "font-weight": 700 }}>{rs().done}</span>
+                      <span style={{ color: "var(--ok-ink)", "font-weight": 700 }}>
+                        {rs().done}
+                      </span>
                     </div>
-                    <Index each={savedDocs()}>{(d) => <DocRow doc={d()} kind="saved" />}</Index>
-                    {renderSavedOverflow()}
+                    <Show
+                      when={savedDocs().length > 0}
+                      fallback={
+                        <div
+                          style={{ padding: "12px 0", "font-size": "12px", color: "var(--ink-3)" }}
+                        >
+                          {rs().running ? "Nothing saved yet…" : "No documents were saved."}
+                        </div>
+                      }
+                    >
+                      <Index each={savedDocs()}>{(d) => <DocRow doc={d()} kind="saved" />}</Index>
+                      {renderSavedOverflow()}
+                    </Show>
                   </div>
                 </div>
               }
@@ -1075,7 +1096,9 @@ export default function FindTab() {
                         style={{ padding: "12px 0", "font-size": "12px", color: "var(--ink-3)" }}
                       >
                         {!rs().running
-                          ? "Downloads complete."
+                          ? rs().done === 0 && rs().failed === 0
+                            ? "No downloads — all candidates were ranked off-topic."
+                            : "Downloads complete."
                           : downloadsStarted()
                             ? "Queue clearing…"
                             : "Waiting for downloads to start…"}
@@ -1090,7 +1113,7 @@ export default function FindTab() {
                 >
                   <div class="df-stream-label" style={{ "padding-left": "4px" }}>
                     Saved{" "}
-                    <span style={{ color: "var(--ok)", "font-weight": 700 }}>{rs().done}</span>
+                    <span style={{ color: "var(--ok-ink)", "font-weight": 700 }}>{rs().done}</span>
                   </div>
                   <div style={{ "max-height": "360px", "overflow-y": "auto" }}>
                     <Index each={savedDocs()}>{(d) => <DocRow doc={d()} kind="saved" />}</Index>

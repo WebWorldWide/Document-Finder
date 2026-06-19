@@ -173,7 +173,9 @@
   --card-2: #232833;
   --ink: #ece9e0;
   --ink-2: #b8b2a5;
-  --ink-3: #7e7869;
+  /* Lifted from #7e7869 (~3.4:1 on --card-2, below AA) — --ink-3 is the app-wide
+     muted-text token, so this raises all secondary text in midnight to ≥4.5:1. */
+  --ink-3: #9a9382;
   --ink-4: #54503f;
   --line: #2a2e38;
   --line-2: #393e4a;
@@ -1109,7 +1111,7 @@ input,
   line-height: 1;
 }
 .df-stat-num.ok {
-  color: var(--ok);
+  color: var(--ok-ink);
 }
 .df-stat-num.bad {
   color: var(--bad-ink);
@@ -1526,7 +1528,7 @@ input,
   gap: 4px;
 }
 .df-doc-status.ok {
-  color: var(--ok);
+  color: var(--ok-ink);
 }
 .df-doc-status.bad {
   color: var(--bad-ink);
@@ -1749,6 +1751,19 @@ input,
   background: var(--card);
   color: var(--ink);
   box-shadow: 0 0 0 0.5px var(--line);
+}
+/* Match the app's deliberate accent focus ring (these lacked any, falling back
+   to a low-contrast UA outline). */
+.df-seg button:focus-visible,
+.pill-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Accent swatches carry a saturated fill, so use --ink (not --accent) for the
+   ring or it can blend into the swatch's own color. */
+.df-swatch:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 
 /* Inline search field (library filter, etc.) */

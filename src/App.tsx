@@ -33,6 +33,23 @@ export default function App() {
         </Switch>
       </main>
       <WelcomeDialog />
+      {/* Always-mounted SR announcer — components push transient confirmations
+          (e.g. "Exported to …") here via uiStore.announce() so they're reliably
+          read, unlike a polite live region mounted together with its text. */}
+      <div
+        role="status"
+        aria-live="polite"
+        style={{
+          position: "absolute",
+          width: "1px",
+          height: "1px",
+          overflow: "hidden",
+          clip: "rect(0 0 0 0)",
+          "white-space": "nowrap",
+        }}
+      >
+        {uiStore.announcement}
+      </div>
     </div>
   );
 }

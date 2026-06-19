@@ -55,13 +55,16 @@ export default function ThemePicker() {
 
       <div class="df-field" style={{ gap: "8px" }}>
         <label>Accent</label>
-        <div class="df-swatches" role="radiogroup" aria-label="Accent color">
+        {/* Plain buttons with aria-pressed (like the Theme buttons), NOT
+            role=radiogroup/radio: the radio roles promise arrow-key roving
+            navigation we don't implement, so announced semantics would mismatch
+            behavior. A labelled group keeps them associated. */}
+        <div class="df-swatches" role="group" aria-label="Accent color">
           <For each={ACCENT_META}>
             {(a) => (
               <button
                 class="df-swatch"
-                role="radio"
-                aria-checked={accent() === a.id}
+                aria-pressed={accent() === a.id}
                 aria-label={a.id}
                 title={a.id}
                 style={{ background: a.color }}
