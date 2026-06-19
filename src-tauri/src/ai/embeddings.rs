@@ -405,10 +405,20 @@ pub fn reset_embedding_model() {
     tracing::info!("embedding model reset");
 }
 
-/// User-initiated warm (Settings "Download now"). Clears the crash latch so a
-/// previously-failed load can be retried, then loads in the background.
+/// User-initiated warm (Settings "Download now" / "Try again"). Clears the crash
+/// latch so a previously-failed load can be retried, then loads in the background.
 pub fn warm_in_background(app: AppHandle) {
     UNAVAILABLE.store(false, Ordering::SeqCst);
+    // A recoverable rerank/embed error leaves LOADED=true while the UI marks the
+    // model "failed" and shows "Try again". warm_inner would then early-return with
+    // NO terminal event, hanging the frontend's "loading…" spinner until its 320s
+    // safety timer — then falsely reporting success. Emit the terminal ready status
+    // so Retry resolves in one tick to the accurate state. (The implicit search-warm
+    // path keeps warm_inner's silent early-return, so searches don't flash a badge.)
+    if LOADED.load(Ordering::SeqCst) {
+        emit_status(&app, "embedding", "ready");
+        return;
+    }
     warm_inner(app);
 }
 
