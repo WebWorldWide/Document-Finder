@@ -114,6 +114,7 @@ export default function WelcomeDialog() {
   // skips re-warming the errored model.
   const embeddingReady = () =>
     !modelsStore.state.embeddingError &&
+    !modelsStore.state.embeddingWarming &&
     (modelsStore.state.embeddingLoaded || modelsStore.state.embeddingDownloaded);
   // The registry list actually loaded a default model (not the error/empty
   // state). Guards "ready"/size claims so we never assert all-ready or a precise
@@ -275,13 +276,18 @@ export default function WelcomeDialog() {
                         </>
                       }
                     >
+                      {/* Warming is checked FIRST: embeddingDownloaded is sticky
+                          (stays true after a load failure), so on a cached-but-
+                          failed Retry it would otherwise show "Ready" while the
+                          worker is still re-loading. */}
                       <Show
-                        when={
-                          modelsStore.state.embeddingLoaded || modelsStore.state.embeddingDownloaded
-                        }
+                        when={modelsStore.state.embeddingWarming}
                         fallback={
                           <Show
-                            when={modelsStore.state.embeddingWarming}
+                            when={
+                              modelsStore.state.embeddingLoaded ||
+                              modelsStore.state.embeddingDownloaded
+                            }
                             fallback={
                               <>
                                 <Download
@@ -294,13 +300,13 @@ export default function WelcomeDialog() {
                               </>
                             }
                           >
-                            <Loader2 size={11} class="spin shrink-0" />
-                            <span>Downloading…</span>
+                            <CheckCircle2 size={11} style={{ color: "var(--color-success)" }} />
+                            <span>Ready · managed automatically</span>
                           </Show>
                         }
                       >
-                        <CheckCircle2 size={11} style={{ color: "var(--color-success)" }} />
-                        <span>Ready · managed automatically</span>
+                        <Loader2 size={11} class="spin shrink-0" />
+                        <span>Downloading…</span>
                       </Show>
                     </Show>
                   </div>

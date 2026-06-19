@@ -59,6 +59,10 @@
  * Editorial design tokens
  * ========================================================================= */
 :root {
+  /* Tell the engine to render native chrome (caret, scrollbars, autofill, focus
+     fallbacks) in light mode for paper/slate; midnight overrides to dark below.
+     Without this the dark theme got light-default native UI artifacts. */
+  color-scheme: light;
   /* TYPE */
   --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono:
@@ -167,6 +171,7 @@
 
 /* THEME: Midnight (dark) */
 [data-theme="midnight"] {
+  color-scheme: dark;
   --bg: #0e1014;
   --canvas: #151820;
   --card: #1c2029;

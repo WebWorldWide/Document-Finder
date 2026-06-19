@@ -31,6 +31,11 @@ export default function LibraryView() {
     bytes: number;
   } | null>(null);
   const [loadTick, setLoadTick] = createSignal(0);
+  // True once the FIRST list load has settled. The full-screen spinner gates on
+  // this (not on "list currently empty"), so an optimistic delete of the last
+  // library — which momentarily empties the list before refetch — falls through
+  // to the "No libraries yet" empty state instead of flashing the spinner.
+  const [didFirstLoad, setDidFirstLoad] = createSignal(false);
   const [filter, setFilter] = createSignal("");
   const [sortBy, setSortBy] = createSignal<SortKey>("updated");
 
@@ -51,12 +56,14 @@ export default function LibraryView() {
           setLibraries(libs);
           uiStore.setKnownLibraries(libs);
           setLoading(false);
+          setDidFirstLoad(true);
         }
       })
       .catch((e) => {
         if (!cancelled) {
           setError(String(e));
           setLoading(false);
+          setDidFirstLoad(true);
         }
       });
     onCleanup(() => {
@@ -206,7 +213,7 @@ export default function LibraryView() {
         {/* Full-screen spinner ONLY on the first load (empty list). Background
             refreshes (run-finished, post-delete) keep the existing grid mounted
             so it doesn't flash blank — which read as "did my libraries vanish?". */}
-        <Show when={loading() && libraries().length === 0}>
+        <Show when={loading() && !didFirstLoad()}>
           <div
             role="status"
             aria-label="Loading your libraries"
@@ -240,7 +247,7 @@ export default function LibraryView() {
         {/* Keep the empty/"No matches" card visible during a BACKGROUND refresh
             (libraries already loaded) — only suppress it during the first load,
             where the spinner shows instead. Mirrors the grid staying mounted. */}
-        <Show when={!error() && sorted().length === 0 && !(loading() && libraries().length === 0)}>
+        <Show when={!error() && sorted().length === 0 && !(loading() && !didFirstLoad())}>
           <div class="df-empty">
             <div class="df-empty-mark">
               <LibraryIcon size={28} />
