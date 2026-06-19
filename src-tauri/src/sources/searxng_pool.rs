@@ -327,7 +327,13 @@ impl Source for SearxngPoolSource {
                 &query,
                 limit,
                 "searxng_local",
-                Duration::from_secs(15),
+                // Must outlast the in-process aggregator this calls: its axum
+                // handler buffers the WHOLE response and only returns once the
+                // slowest engine hits its per-engine budget (backend_timeout,
+                // clamped to ≤20s). The old 15s undercut that, so a single slow
+                // engine timed the local query out and silently dropped all local
+                // results, pushing the user onto public searx.space instances.
+                Duration::from_secs(24),
             )
             .await
             {
