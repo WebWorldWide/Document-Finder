@@ -992,11 +992,12 @@ input,
   white-space: nowrap;
 }
 .df-srcrow-status.live {
-  color: var(--src-color);
+  /* Several source identity colors (arxiv/web/brave/marginalia) are too light to
+     clear WCAG-AA as text on the white --card row in light themes, and too dark on
+     the midnight card. Darken for light here; the midnight override below lifts
+     toward white. Mirrors .df-doc-source; the dot keeps the true identity color. */
+  color: color-mix(in oklch, var(--src-color) 78%, black);
 }
-/* Several source identity colors are intentionally dark and were dark-on-dark
-   here on the midnight card. Lift the live status TEXT toward white for AA
-   (mirrors .df-doc-source / .df-issues li code); the dot keeps true identity. */
 [data-theme="midnight"] .df-srcrow-status.live {
   color: color-mix(in oklch, var(--src-color) 60%, white);
 }

@@ -165,13 +165,18 @@ export default function SettingsView() {
       }
       const removed = report?.removed?.length ?? 0;
       const failed = report?.failed?.length ?? 0;
-      setPurgeMsg(
+      const msg =
         failed === 0
           ? `Erased ${removed} location${removed === 1 ? "" : "s"}. Quit the app to finish.`
-          : `Erased ${removed}, but ${failed} could not be removed — close the app and retry, or run the uninstall script.`,
-      );
+          : `Erased ${removed}, but ${failed} could not be removed — close the app and retry, or run the uninstall script.`;
+      setPurgeMsg(msg);
+      // Announce the outcome of the app's most destructive action for screen-reader
+      // users — the visible <p> is not in a live region (matches the other announces).
+      uiStore.announce(msg);
     } catch (e) {
-      setPurgeMsg(`Could not erase data: ${String(e)}`);
+      const msg = `Could not erase data: ${String(e)}`;
+      setPurgeMsg(msg);
+      uiStore.announce(msg);
     } finally {
       setPurging(false);
     }

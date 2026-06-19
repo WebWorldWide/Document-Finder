@@ -835,11 +835,14 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
             .map(|rest| format!(r"\\{rest}"))
             .or_else(|| s.strip_prefix(r"\\?\").map(str::to_string))
             .unwrap_or_else(|| s.to_string());
-        // Pass /select and the path as two separate args so commas in the
-        // path cannot split the argument and confuse Explorer's parser.
+        // explorer.exe needs `/select,` and the path as ONE contiguous token
+        // (`/select,C:\dir\file`). Passed as two separate args, Explorer sees an
+        // empty operand after the comma, fails to highlight the file, and opens the
+        // default folder instead. Rust already passes this as a single argv token
+        // (CommandLineToArgvW quotes the path), so a comma inside the path can't
+        // split it.
         std::process::Command::new("explorer")
-            .arg("/select,")
-            .arg(&simplified)
+            .arg(format!("/select,{simplified}"))
             .spawn()
             .map_err(|e| e.to_string())?;
         Ok(())
