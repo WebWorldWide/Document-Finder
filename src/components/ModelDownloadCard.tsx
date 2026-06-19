@@ -91,6 +91,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo; hideDownloa
           <button
             onClick={() => modelsStore.remove(m().id)}
             title="Delete from disk"
+            aria-label={`Delete ${m().display_name} from disk`}
             class="btn-tactile flex shrink-0 items-center gap-1 px-2 py-1 text-[11px] font-medium text-[var(--color-foreground-muted)]"
           >
             <Trash2 size={11} />

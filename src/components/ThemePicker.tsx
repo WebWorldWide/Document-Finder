@@ -64,10 +64,18 @@ export default function ThemePicker() {
             {(a) => (
               <button
                 class="df-swatch"
+                // Carry BOTH data-theme and data-accent so `var(--accent)`
+                // resolves to this accent AS IT RENDERS IN THE CURRENT THEME
+                // (the midnight overrides key on [data-theme][data-accent]
+                // together). The static ACCENT_META color was the paper hue, so
+                // the swatch mis-previewed the accent actually applied in
+                // Slate/Midnight.
+                data-theme={theme()}
+                data-accent={a.id}
                 aria-pressed={accent() === a.id}
                 aria-label={a.id}
                 title={a.id}
-                style={{ background: a.color }}
+                style={{ background: "var(--accent)" }}
                 onClick={() => setAccent(a.id)}
               />
             )}

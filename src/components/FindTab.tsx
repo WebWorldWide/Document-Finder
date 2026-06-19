@@ -111,6 +111,16 @@ export default function FindTab() {
     if (!rs().running) setStopping(false);
   });
 
+  // Announce fatal errors to screen readers through the always-mounted region.
+  // The visible error Banner is mounted together with its text (an unreliable
+  // pattern for live regions), and liveStatus() is empty for errors that happen
+  // before a run folder exists (offline pre-check, concurrent-run guard) — so an
+  // SR user would otherwise get no spoken feedback that the search failed.
+  createEffect(() => {
+    const err = rs().fatalError;
+    if (err) uiStore.announce(humanizeDownloadError(err));
+  });
+
   const hasRun = createMemo(
     () =>
       rs().running ||
@@ -166,8 +176,22 @@ export default function FindTab() {
     const n = networkDone();
     return n > 0 ? Math.max(0.1, rs().bytesDownloaded / 1_000_000 / n) : 2;
   };
+  const downloadsStarted = () => {
+    const st = pipelineStore.stages.download.state;
+    return st === "started" || st === "progress" || st === "done";
+  };
+  // The DOWNLOAD scope (kept docs), not the pre-rank candidate count. runStore's
+  // `total` is the merged-candidate count until the first download_done event
+  // reconciles it, so during the download-start window it's ~10x too big. The
+  // download stage event already carries the real kept total — prefer it once
+  // downloads start so the progress bar and ETA don't lurch (bar to 0%, ETA to a
+  // wildly pessimistic value) before the first file lands.
+  const downloadTotal = () => {
+    const t = pipelineStore.stages.download.total;
+    return downloadsStarted() && t != null && t > 0 ? t : rs().total;
+  };
   const etaSec = createMemo(() => {
-    const remaining = Math.max(0, rs().total - rs().done - rs().failed);
+    const remaining = Math.max(0, downloadTotal() - rs().done - rs().failed);
     // Use the smoothed window average, not the volatile last 600ms sample, so a
     // single zero/spike sample doesn't make the ETA vanish or collapse.
     const mbps = avgMbps();
@@ -203,10 +227,6 @@ export default function FindTab() {
     return { label: STAGE_LABEL[active] ?? active, count: e.count, total: e.total };
   });
 
-  const downloadsStarted = () => {
-    const st = pipelineStore.stages.download.state;
-    return st === "started" || st === "progress" || st === "done";
-  };
   // Whether the "By source" lanes should show SAVED counts vs FOUND counts. The
   // backend emits a download stage even when 0 candidates are kept, so
   // downloadsStarted() alone would flip an all-off-topic finish to all-zero
@@ -221,7 +241,10 @@ export default function FindTab() {
     // the all-off-topic case (download total is 0, so overallPct would be 0 and
     // the bar would look stuck/empty on a card that has actually finished).
     if (!rs().running && rs().folder && !rs().cancelled) return 100;
-    if (downloadsStarted()) return runStore.overallPct;
+    if (downloadsStarted()) {
+      const t = downloadTotal();
+      return t > 0 ? Math.min(100, Math.round(((rs().done + rs().failed) / t) * 100)) : 0;
+    }
     const p = activePhase();
     if (p && p.total) return Math.min(100, Math.round(((p.count ?? 0) / p.total) * 100));
     return runStore.overallPct;
@@ -625,20 +648,15 @@ export default function FindTab() {
                   const on = () => settings.selectedSources.includes(src);
                   return (
                     <button
-                      class="df-btn sm"
+                      class="df-btn sm df-web-engine"
+                      classList={{ on: on() }}
                       onClick={() => toggleSource(src)}
                       disabled={rs().running}
                       aria-pressed={on()}
-                      style={
-                        on()
-                          ? {
-                              "border-color": sourceColor(src),
-                              color: sourceColor(src),
-                              background:
-                                "color-mix(in oklch, " + sourceColor(src) + " 8%, transparent)",
-                            }
-                          : {}
-                      }
+                      // Identity color via a CSS var so the .on text/border/fill
+                      // (and a midnight lift) live in globals.css — the old inline
+                      // `color: sourceColor()` was dark-on-dark in midnight.
+                      style={{ "--src-color": sourceColor(src) }}
                     >
                       {SOURCE_LABELS[src]}
                     </button>

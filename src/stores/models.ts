@@ -274,9 +274,12 @@ export const modelsStore = {
   warmEmbedding,
   /// Selectable for "Balanced": ready if loaded in memory or already cached on
   /// disk (it loads lazily on first use, and also auto-downloads on first
-  /// search). The Settings row lets the user warm it explicitly.
+  /// search). The Settings row lets the user warm it explicitly. Gated on the
+  /// error too: a cached-but-failed-to-load model keeps embeddingDownloaded=true,
+  /// so without this the Balanced caption would claim "+ semantic rerank" while
+  /// the embedding row right above shows "couldn't load".
   get embeddingReady() {
-    return state.embeddingLoaded || state.embeddingDownloaded;
+    return state.embeddingError == null && (state.embeddingLoaded || state.embeddingDownloaded);
   },
   /// True if the embedding model is cached on disk.
   get embeddingDownloaded() {
