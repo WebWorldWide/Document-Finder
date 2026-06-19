@@ -876,26 +876,37 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
         // has no select semantics — it would just open the containing folder with
         // nothing highlighted). Fall back to opening the parent folder if D-Bus /
         // a FileManager1 implementation isn't available (no session bus, sandbox).
-        let dbus_ok = Command::new("dbus-send")
-            .args([
-                "--session",
-                "--dest=org.freedesktop.FileManager1",
-                "--type=method_call",
-                "/org/freedesktop/FileManager1",
-                "org.freedesktop.FileManager1.ShowItems",
-                &format!("array:string:{}", file_uri(&p)),
-                "string:",
-            ])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !dbus_ok {
-            let parent = p.parent().unwrap_or(std::path::Path::new("/"));
-            Command::new("xdg-open")
-                .arg(parent)
-                .spawn()
-                .map_err(|e| e.to_string())?;
-        }
+        //
+        // `dbus-send`'s method_call BLOCKS until FileManager1 replies, and a cold-
+        // started or hung file manager can take seconds (default 25s reply timeout).
+        // This command is synchronous and runs on the WebKitGTK main thread, so a
+        // blocking call here freezes the whole window. macOS/Windows use non-blocking
+        // spawn; do the same on Linux by running the select-or-fallback on a detached
+        // thread (with a bounded reply timeout), returning immediately.
+        let uri = file_uri(&p);
+        let parent = p
+            .parent()
+            .unwrap_or(std::path::Path::new("/"))
+            .to_path_buf();
+        std::thread::spawn(move || {
+            let dbus_ok = Command::new("dbus-send")
+                .args([
+                    "--session",
+                    "--dest=org.freedesktop.FileManager1",
+                    "--type=method_call",
+                    "--reply-timeout=3000",
+                    "/org/freedesktop/FileManager1",
+                    "org.freedesktop.FileManager1.ShowItems",
+                    &format!("array:string:{uri}"),
+                    "string:",
+                ])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !dbus_ok {
+                let _ = Command::new("xdg-open").arg(&parent).spawn();
+            }
+        });
         Ok(())
     }
 }

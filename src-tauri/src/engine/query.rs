@@ -62,14 +62,15 @@ static STOPWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     .collect()
 });
 
-// Unicode-aware: `\p{L}` (any letter) + `\p{M}` (combining marks, for decomposed
-// accents) so an accented or non-Latin query ("política económica", "気候変動")
-// tokenizes to WHOLE words instead of ASCII fragments split at the accent. This
-// matches `ranking::tokenize`'s Unicode `is_alphanumeric()`; an ASCII-only regex
-// here gave query terms like "pol"/"tica" that never match the document tokens
-// "política", zeroing TF-IDF for every non-English search.
+// Unicode-aware to MATCH `ranking::tokenize`'s `is_alphanumeric()`: `\p{L}` (any
+// letter) + `\p{N}` (any digit) + `\p{M}` (combining marks, for decomposed
+// accents). Without `\p{N}`, digit-bearing terms were mangled ("co2"→dropped,
+// "covid-19"→"covid-", "word2vec"→"word","vec"), so the document token "co2" could
+// never be matched by a query token — zeroing TF-IDF for the most specific term in
+// a huge class of science/tech queries. Including digits also subsumes the old
+// 4-digit-year special case ("2021" tokenizes whole) and keeps accented/CJK words.
 static WORD_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?:\p{L}[\p{L}\p{M}'-]+|\b\d{4}\b)").unwrap());
+    Lazy::new(|| Regex::new(r"[\p{L}\p{N}][\p{L}\p{N}\p{M}'-]+").unwrap());
 static SPLIT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)[,;]|\s+and\s+|\s+&\s+").unwrap());
 
 /// Strip filler words from a natural-language query.
@@ -341,9 +342,24 @@ mod tests {
         assert_eq!(parse_query("café société"), vec!["café", "société"]);
         // CJK runs stay whole; years still parse; ASCII unchanged.
         assert_eq!(parse_query("気候変動 2021"), vec!["気候変動", "2021"]);
+    }
+
+    #[test]
+    fn parse_keeps_digit_bearing_terms_whole() {
+        // Alphanumeric terms must stay whole (matching ranking::tokenize) so the
+        // query token can match the document token. Splitting "co2"/"word2vec" at
+        // the digit zeroed TF-IDF for the most specific term.
+        assert_eq!(parse_query("co2 emissions"), vec!["co2", "emissions"]);
+        assert_eq!(parse_query("b12 vitamin"), vec!["b12", "vitamin"]);
+        assert_eq!(
+            parse_query("word2vec embeddings"),
+            vec!["word2vec", "embeddings"]
+        );
+        assert_eq!(parse_query("covid19 vaccines"), vec!["covid19", "vaccines"]);
+        // Hyphen + digits stay together; the standalone year still parses whole.
         assert_eq!(
             parse_query("covid-19 vaccines 2021"),
-            vec!["covid-", "vaccines", "2021"]
+            vec!["covid-19", "vaccines", "2021"]
         );
     }
 
