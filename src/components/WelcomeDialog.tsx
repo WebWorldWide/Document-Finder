@@ -236,7 +236,7 @@ export default function WelcomeDialog() {
                     <h3 class="truncate text-sm font-semibold">
                       Semantic-search model (BGE-Small)
                     </h3>
-                    <span class="rounded-full bg-[var(--color-primary)]/12 px-1.5 py-0.5 text-[9px] font-medium text-[var(--color-primary)] uppercase">
+                    <span class="rounded-full bg-[var(--color-primary)]/12 px-1.5 py-0.5 text-[9px] font-medium text-[var(--accent-ink)] uppercase">
                       embedding
                     </span>
                     <span class="rounded-full bg-[var(--color-foreground)]/6 px-1.5 py-0.5 text-[9px] font-medium text-[var(--color-foreground-muted)]">

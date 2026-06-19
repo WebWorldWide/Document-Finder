@@ -813,7 +813,12 @@ export default function FindTab() {
                       class="df-btn sm ghost"
                       onClick={() => {
                         const f = rs().folder;
-                        if (f) api.revealInFinder(f);
+                        if (f)
+                          api
+                            .revealInFinder(f)
+                            .catch((e) =>
+                              uiStore.announce(`Couldn't open this run's folder: ${String(e)}`),
+                            );
                       }}
                     >
                       <FolderOpen size={12} /> Folder

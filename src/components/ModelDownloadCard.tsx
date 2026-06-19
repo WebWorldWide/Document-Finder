@@ -50,8 +50,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo; hideDownloa
             <span
               class="rounded-full px-1.5 py-0.5 text-[9px] font-medium uppercase"
               classList={{
-                "bg-[var(--color-primary)]/12 text-[var(--color-primary)]":
-                  m().kind === "embedding",
+                "bg-[var(--color-primary)]/12 text-[var(--accent-ink)]": m().kind === "embedding",
                 "bg-amber-500/12 text-[color:var(--warn-ink)]": m().kind === "llm",
               }}
             >
@@ -130,6 +129,14 @@ export default function ModelDownloadCard(props: { model: ModelInfo; hideDownloa
             style={{ width: `${pct()}%` }}
           />
         </div>
+      </Show>
+
+      {/* Delete-from-disk failure: the model is still on disk + "Ready", so show
+          why the trash click didn't work instead of leaving it silently unchanged. */}
+      <Show when={modelsStore.state.deleteError[m().id]}>
+        <p class="mt-2 text-[10px] text-[var(--color-destructive)]">
+          Couldn't delete: {modelsStore.state.deleteError[m().id]}
+        </p>
       </Show>
 
       {/* Failed: show error + retry button */}

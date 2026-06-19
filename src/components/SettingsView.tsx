@@ -706,7 +706,11 @@ export default function SettingsView() {
                   <div style={{ display: "flex", gap: "8px" }}>
                     <button
                       class="df-btn sm"
-                      onClick={() => api.revealInFinder(info().path)}
+                      onClick={() =>
+                        api
+                          .revealInFinder(info().path)
+                          .catch((e) => uiStore.announce(`Couldn't open the folder: ${String(e)}`))
+                      }
                       disabled={!info().exists}
                     >
                       <FolderOpen size={12} /> Show in folder
