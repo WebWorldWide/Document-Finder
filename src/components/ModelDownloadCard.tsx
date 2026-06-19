@@ -79,7 +79,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo; hideDownloa
         <Show when={m().status.kind === "downloading"}>
           <div
             class="surface-pressed-sm shrink-0 px-3 py-1.5 text-center font-mono text-sm font-bold tabular-nums"
-            style={{ color: "var(--color-primary)" }}
+            style={{ color: "var(--accent-ink)" }}
           >
             {pct()}%
           </div>
@@ -153,7 +153,7 @@ export default function ModelDownloadCard(props: { model: ModelInfo; hideDownloa
                 <button
                   onClick={() => modelsStore.download(m().id)}
                   class="btn-tactile flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
-                  style={{ color: "var(--color-primary)" }}
+                  style={{ color: "var(--accent-ink)" }}
                 >
                   <RefreshCw size={11} />
                   Retry (resumes from partial)

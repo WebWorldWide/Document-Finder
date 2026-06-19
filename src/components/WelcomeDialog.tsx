@@ -269,7 +269,7 @@ export default function WelcomeDialog() {
                           <button
                             onClick={() => void modelsStore.warmEmbedding()}
                             class="btn-tactile ml-1 flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium"
-                            style={{ color: "var(--color-primary)" }}
+                            style={{ color: "var(--accent-ink)" }}
                           >
                             <RotateCw size={10} /> Retry
                           </button>

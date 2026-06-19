@@ -32,7 +32,7 @@ export default function ThemePicker() {
                   gap: "6px",
                   padding: "8px",
                   ...(theme() === t.id
-                    ? { "border-color": "var(--accent)", color: "var(--accent)" }
+                    ? { "border-color": "var(--accent)", color: "var(--accent-ink)" }
                     : {}),
                 }}
               >
