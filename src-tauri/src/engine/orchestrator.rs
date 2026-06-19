@@ -1789,9 +1789,24 @@ async fn ensure_llm_loaded(
     if let Some(m) = crate::ai::llm::try_get() {
         return Some(m);
     }
-    // Pick the registry's default LLM. UI-driven model selection would
-    // override this via RunRequest.llm_model_id but that's an E4 concern.
-    let entry = crate::ai::registry::default_for(crate::ai::ModelKind::Llm)?;
+    // Prefer the registry's default LLM (the 1.5B); but if its file isn't on
+    // disk, fall back to ANY downloaded LLM — e.g. a RAM-limited user who, per
+    // the 0.5B card's own advice, downloaded only the 0.5B. Without this the
+    // backend silently skipped all LLM stages whenever the exact default file was
+    // absent, while the UI's "any LLM ready" gating still enabled Thorough.
+    // (Explicit UI-driven selection via RunRequest.llm_model_id is an E4 concern.)
+    let on_disk = |e: &crate::ai::registry::ModelEntry| {
+        crate::ai::storage::model_file(app, e)
+            .map(|p| p.exists())
+            .unwrap_or(false)
+    };
+    let entry = crate::ai::registry::default_for(crate::ai::ModelKind::Llm)
+        .filter(|e| on_disk(e))
+        .or_else(|| {
+            crate::ai::registry::REGISTRY
+                .iter()
+                .find(|e| e.kind == crate::ai::ModelKind::Llm && on_disk(e))
+        })?;
     let model_path = crate::ai::storage::model_file(app, entry).ok()?;
     if !model_path.exists() {
         return None;

@@ -169,6 +169,16 @@ export default function SettingsView() {
       }
     };
   }
+  // On blur, revert an empty / 0 / negative field to the committed value, so the
+  // control never sits visually blank-or-0 while the store (and the next search)
+  // still uses the old number. Done on blur, not input, so clearing-to-retype
+  // isn't fought mid-keystroke.
+  function numBlur(field: "perSource" | "maxTotal" | "concurrency") {
+    return (e: FocusEvent & { currentTarget: HTMLInputElement }) => {
+      const v = parseInt(e.currentTarget.value, 10);
+      if (isNaN(v) || v <= 0) e.currentTarget.value = String(settings[field]);
+    };
+  }
 
   // Reactive: the preset matching the current raw numbers (null = "Custom").
   const activeIntensity = () => currentIntensity();
@@ -329,6 +339,7 @@ export default function SettingsView() {
                     min="1"
                     value={settings.perSource}
                     onInput={numInput("perSource")}
+                    onBlur={numBlur("perSource")}
                   />
                   <span class="help">Docs per source, per sub-query</span>
                 </div>
@@ -339,6 +350,7 @@ export default function SettingsView() {
                     min="1"
                     value={settings.maxTotal}
                     onInput={numInput("maxTotal")}
+                    onBlur={numBlur("maxTotal")}
                   />
                   <span class="help">Hard cap across all sources</span>
                 </div>
@@ -350,6 +362,7 @@ export default function SettingsView() {
                     max="32"
                     value={settings.concurrency}
                     onInput={numInput("concurrency")}
+                    onBlur={numBlur("concurrency")}
                   />
                   <span class="help">Higher is faster, more rate limits</span>
                 </div>
@@ -385,11 +398,13 @@ export default function SettingsView() {
                 q="balanced"
                 label="Balanced"
                 caption={
-                  !modelsStore.embeddingReady
-                    ? "downloads model on first search"
-                    : modelsStore.llmReady
-                      ? "+ rerank & broad sub-queries"
-                      : "+ semantic rerank · ~5s"
+                  modelsStore.embeddingState === "failed"
+                    ? "rerank unavailable — retry above"
+                    : !modelsStore.embeddingReady
+                      ? "downloads model on first search"
+                      : modelsStore.llmReady
+                        ? "+ rerank & broad sub-queries"
+                        : "+ semantic rerank · ~5s"
                 }
                 active={settings.quality === "balanced"}
               />

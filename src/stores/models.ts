@@ -279,7 +279,11 @@ export const modelsStore = {
   /// so without this the Balanced caption would claim "+ semantic rerank" while
   /// the embedding row right above shows "couldn't load".
   get embeddingReady() {
-    return state.embeddingError == null && (state.embeddingLoaded || state.embeddingDownloaded);
+    return (
+      state.embeddingError == null &&
+      !state.embeddingWarming &&
+      (state.embeddingLoaded || state.embeddingDownloaded)
+    );
   },
   /// True if the embedding model is cached on disk.
   get embeddingDownloaded() {

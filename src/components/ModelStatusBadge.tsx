@@ -25,9 +25,9 @@ export default function ModelStatusBadge() {
                 fallback={
                   <Show
                     when={a.status === "llm_warming"}
-                    fallback={<Brain size={10} class="text-amber-500" />}
+                    fallback={<Brain size={10} style={{ color: "var(--warn)" }} />}
                   >
-                    <Loader2 size={10} class="animate-spin text-amber-500" />
+                    <Loader2 size={10} class="animate-spin" style={{ color: "var(--warn)" }} />
                   </Show>
                 }
               >
