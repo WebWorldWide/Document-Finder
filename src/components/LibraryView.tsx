@@ -143,8 +143,17 @@ export default function LibraryView() {
       setLibraries((xs) => xs.filter((l) => l.path !== lib.path));
       setDeletingPath(null);
       setLoadTick((n) => n + 1);
+      // Confirm the (irreversible) delete to screen-reader users — the card just
+      // silently vanishes otherwise (mirrors the export announce above).
+      uiStore.announce(`Deleted library "${lib.query ?? lib.name}".`);
+      // The focused Delete button was unmounted with its card, dropping focus to
+      // <body>; move it to the filter input so a keyboard user keeps their place.
+      requestAnimationFrame(() =>
+        (document.querySelector(".df-inline-search input") as HTMLElement | null)?.focus(),
+      );
     } catch (e) {
       setActionError(`Couldn't delete this library: ${String(e)}`);
+      uiStore.announce(`Delete failed: ${String(e)}`);
       // Only re-enable the card on failure (it still exists).
       setDeletingPath(null);
     }

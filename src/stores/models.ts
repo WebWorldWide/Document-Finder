@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api, type ModelInfo } from "@/lib/tauri";
 import type { ModelProgressPayload, ModelStatusPayload } from "@/lib/events";
 import { reconcileLlmModel } from "@/stores/settings";
+import { uiStore } from "@/stores/ui";
 
 interface ModelsState {
   models: ModelInfo[];
@@ -29,6 +30,11 @@ interface ModelsState {
   embeddingWarming: boolean;
   // Per-model bytes/sec for the UI ETA, keyed by model_id.
   bytesPerSec: Record<string, number>;
+  /// Per-model "Delete from disk" failure message, keyed by model_id. A delete
+  /// can genuinely reject (a GGUF still mmap'd by llama.cpp, an ACL/permission
+  /// issue), and without this the card would silently stay "Ready" with no
+  /// feedback after the user clicked the trash icon.
+  deleteError: Record<string, string>;
   // Last activity status for the model (e.g. "embedding 23/100", "llm_warming").
   // Distinct from `models[*].status` which is the disk-availability state;
   // this one tracks what the *running pipeline* is currently doing with
@@ -45,6 +51,7 @@ const [state, setState] = createStore<ModelsState>({
   embeddingError: null,
   embeddingWarming: false,
   bytesPerSec: {},
+  deleteError: {},
   activity: {},
 });
 
@@ -221,6 +228,7 @@ async function cancel(modelId: string) {
 }
 
 async function remove(modelId: string) {
+  setState("deleteError", modelId, undefined as unknown as string); // clear prior failure
   try {
     await api.deleteModel(modelId);
     setState("bytesPerSec", modelId, 0);
@@ -228,8 +236,13 @@ async function remove(modelId: string) {
       m.status = { kind: "not_downloaded" };
       m.on_disk_bytes = 0;
     });
+    uiStore.announce("Model deleted from disk.");
   } catch (e) {
+    // A delete can genuinely fail (file still in use / permissions). Surface it
+    // on the card + announce it, instead of leaving the card silently "Ready".
     console.error("delete failed", e);
+    setState("deleteError", modelId, String(e));
+    uiStore.announce(`Couldn't delete the model: ${String(e)}`);
   }
 }
 
