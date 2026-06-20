@@ -1775,6 +1775,13 @@ input,
   box-shadow: 0 0 0 0.5px var(--line);
   margin-top: var(--pad-4);
   overflow: hidden;
+  padding: var(--pad-5);
+}
+/* The doc rows span the padded panel; their own horizontal padding would double
+   the inset and misalign with the header/hint, so drop it here (keep vertical). */
+.df-libdetail .df-doc {
+  padding-left: 0;
+  padding-right: 0;
 }
 .df-libdetail-head {
   padding: var(--pad-5);
