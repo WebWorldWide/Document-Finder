@@ -1573,6 +1573,16 @@ input,
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* The saved-row error sub-line (extract_error) is a direct child of .df-doc-main
+   and can be a long message — ellipsize it (full text stays in the title tooltip)
+   so it can't overflow into the status column. The in-flight "X / Y" bytes live
+   inside .df-doc-progress and are unaffected. */
+.df-doc-main > .df-doc-bytes {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .df-doc-status {
   font-family: var(--font-mono);
   font-size: 10.5px;

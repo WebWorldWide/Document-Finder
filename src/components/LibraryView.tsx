@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, onCleanup, Show, For } from "solid-js";
+import { createSignal, createEffect, createMemo, onCleanup, untrack, Show, For } from "solid-js";
 import {
   Archive,
   FolderOpen,
@@ -53,6 +53,10 @@ export default function LibraryView() {
   const [libDocs, setLibDocs] = createSignal<LibraryDoc[]>([]);
   const [docsLoading, setDocsLoading] = createSignal(false);
   const [docsError, setDocsError] = createSignal<string | null>(null);
+  // Open/reveal failures WITHIN the detail view get their own banner rendered
+  // inside the detail block — the shared top-of-page actionError scrolls out of
+  // view in a long document list, making a failed open look like a dead click.
+  const [detailError, setDetailError] = createSignal<string | null>(null);
 
   // Monotonic request id so a slow listLibraryDocs for library A can't overwrite a
   // later library B's docs (open A → back → open B with A resolving last would
@@ -64,6 +68,7 @@ export default function LibraryView() {
     setSelectedLib(lib);
     setLibDocs([]);
     setDocsError(null);
+    setDetailError(null);
     setExportOk(null); // a grid "Exported …" banner shouldn't linger over the detail
     setDocsLoading(true);
     api
@@ -80,8 +85,9 @@ export default function LibraryView() {
   };
   // Open a single saved document in its default app (the in-app read path).
   const openDoc = (d: { path?: string }) => {
-    if (d.path)
-      api.openPath(d.path).catch((e) => setActionError(`Couldn't open the file: ${String(e)}`));
+    if (!d.path) return;
+    setDetailError(null); // clear a prior failure so a later success isn't masked
+    api.openPath(d.path).catch((e) => setDetailError(`Couldn't open the file: ${String(e)}`));
   };
 
   createEffect(() => {
@@ -122,7 +128,15 @@ export default function LibraryView() {
   let wasRunning = runStore.state.running;
   createEffect(() => {
     const running = runStore.state.running;
-    if (wasRunning && !running) setLoadTick((n) => n + 1);
+    if (wasRunning && !running) {
+      setLoadTick((n) => n + 1);
+      // Also refresh the OPEN detail's document list — the loadTick refresh only
+      // re-lists the (hidden) grid, so a library drilled into mid-run would keep
+      // showing a stale doc snapshot. untrack so this effect doesn't depend on
+      // selectedLib (the request-id guard makes the re-fetch idempotent).
+      const lib = untrack(() => selectedLib());
+      if (lib) openLibraryDocs(lib);
+    }
     wasRunning = running;
   });
 
@@ -288,6 +302,7 @@ export default function LibraryView() {
                     // Clear any detail-context error so it doesn't leak onto the grid.
                     setActionError(null);
                     setDocsError(null);
+                    setDetailError(null);
                     setSelectedLib(null);
                   }}
                 >
@@ -310,17 +325,26 @@ export default function LibraryView() {
                 <button
                   class="df-btn sm ghost"
                   onClick={() => {
-                    setActionError(null);
+                    setDetailError(null);
                     api
                       .revealInFinder(lib().path)
                       .catch((e) =>
-                        setActionError(`Couldn't open this library's folder: ${String(e)}`),
+                        setDetailError(`Couldn't open this library's folder: ${String(e)}`),
                       );
                   }}
                 >
                   <FolderOpen size={12} /> Show folder
                 </button>
               </div>
+              {/* In-detail open/reveal failures (rendered here, not the off-screen
+                  top-of-page banner). */}
+              <Show when={detailError()}>
+                <div style={{ "margin-bottom": "12px" }}>
+                  <Banner kind="bad" onDismiss={() => setDetailError(null)}>
+                    {detailError()}
+                  </Banner>
+                </div>
+              </Show>
               <Show when={docsError()}>
                 <div style={{ "margin-bottom": "12px" }}>
                   <Banner kind="bad">{docsError()}</Banner>
