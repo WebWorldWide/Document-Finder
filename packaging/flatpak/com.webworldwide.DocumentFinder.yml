@@ -20,6 +20,7 @@ finish-args:
   - --socket=fallback-x11
   - --device=dri
   - --filesystem=home # the library lives under ~/Documents by default
+  - --talk-name=org.freedesktop.FileManager1 # so "Show in folder" highlights the file (else it falls back to opening the parent folder)
 
 modules:
   - name: document-finder
