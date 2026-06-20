@@ -69,6 +69,13 @@ export default function LibraryView() {
   // blanking it to a spinner or resetting scroll. A background reconcile must
   // not empty a list the user is actively reading.
   const openLibraryDocs = (lib: LibraryInfo, opts: { background?: boolean } = {}) => {
+    // A background reconcile is redundant — and harmful — while a foreground load
+    // is already in flight: the pending foreground load already re-reads fresh
+    // on-disk data, and letting the reconcile bump docsReqId here would discard
+    // that foreground result; if the reconcile then failed, the detail would be
+    // left blank with no spinner and no error. Skip it. (untrack so reading
+    // docsLoading from the run-finished effect doesn't make that effect track it.)
+    if (opts.background && untrack(() => docsLoading())) return;
     const myId = ++docsReqId;
     setSelectedLib(lib);
     // Keep the "active library" concept in sync with the open detail so the
