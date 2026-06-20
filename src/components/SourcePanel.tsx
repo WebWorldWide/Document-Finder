@@ -96,6 +96,10 @@ export default function SourcePanel(props: {
   onInvert: () => void;
 }) {
   const enabledCount = () => props.sources.filter((s) => props.enabled.includes(s)).length;
+  // Web engines toggled under "Advanced" aren't among props.sources (the primary
+  // set shown here), so an enabled advanced engine would otherwise read as a bare,
+  // contradictory "0 of N enabled" even though the search runs. Surface the extra.
+  const extraEnabled = () => props.enabled.filter((s) => !props.sources.includes(s)).length;
   const totalHits = createMemo(() => {
     let sum = 0;
     for (const s of props.sources) {
@@ -107,7 +111,10 @@ export default function SourcePanel(props: {
     <div class="df-srcpanel">
       <div class="df-srcpanel-head">
         <strong>{enabledCount()}</strong>
-        <span style={{ color: "var(--ink-3)" }}>of {props.sources.length} sources enabled</span>
+        <span style={{ color: "var(--ink-3)" }}>
+          of {props.sources.length} sources enabled
+          <Show when={extraEnabled() > 0}> · +{extraEnabled()} advanced web</Show>
+        </span>
         <span style={{ flex: 1 }} />
         <Show when={totalHits() > 0}>
           <span style={{ color: "var(--ink-3)" }}>

@@ -156,6 +156,18 @@ jobs:
       # isn't needed.
       - run: pnpm install --frozen-lockfile --ignore-scripts
 
+      # The default feature set builds llama.cpp (ai-llm) + ONNX Runtime from
+      # source via llama-cpp-sys-2 / clang-sys, which need cmake + LLVM/libclang
+      # on PATH. Without this the Windows release leg fails to compile and the
+      # release ships no .exe/.msi (CI's fast lane installs the same toolchain).
+      - name: Install Windows build toolchain (cmake + LLVM for llama.cpp)
+        if: matrix.platform.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install -y --no-progress cmake llvm
+          echo "C:\Program Files\CMake\bin" >> $env:GITHUB_PATH
+          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:

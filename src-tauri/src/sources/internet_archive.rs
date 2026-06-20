@@ -102,13 +102,14 @@ fn find_file<'a>(files: &'a [MetaFile], ext: &str) -> Option<&'a str> {
 /// usable document file exists, so a flaky lookup never blocks discovery.
 async fn resolve_doc_url(client: &reqwest::Client, ident: &str) -> Option<String> {
     let meta_url = format!("https://archive.org/metadata/{ident}");
-    let resp = client
-        .get(&meta_url)
-        .send()
-        .await
-        .ok()?
-        .error_for_status()
-        .ok()?;
+    // Route through get_with_retry (NOT a bare send) so a 429/Retry-After or 5xx
+    // from archive.org/metadata is backed off and retried instead of silently
+    // dropping the candidate. Under the broad multi-sub-query fan-out a single
+    // discovery wave fires dozens of concurrent metadata lookups and IA
+    // rate-limits them, which otherwise made matched books vanish with no visible
+    // reason (the source still reported "done"). A genuine 404/non-doc still maps
+    // to None and is legitimately dropped.
+    let resp = get_with_retry(client, &meta_url, &[]).await.ok()?;
     let meta: Metadata = resp.json().await.ok()?;
     let name = find_file(&meta.files, "pdf").or_else(|| find_file(&meta.files, "epub"))?;
     // Build the URL with proper path-segment encoding (file names can contain

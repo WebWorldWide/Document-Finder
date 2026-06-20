@@ -567,7 +567,11 @@ pub async fn open_library(state: State<'_, AppState>, path: String) -> Result<Li
         let conn = open_read_only(&db_path).map_err(|e| e.to_string())?;
         let row = conn
             .query_row(
-                "SELECT r.query, (SELECT COUNT(*) FROM documents WHERE run_id = r.id)
+                // Title from the latest run, but count EVERY document in the
+                // library (not just the latest run's) so this matches the count
+                // list_libraries shows for the same folder — a re-run that finds
+                // fewer docs must not make the library appear to shrink here.
+                "SELECT r.query, (SELECT COUNT(*) FROM documents)
              FROM runs r ORDER BY r.created_at DESC LIMIT 1",
                 [],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?)),
@@ -633,22 +637,49 @@ pub async fn list_library_docs(
                  ORDER BY title COLLATE NOCASE",
             )
             .map_err(|e| e.to_string())?;
-        let rows = stmt
+        // Canonicalize the folder once so each row's resolved path can be checked
+        // against it. A stored local_path can (for a legacy/manifest library) be
+        // absolute or contain traversal, and Path::join keeps an absolute arg
+        // verbatim — without this check such a path would be handed straight to
+        // open_path, escaping the library root.
+        let folder_canon = folder.canonicalize().unwrap_or_else(|_| folder.clone());
+        let raw_rows = stmt
             .query_map([], |row| {
-                let local_path: String = row.get(2)?;
-                Ok(LibraryDoc {
-                    title: row.get(0)?,
-                    source: row.get(1)?,
-                    // join() returns local_path as-is if it's already absolute, so
-                    // both relative-to-folder and absolute storage resolve correctly.
-                    path: folder.join(&local_path).to_string_lossy().to_string(),
-                    size_bytes: row.get::<_, Option<i64>>(3)?.map(|n| n.max(0) as u64),
-                    extract_error: row.get(4)?,
+                Ok((
+                    row.get::<_, String>(0)?,         // title
+                    row.get::<_, String>(1)?,         // source
+                    row.get::<_, String>(2)?,         // local_path
+                    row.get::<_, Option<i64>>(3)?,    // size_bytes
+                    row.get::<_, Option<String>>(4)?, // extract_error
+                ))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let docs = raw_rows
+            .into_iter()
+            .filter_map(|(title, source, local_path, size_bytes, extract_error)| {
+                let joined = folder.join(&local_path);
+                // Only surface rows whose file still exists AND stays inside the
+                // library folder: canonicalize() fails for a missing file (so
+                // phantom rows for files deleted off disk are dropped — honoring
+                // this command's contract) and resolves symlinks/.. for the
+                // containment check (so an escaping local_path can never reach
+                // open_path).
+                let canon = joined.canonicalize().ok()?;
+                if !canon.starts_with(&folder_canon) {
+                    return None;
+                }
+                Some(LibraryDoc {
+                    title,
+                    source,
+                    path: joined.to_string_lossy().to_string(),
+                    size_bytes: size_bytes.map(|n| n.max(0) as u64),
+                    extract_error,
                 })
             })
-            .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())
+            .collect::<Vec<_>>();
+        Ok(docs)
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -994,6 +1025,21 @@ pub async fn open_path(path: String) -> Result<(), String> {
     let p = raw
         .canonicalize()
         .map_err(|e| format!("Cannot resolve path '{}': {e}", raw.display()))?;
+    // `open::that` hands off to ShellExecuteW on Windows, which (exactly like
+    // explorer's `/select,` in reveal_in_finder above) does NOT understand the
+    // `\\?\` verbatim prefix that `canonicalize()` returns — handed one it fails to
+    // launch, so opening ANY downloaded document silently breaks on Windows. Strip
+    // the prefix back to a normal Win32 path first. No-op on macOS/Linux.
+    #[cfg(target_os = "windows")]
+    let p = {
+        let s = p.to_string_lossy();
+        let simplified = s
+            .strip_prefix(r"\\?\UNC\")
+            .map(|rest| format!(r"\\{rest}"))
+            .or_else(|| s.strip_prefix(r"\\?\").map(str::to_string))
+            .unwrap_or_else(|| s.to_string());
+        PathBuf::from(simplified)
+    };
     // `open::that` (NOT that_detached) WAITS for the launcher to exit and reports
     // its status — so a file with no registered default app (e.g. an .epub on a
     // Linux box with no reader, where xdg-open spawns then exits non-zero) surfaces
@@ -1487,6 +1533,19 @@ pub async fn delete_library(state: State<'_, AppState>, path: String) -> Result<
         tracing::warn!("delete_library: {}", msg);
         return Err(msg);
     }
+    // Defense-in-depth: only ever recursively delete a folder that actually IS a
+    // Document Finder library (current `library.db` or a legacy `manifest.json`).
+    // Even if the configured root were pointed at a directory holding unrelated
+    // user files, this bounds delete to app-created libraries — never an arbitrary
+    // sibling folder that happens to sit under the root.
+    if !p.join("library.db").exists() && !p.join("manifest.json").exists() {
+        let msg = format!(
+            "'{}' isn't a Document Finder library — refusing to delete.",
+            p.display()
+        );
+        tracing::warn!("delete_library: {}", msg);
+        return Err(msg);
+    }
     let stage = force_remove_dir(&p).await.map_err(|e| {
         tracing::warn!("delete_library: {} (path={})", e, p.display());
         e
@@ -1547,10 +1606,30 @@ pub async fn purge_all_data(
         targets.push(log_dir);
     }
     // 3. The document library (downloaded files + per-query SQLite) — user
-    //    content, so only when the user explicitly opts in.
+    //    content, so only when the user explicitly opts in. Remove only the
+    //    per-query library subfolders the app actually created (those with a
+    //    current `library.db` or a legacy `manifest.json`), NOT the whole root: if
+    //    the user pointed the library root at a directory that also holds
+    //    unrelated files, those must survive. The emptied root is removed after
+    //    the loop (non-recursive, so a shared/non-empty root is left intact).
+    let mut library_root_to_clear: Option<PathBuf> = None;
     if include_library {
         match confinement_root(&state) {
-            Ok(root) => targets.push(root),
+            Ok(root) => match std::fs::read_dir(&root) {
+                Ok(entries) => {
+                    for entry in entries.flatten() {
+                        let child = entry.path();
+                        if child.is_dir()
+                            && (child.join("library.db").exists()
+                                || child.join("manifest.json").exists())
+                        {
+                            targets.push(child);
+                        }
+                    }
+                    library_root_to_clear = Some(root);
+                }
+                Err(e) => tracing::warn!("purge_all_data: could not read library root: {e}"),
+            },
             Err(e) => tracing::warn!("purge_all_data: could not resolve library root: {e}"),
         }
     }
@@ -1573,6 +1652,14 @@ pub async fn purge_all_data(
                 tracing::warn!("purge_all_data: failed to remove {} ({})", path_str, e);
                 report.failed.push(format!("{path_str}: {e}"));
             }
+        }
+    }
+    // Remove the now-empty library root last. Non-recursive on purpose: it
+    // succeeds only if we emptied it, so a root that still holds unrelated user
+    // files (or is itself a shared/parent folder) is left intact.
+    if let Some(root) = library_root_to_clear {
+        if std::fs::remove_dir(&root).is_ok() {
+            report.removed.push(root.display().to_string());
         }
     }
     Ok(report)

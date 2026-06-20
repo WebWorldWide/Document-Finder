@@ -451,7 +451,16 @@ export default function FindTab() {
   }
 
   async function handleSearch() {
-    if (!query().trim() || rs().running || settings.selectedSources.length === 0) return;
+    // Don't launch when the live-update event listeners failed to register: the
+    // backend run would proceed but the UI would never receive found/progress/
+    // done events, leaving a permanently "running" card that never updates.
+    if (
+      !query().trim() ||
+      rs().running ||
+      settings.selectedSources.length === 0 ||
+      !uiStore.listenersReady
+    )
+      return;
     setStopping(false); // clear any stranded "Stopping…" latch from a prior run
     setExportedTo(null);
     // Also clear a prior export ERROR / open-document ERROR — otherwise a stale red
@@ -629,7 +638,16 @@ export default function FindTab() {
                 <button
                   class="df-btn accent"
                   onClick={() => void handleSearch()}
-                  disabled={!query().trim() || settings.selectedSources.length === 0}
+                  disabled={
+                    !query().trim() ||
+                    settings.selectedSources.length === 0 ||
+                    !uiStore.listenersReady
+                  }
+                  title={
+                    !uiStore.listenersReady
+                      ? "Live updates didn't start — restart the app before searching."
+                      : undefined
+                  }
                 >
                   <Search size={13} /> Find documents
                 </button>
@@ -712,6 +730,13 @@ export default function FindTab() {
               Enable at least one source to start a search.
             </p>
           </Show>
+          {/* Live-update listeners failed to register at startup — searching would
+              hang with no progress, so it's blocked until the app is restarted. */}
+          <Show when={!uiStore.listenersReady}>
+            <p style={{ "margin-top": "10px", "font-size": "12px", color: "var(--bad-ink)" }}>
+              Live updates didn’t start. Please restart Document Finder before searching.
+            </p>
+          </Show>
         </div>
 
         {/* FATAL ERROR */}
@@ -782,8 +807,10 @@ export default function FindTab() {
                 Found {rs().found} result{rs().found === 1 ? "" : "s"}, but none looked relevant
                 enough to keep.
               </strong>{" "}
-              They were filtered out as off-topic. Try simpler or broader keywords, or lower the
-              Search quality (Settings → Search quality → Fast) so fewer results get filtered.
+              They were filtered out as off-topic. Try simpler or broader keywords
+              {settings.quality === "thorough"
+                ? ", or lower the Search quality (Settings → Search quality) so the AI relevance filter keeps more."
+                : "."}
             </Banner>
           </div>
         </Show>
@@ -1216,7 +1243,9 @@ export default function FindTab() {
                       >
                         {!rs().running
                           ? rs().done === 0 && rs().failed === 0
-                            ? "None matched closely enough to keep — try broader terms or Fast quality."
+                            ? settings.quality === "thorough"
+                              ? "None matched closely enough to keep — try broader terms or a lower Search quality."
+                              : "None matched closely enough to keep — try broader terms."
                             : "Downloads complete."
                           : downloadsStarted()
                             ? "Queue clearing…"
