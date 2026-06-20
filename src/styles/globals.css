@@ -855,6 +855,13 @@ input,
 .df-srcrow:nth-child(2n) {
   border-right: 0;
 }
+/* A lone last row (odd source count — e.g. the 9 primary sources in a 2-col grid)
+   would otherwise sit half-width with a dangling right border mid-panel. Span it
+   the full width so the grid reads as a clean block. */
+.df-srcrow:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+  border-right: 0;
+}
 .df-srcrow:hover {
   background: var(--hover);
 }
@@ -1254,6 +1261,9 @@ input,
 .df-ftype {
   display: inline-flex;
   align-items: center;
+  /* The badge sits inline before the title text — center it on the line instead
+     of letting the inline-flex box drop to the text baseline. */
+  vertical-align: middle;
   gap: 4px;
   padding: 1px 5px;
   font-family: var(--font-mono);
@@ -1722,7 +1732,9 @@ input,
 .df-libcard-meta {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--pad-4);
+  row-gap: 4px;
   font-size: 11.5px;
   color: var(--ink-3);
   font-variant-numeric: tabular-nums;
