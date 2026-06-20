@@ -52,8 +52,12 @@ app on first launch:
   xattr -dr com.apple.quarantine "/Applications/Document Finder.app"
   ```
 - **Windows** — SmartScreen → **More info** → **Run anyway**.
-- **Linux** — the `.deb`/`.rpm`/AppImage need glibc 2.39+ (built on Ubuntu 24.04);
-  the Flatpak ships its own runtime, so it runs anywhere Flatpak does.
+- **Linux** — the `.deb`/`.rpm`/`.AppImage` need glibc 2.39+ (built on Ubuntu
+  24.04), so on older distros (Ubuntu 22.04, Debian 12, RHEL 9, Mint 21) use the
+  **Flatpak**, which ships its own runtime and runs anywhere Flatpak does. If the
+  window opens blank (some older GPU drivers + system WebKitGTK), launch with
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1` set (add `WEBKIT_DISABLE_COMPOSITING_MODE=1`
+  if it persists).
 
 ## Uninstalling
 

@@ -56,7 +56,12 @@ case "$(uname -s)" in
     # identifier above). Without this, a Flatpak user's downloaded AI model
     # weights survive an uninstall.sh that reports it removed everything.
     rm_if "$HOME/.var/app/com.webworldwide.DocumentFinder"        # Flatpak sandbox data (models/config/cache)
-    ask_library "$HOME/Documents/Document Finder"
+    # Resolve the REAL Documents dir — localized / XDG-customized desktops put it
+    # somewhere other than ~/Documents, so a non-English user must still be offered
+    # the library for removal. Mirrors the app's dirs::document_dir().
+    docs="$(xdg-user-dir DOCUMENTS 2>/dev/null || true)"
+    [ -z "$docs" ] && docs="$HOME/Documents"
+    ask_library "$docs/Document Finder"
     echo ""
     echo "Done. To remove the app, use whichever you installed:"
     echo "  .deb:     sudo apt purge document-finder"
