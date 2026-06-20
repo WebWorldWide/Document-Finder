@@ -100,7 +100,12 @@ export default function LibraryView() {
           setDocsError(`Couldn't read this library: ${String(e)}`);
       })
       .finally(() => {
-        if (myId === docsReqId && !opts.background) setDocsLoading(false);
+        // Always clear the spinner for the LATEST request, even a background one:
+        // if a background reconcile is fired (bumping docsReqId) while a foreground
+        // load is still in flight, the foreground's finally sees a stale id and
+        // skips — so only the background finally can clear docsLoading. Gating it
+        // on !background here would strand the spinner on forever.
+        if (myId === docsReqId) setDocsLoading(false);
       });
   };
   // Open a single saved document in its default app (the in-app read path).
@@ -432,6 +437,20 @@ export default function LibraryView() {
                   >
                     <p class="hint" style={{ "margin-bottom": "10px" }}>
                       Click a document to open it.
+                      {/* The card count is every document this library saved; the
+                          list shows only those whose file is still on disk. Explain
+                          the gap instead of leaving the user to wonder why fewer
+                          rows appear than the card promised. */}
+                      <Show when={(selectedLib()?.n_docs ?? 0) > libDocs().length}>
+                        {" "}
+                        <span style={{ color: "var(--ink-3)" }}>
+                          {(selectedLib()?.n_docs ?? 0) - libDocs().length} saved{" "}
+                          {(selectedLib()?.n_docs ?? 0) - libDocs().length === 1
+                            ? "file is"
+                            : "files are"}{" "}
+                          no longer on disk.
+                        </span>
+                      </Show>
                     </p>
                     <For each={libDocs()}>
                       {(d) => (

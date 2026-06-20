@@ -175,7 +175,7 @@ pub fn default_library_dir() -> Result<DefaultDirsResp, String> {
 pub async fn start_run(
     app: AppHandle,
     state: State<'_, AppState>,
-    req: RunRequest,
+    mut req: RunRequest,
 ) -> Result<(), String> {
     // Validate inputs server-side too. The renderer guards these, but a direct
     // command invocation must fail fast rather than silently spin up a run that
@@ -215,6 +215,15 @@ pub async fn start_run(
             out_dir.display()
         )
     })?;
+    // Thread the confined, now-created root back into the request as its CANONICAL
+    // path (it exists after create_dir_all, so canonicalize resolves symlinks and
+    // adds the `\\?\` prefix on Windows). The orchestrator builds the per-query
+    // folder it reports in run-finished events from req.out_dir, and list_libraries
+    // returns each library's path canonicalized — so without this the frontend's
+    // `folder === lib.path` checks never match on Windows (or under a symlinked
+    // root), and the open detail's post-run background refresh never fires.
+    let out_dir = out_dir.canonicalize().unwrap_or(out_dir);
+    req.out_dir = out_dir.to_string_lossy().into_owned();
 
     {
         let mut cur = state
