@@ -62,6 +62,10 @@ export default function SettingsView() {
   const [purging, setPurging] = createSignal(false);
   const [purgeMsg, setPurgeMsg] = createSignal<string | null>(null);
   const [purgeLibrary, setPurgeLibrary] = createSignal(false);
+  // True after a successful wipe — gates the "Restart now" button that finishes
+  // the reset (drops in-memory model singletons + re-reads cleared settings).
+  const [purgeOk, setPurgeOk] = createSignal(false);
+  const [restarting, setRestarting] = createSignal(false);
 
   // If the LLM is removed (or never installed) while "Thorough" is the selected
   // quality, downgrade to "Balanced" — otherwise the Thorough tab renders both
@@ -159,6 +163,7 @@ export default function SettingsView() {
     const ok = await ask(msg, { title: "Erase Document Finder data", kind: "warning" });
     if (!ok) return;
     setPurging(true);
+    setPurgeOk(false);
     try {
       const report = await api.purgeAllData(includeLibrary);
       // localStorage is the only place settings/theme persist — wipe it too so
@@ -190,8 +195,11 @@ export default function SettingsView() {
       const failed = report?.failed?.length ?? 0;
       const msg =
         failed === 0
-          ? `Erased ${removed} location${removed === 1 ? "" : "s"}. Quit the app to finish.`
+          ? `Erased ${removed} location${removed === 1 ? "" : "s"}. Restart to finish the reset.`
           : `Erased ${removed}, but ${failed} could not be removed — close the app and retry, or run the uninstall script.`;
+      // Offer the one-click restart only on a clean wipe; a partial failure still
+      // wants the manual close/retry path.
+      setPurgeOk(failed === 0);
       setPurgeMsg(msg);
       // Announce the outcome of the app's most destructive action for screen-reader
       // users — the visible <p> is not in a live region (matches the other announces).
@@ -807,6 +815,21 @@ export default function SettingsView() {
               <p class="hint" style={{ "margin-top": "8px" }}>
                 {purgeMsg()}
               </p>
+            </Show>
+            <Show when={purgeOk()}>
+              <button
+                class="df-btn sm"
+                style={{ "margin-top": "8px" }}
+                disabled={restarting()}
+                onClick={() => {
+                  setRestarting(true);
+                  // Restarting drops the now-stale in-memory model singletons and
+                  // re-reads the cleared settings, completing the reset cleanly.
+                  api.restartApp().catch(() => setRestarting(false));
+                }}
+              >
+                {restarting() ? "Restarting…" : "Restart now"}
+              </button>
             </Show>
           </section>
 

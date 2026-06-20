@@ -1586,6 +1586,16 @@ pub struct PurgeReport {
 /// root configured via `set_library_root`). So a compromised/buggy renderer can't
 /// turn this into an arbitrary `rm -rf`. The document library is user content, so
 /// it is preserved unless `include_library` is explicitly true.
+/// Cleanly restart the whole app process. Used right after "Erase app data" so a
+/// full reset takes effect in one step — restarting the process drops the
+/// in-memory Rust model singletons and re-reads the (now-cleared) settings, giving
+/// the genuine first-run experience instead of asking the user to quit and
+/// relaunch by hand. `AppHandle::restart()` diverges (never returns).
+#[tauri::command]
+pub fn restart_app(app: AppHandle) {
+    app.restart();
+}
+
 #[tauri::command]
 pub async fn purge_all_data(
     app: AppHandle,

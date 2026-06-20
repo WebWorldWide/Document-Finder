@@ -129,18 +129,15 @@ export default function Sidebar() {
         </div>
       </Show>
 
-      <div class="df-side-footer">
-        <Show
-          when={uiStore.listenersReady}
-          fallback={
-            <>
-              <span class="df-status-dot warn" /> Live updates unavailable — restart
-            </>
-          }
-        >
-          <span class="df-status-dot" /> Backend ready
-        </Show>
-      </div>
+      {/* Surface backend status only when something is actually wrong. A
+          permanent "Backend ready" line is just noise in the normal case — the
+          app working is the signal — so the footer appears only if the live-update
+          listeners failed to register (which also blocks search until a restart). */}
+      <Show when={!uiStore.listenersReady}>
+        <div class="df-side-footer">
+          <span class="df-status-dot warn" /> Live updates unavailable — restart
+        </div>
+      </Show>
     </nav>
   );
 }

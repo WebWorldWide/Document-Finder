@@ -28,6 +28,7 @@ commands.allow = [
   "delete_model",
   "delete_library",
   "purge_all_data",
+  "restart_app",
   "reset_ai_state",
   "local_searxng_port"
 ]

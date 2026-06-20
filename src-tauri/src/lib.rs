@@ -60,6 +60,7 @@ pub fn run() {
             commands::delete_model,
             commands::delete_library,
             commands::purge_all_data,
+            commands::restart_app,
             commands::reset_ai_state,
             commands::local_searxng_port,
         ])

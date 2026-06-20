@@ -133,5 +133,7 @@ export const api = {
   /** Clean uninstall: erase app data (models, caches, logs); optionally the library too. */
   purgeAllData: (includeLibrary: boolean) =>
     invoke<PurgeReport>("purge_all_data", { includeLibrary }),
+  /** Cleanly restart the whole app process (used to finish a full data wipe). */
+  restartApp: () => invoke<void>("restart_app"),
   resetAiState: () => invoke<void>("reset_ai_state"),
 };
