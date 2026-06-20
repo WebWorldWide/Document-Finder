@@ -10,6 +10,11 @@ use super::{get_with_retry, Document, Source};
 
 const SEARCH: &str = "https://archive.org/advancedsearch.php";
 
+/// A candidate from an IA search page, before its real download URL is resolved:
+/// (identifier, title, authors, year, description). Resolution is one extra
+/// metadata fetch per item, done downstream so it doesn't gate the whole page.
+type RawCandidate = (String, String, Vec<String>, Option<String>, Option<String>);
+
 pub struct InternetArchiveSource {
     client: Arc<reqwest::Client>,
 }
@@ -131,22 +136,26 @@ impl Source for InternetArchiveSource {
         limit: usize,
     ) -> BoxStream<'static, anyhow::Result<Document>> {
         let client = self.client.clone();
+        // A second clone for the downstream per-item metadata resolution (the
+        // unfold below moves `client` in for its paginated search requests).
+        let resolve_client = self.client.clone();
         // IA's format field uses values like "Text PDF" — `format:pdf` matched
         // very few items. Filter to texts only and let the metadata lookup
         // confirm a PDF exists.
         let q = format!("{} AND mediatype:texts", keywords.join(" AND "));
-        stream::unfold((1u32, 0usize, false), move |(page, yielded, done)| {
+        stream::unfold((1u32, false), move |(page, done)| {
             let client = client.clone();
             let q = q.clone();
             async move {
-                if done || yielded >= limit {
+                if done {
                     return None;
                 }
-                // Constant across pages (depends only on `limit`, not `yielded`):
-                // IA paginates by page *number* with a fixed `rows`, so a per-page
-                // size that shrank as `yielded` grew would misalign the offsets and
-                // skip results. Raised from a flat 50 so deep runs pull more per
-                // page (bounded by `.take(limit)` downstream).
+                // Constant across pages: IA paginates by page *number* with a fixed
+                // `rows`, so a per-page size that varied between pages would misalign
+                // the offsets and skip results. Raised from a flat 50 so deep runs
+                // pull more per page. The total count of RESOLVED docs is bounded by
+                // `.take(limit)` downstream (which also halts pagination once it has
+                // enough), so this stream stops on either that or a short last page.
                 let per_page: usize = limit.clamp(50, 100);
                 let params = [
                     ("q", q),
@@ -166,7 +175,7 @@ impl Source for InternetArchiveSource {
                     Err(e) => {
                         return Some((
                             Err(anyhow::anyhow!("archive.org search failed: {e}")),
-                            (page, yielded, true),
+                            (page, true),
                         ));
                     }
                 };
@@ -175,7 +184,7 @@ impl Source for InternetArchiveSource {
                     Err(e) => {
                         return Some((
                             Err(anyhow::anyhow!("archive.org returned malformed JSON: {e}")),
-                            (page, yielded, true),
+                            (page, true),
                         ));
                     }
                 };
@@ -185,9 +194,14 @@ impl Source for InternetArchiveSource {
                 }
                 let n = docs_in.len();
                 let next_done = n < per_page;
-                // Collect raw candidates (items advertising a PDF), then resolve
-                // each one's real download URL concurrently via the metadata API.
-                let mut raw = Vec::with_capacity(n);
+                // Collect raw candidates (items advertising a PDF/EPUB). Their real
+                // download URLs are resolved DOWNSTREAM (in flat_map), one metadata
+                // lookup per item yielded as it resolves — so a single slow/retried
+                // lookup delays only its own doc, not the whole page. A
+                // collect()-before-yield here would gate every doc on the page's
+                // slowest lookup, risking loss of the entire page if the wave
+                // deadline fires mid-resolution.
+                let mut raw: Vec<RawCandidate> = Vec::with_capacity(n);
                 for d in docs_in {
                     let Some(ident) = d.get("identifier").and_then(coerce_string) else {
                         continue;
@@ -213,8 +227,18 @@ impl Source for InternetArchiveSource {
                     let year = d.get("year").and_then(coerce_string);
                     raw.push((ident, title, authors, year, desc));
                 }
-                let docs: Vec<Document> = stream::iter(raw)
-                    .map(|(ident, title, authors, year, desc)| {
+                Some((Ok(raw), (page + 1, next_done)))
+            }
+        })
+        // Resolve each candidate's real download URL here, incrementally: every
+        // item is yielded as soon as its own metadata lookup finishes, so the wave
+        // deadline cutting in mid-page only loses still-pending items, not the ones
+        // already resolved.
+        .flat_map(move |res: anyhow::Result<Vec<RawCandidate>>| match res {
+            Ok(raw) => {
+                let client = resolve_client.clone();
+                stream::iter(raw)
+                    .map(move |(ident, title, authors, year, desc)| {
                         let client = client.clone();
                         async move {
                             let url = resolve_doc_url(&client, &ident).await?;
@@ -229,16 +253,10 @@ impl Source for InternetArchiveSource {
                             })
                         }
                     })
-                    .buffer_unordered(12)
-                    .filter_map(|d| async move { d })
-                    .collect()
-                    .await;
-                let yielded_now = yielded + docs.len();
-                Some((Ok(docs), (page + 1, yielded_now, next_done)))
+                    .buffer_unordered(8)
+                    .filter_map(|d| async move { d.map(Ok) })
+                    .boxed()
             }
-        })
-        .flat_map(|res: anyhow::Result<Vec<Document>>| match res {
-            Ok(docs) => stream::iter(docs.into_iter().map(Ok).collect::<Vec<_>>()).boxed(),
             Err(e) => stream::iter(vec![Err(e)]).boxed(),
         })
         .take(limit)
