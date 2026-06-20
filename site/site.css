@@ -1191,3 +1191,16 @@ button { font: inherit; cursor: pointer; }
   .spec { grid-template-columns: 1fr; gap: 6px; }
   .foot-cols { grid-template-columns: 1fr 1fr; }
 }
+
+/* Respect users who prefer reduced motion — neutralize the looping pulse/shimmer
+   accents and long transitions while leaving the layout fully usable. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
