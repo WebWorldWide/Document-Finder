@@ -54,16 +54,29 @@ export default function LibraryView() {
   const [docsLoading, setDocsLoading] = createSignal(false);
   const [docsError, setDocsError] = createSignal<string | null>(null);
 
+  // Monotonic request id so a slow listLibraryDocs for library A can't overwrite a
+  // later library B's docs (open A → back → open B with A resolving last would
+  // render A's documents — and openable A files — under B's header). Mirrors the
+  // `cancelled` guard the listLibraries effect already uses.
+  let docsReqId = 0;
   const openLibraryDocs = (lib: LibraryInfo) => {
+    const myId = ++docsReqId;
     setSelectedLib(lib);
     setLibDocs([]);
     setDocsError(null);
+    setExportOk(null); // a grid "Exported …" banner shouldn't linger over the detail
     setDocsLoading(true);
     api
       .listLibraryDocs(lib.path)
-      .then((docs) => setLibDocs(docs))
-      .catch((e) => setDocsError(`Couldn't read this library: ${String(e)}`))
-      .finally(() => setDocsLoading(false));
+      .then((docs) => {
+        if (myId === docsReqId) setLibDocs(docs);
+      })
+      .catch((e) => {
+        if (myId === docsReqId) setDocsError(`Couldn't read this library: ${String(e)}`);
+      })
+      .finally(() => {
+        if (myId === docsReqId) setDocsLoading(false);
+      });
   };
   // Open a single saved document in its default app (the in-app read path).
   const openDoc = (d: { path?: string }) => {

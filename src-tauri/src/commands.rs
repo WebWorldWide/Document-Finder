@@ -986,7 +986,7 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
 /// paths, and the `://` guard ensures we open a local FILE — never a URL (which
 /// would otherwise launch the browser).
 #[tauri::command]
-pub fn open_path(path: String) -> Result<(), String> {
+pub async fn open_path(path: String) -> Result<(), String> {
     let raw = PathBuf::from(&path);
     if path.contains("://") {
         return Err("path must not be a URI".to_string());
@@ -994,9 +994,21 @@ pub fn open_path(path: String) -> Result<(), String> {
     let p = raw
         .canonicalize()
         .map_err(|e| format!("Cannot resolve path '{}': {e}", raw.display()))?;
-    // `open` uses ShellExecuteW on Windows / `open` on macOS / xdg-open on Linux —
-    // the correct per-OS default-handler launch, with no shell/cmd quoting hazard.
-    open::that_detached(&p).map_err(|e| format!("Couldn't open the file: {e}"))
+    // `open::that` (NOT that_detached) WAITS for the launcher to exit and reports
+    // its status — so a file with no registered default app (e.g. an .epub on a
+    // Linux box with no reader, where xdg-open spawns then exits non-zero) surfaces
+    // an error instead of silently no-op'ing (the row says "click to open", so the
+    // UI must be able to tell the user it failed). The launcher hands off to the
+    // app and returns quickly, so this never blocks on the app; run it on the
+    // blocking pool to keep it off the async worker. `open` uses ShellExecuteW /
+    // `open` / xdg-open per OS, with no shell-quoting hazard.
+    tokio::task::spawn_blocking(move || open::that(&p))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|_| {
+            "Couldn't open the file — your system may have no app set to open this type."
+                .to_string()
+        })
 }
 
 // =============================================================================
