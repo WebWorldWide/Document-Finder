@@ -12,6 +12,10 @@ export interface StreamDoc {
   // saved / failed
   bytes?: number;
   error?: string;
+  /** A non-error caveat for a successfully-saved doc (e.g. "no readable text —
+   *  may be a scanned image"). Rendered muted, not red, since the file is still
+   *  openable — a red "error" on a green-checked row would contradict itself. */
+  note?: string;
   status?: "done" | "failed";
   /** Absolute on-disk path of a saved file — present makes the row open-on-click. */
   path?: string;
@@ -78,6 +82,11 @@ export default function DocRow(props: {
         <Show when={props.kind === "saved" && props.doc.error}>
           <span class="df-doc-bytes" style={{ color: "var(--bad-ink)" }} title={props.doc.error}>
             {props.doc.error}
+          </span>
+        </Show>
+        <Show when={props.kind === "saved" && !props.doc.error && props.doc.note}>
+          <span class="df-doc-bytes" style={{ color: "var(--ink-3)" }} title={props.doc.note}>
+            {props.doc.note}
           </span>
         </Show>
       </div>

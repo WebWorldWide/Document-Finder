@@ -55,6 +55,10 @@ export default function Sidebar() {
               class="df-nav-item"
               aria-current={uiStore.view === item.id ? "page" : undefined}
               onClick={() => {
+                // Re-entering the Library tab clears any drilled-in detail so the
+                // list shows — otherwise clicking "Library" while a detail is open
+                // is a dead click (the view is already "library").
+                if (item.id === "library") uiStore.setActiveLibrary(null);
                 uiStore.setView(item.id);
                 focusMain();
               }}
@@ -92,6 +96,7 @@ export default function Sidebar() {
             class="df-btn ghost sm"
             style={{ padding: "2px 6px", "margin-right": "-6px" }}
             onClick={() => {
+              uiStore.setActiveLibrary(null);
               uiStore.setView("library");
               focusMain();
             }}

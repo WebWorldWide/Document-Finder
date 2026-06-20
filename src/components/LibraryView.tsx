@@ -23,6 +23,7 @@ import {
 } from "@/lib/utils";
 import Banner from "./Banner";
 import DocRow from "./DocRow";
+import { humanizeDownloadError } from "@/lib/errors";
 
 type SortKey = "updated" | "docs" | "size";
 
@@ -63,24 +64,43 @@ export default function LibraryView() {
   // render A's documents — and openable A files — under B's header). Mirrors the
   // `cancelled` guard the listLibraries effect already uses.
   let docsReqId = 0;
-  const openLibraryDocs = (lib: LibraryInfo) => {
+  // opts.background: a silent reconcile (e.g. a run that targeted THIS library
+  // just finished). It re-fetches and swaps the list only on success — never
+  // blanking it to a spinner or resetting scroll. A background reconcile must
+  // not empty a list the user is actively reading.
+  const openLibraryDocs = (lib: LibraryInfo, opts: { background?: boolean } = {}) => {
     const myId = ++docsReqId;
     setSelectedLib(lib);
-    setLibDocs([]);
-    setDocsError(null);
-    setDetailError(null);
-    setExportOk(null); // a grid "Exported …" banner shouldn't linger over the detail
-    setDocsLoading(true);
+    // Keep the "active library" concept in sync with the open detail so the
+    // sidebar Recent highlight matches and the nav effect below stays a no-op
+    // for self-initiated opens (guarded so it can't re-trigger itself).
+    if (uiStore.activeLibrary?.path !== lib.path) uiStore.setActiveLibrary(lib);
+    if (!opts.background) {
+      setLibDocs([]);
+      setDocsError(null);
+      setDetailError(null);
+      setExportOk(null); // a grid "Exported …" banner shouldn't linger over the detail
+      setDocsLoading(true);
+      // The clicked card / Open button unmounts as the detail opens, dropping
+      // focus to <body>; move it to the in-detail Back button so a keyboard
+      // user keeps their place (mirrors the post-delete focus restore).
+      requestAnimationFrame(() =>
+        (document.querySelector(".df-detail-back") as HTMLElement | null)?.focus(),
+      );
+    }
     api
       .listLibraryDocs(lib.path)
       .then((docs) => {
         if (myId === docsReqId) setLibDocs(docs);
       })
       .catch((e) => {
-        if (myId === docsReqId) setDocsError(`Couldn't read this library: ${String(e)}`);
+        // A background reconcile must not clobber the list or pop an error
+        // banner — keep showing what the user is reading.
+        if (myId === docsReqId && !opts.background)
+          setDocsError(`Couldn't read this library: ${String(e)}`);
       })
       .finally(() => {
-        if (myId === docsReqId) setDocsLoading(false);
+        if (myId === docsReqId && !opts.background) setDocsLoading(false);
       });
   };
   // Open a single saved document in its default app (the in-app read path).
@@ -130,14 +150,39 @@ export default function LibraryView() {
     const running = runStore.state.running;
     if (wasRunning && !running) {
       setLoadTick((n) => n + 1);
-      // Also refresh the OPEN detail's document list — the loadTick refresh only
-      // re-lists the (hidden) grid, so a library drilled into mid-run would keep
-      // showing a stale doc snapshot. untrack so this effect doesn't depend on
-      // selectedLib (the request-id guard makes the re-fetch idempotent).
+      // Also refresh the OPEN detail — but only if the run that just finished
+      // targeted THIS library (its docs may have grown), and as a BACKGROUND
+      // reconcile so an unrelated run can never blank the list the user is
+      // reading or reset their scroll. untrack so this effect depends only on
+      // `running`, not on selectedLib / the run folder.
       const lib = untrack(() => selectedLib());
-      if (lib) openLibraryDocs(lib);
+      const folder = untrack(() => runStore.state.folder);
+      if (lib && folder === lib.path) openLibraryDocs(lib, { background: true });
     }
     wasRunning = running;
+  });
+
+  // Keep the open detail in sync with sidebar navigation. The Library tab stays
+  // mounted, so clicking a *different* Recent library (which sets activeLibrary)
+  // or the "Library" / "all" entries (which clear it) would otherwise be a dead
+  // click — the detail wouldn't change. Both are driven off activeLibrary, which
+  // openLibraryDocs and Back keep in sync with selectedLib.
+  createEffect(() => {
+    const active = uiStore.activeLibrary;
+    const cur = untrack(() => selectedLib());
+    if (!active) {
+      // Navigated to the library list — close any open detail (focus is handled
+      // by the sidebar's focusMain on those clicks).
+      if (cur) {
+        setDocsError(null);
+        setDetailError(null);
+        setSelectedLib(null);
+      }
+      return;
+    }
+    // A specific library was chosen from the sidebar; open it unless it's already
+    // showing. (Card clicks set selectedLib first, so this stays a no-op there.)
+    if (!cur || active.path !== cur.path) openLibraryDocs(active);
   });
 
   const sorted = createMemo(() => {
@@ -297,13 +342,23 @@ export default function LibraryView() {
                 }}
               >
                 <button
-                  class="df-btn sm ghost"
+                  class="df-btn sm ghost df-detail-back"
                   onClick={() => {
                     // Clear any detail-context error so it doesn't leak onto the grid.
                     setActionError(null);
                     setDocsError(null);
                     setDetailError(null);
                     setSelectedLib(null);
+                    // Keep "active library" in sync so re-clicking the same Recent
+                    // entry reopens it (an unchanged activeLibrary wouldn't refire).
+                    uiStore.setActiveLibrary(null);
+                    // The Back button unmounts with the detail, dropping focus to
+                    // <body>; restore it to the grid's filter input.
+                    requestAnimationFrame(() =>
+                      (
+                        document.querySelector(".df-inline-search input") as HTMLElement | null
+                      )?.focus(),
+                    );
                   }}
                 >
                   <ArrowLeft size={13} /> Libraries
@@ -390,9 +445,13 @@ export default function LibraryView() {
                             ftype: ftypeFromPath(d.path),
                             bytes: d.size_bytes,
                             path: d.path,
-                            // Surface "saved but no text extracted" (e.g. scanned PDF)
-                            // — DocRow already renders this as a red sub-line.
-                            error: d.extract_error,
+                            // Surface "saved but no text extracted" (e.g. a scanned
+                            // PDF) as a calm, humanized muted note — the file IS
+                            // openable, so a red "error" on a green-checked row
+                            // would contradict itself.
+                            note: d.extract_error
+                              ? humanizeDownloadError(d.extract_error)
+                              : undefined,
                           }}
                         />
                       )}
