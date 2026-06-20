@@ -8,8 +8,9 @@ import {
   Search,
   Library as LibraryIcon,
 } from "lucide-solid";
+import { ArrowLeft } from "lucide-solid";
 import { ask, save } from "@tauri-apps/plugin-dialog";
-import { api, type LibraryInfo } from "@/lib/tauri";
+import { api, type LibraryInfo, type LibraryDoc } from "@/lib/tauri";
 import { uiStore } from "@/stores/ui";
 import { settings } from "@/stores/settings";
 import { runStore } from "@/stores/run";
@@ -18,8 +19,10 @@ import {
   formatBytes,
   libraryTimestamp,
   formatRelativeTime,
+  ftypeFromPath,
 } from "@/lib/utils";
 import Banner from "./Banner";
+import DocRow from "./DocRow";
 
 type SortKey = "updated" | "docs" | "size";
 
@@ -43,6 +46,30 @@ export default function LibraryView() {
   const [didFirstLoad, setDidFirstLoad] = createSignal(false);
   const [filter, setFilter] = createSignal("");
   const [sortBy, setSortBy] = createSignal<SortKey>("updated");
+  // The library whose documents are being viewed in-app (drill-in detail), so a
+  // user can OPEN a paper they found in an earlier session — not just reveal the
+  // folder. null = the library grid.
+  const [selectedLib, setSelectedLib] = createSignal<LibraryInfo | null>(null);
+  const [libDocs, setLibDocs] = createSignal<LibraryDoc[]>([]);
+  const [docsLoading, setDocsLoading] = createSignal(false);
+  const [docsError, setDocsError] = createSignal<string | null>(null);
+
+  const openLibraryDocs = (lib: LibraryInfo) => {
+    setSelectedLib(lib);
+    setLibDocs([]);
+    setDocsError(null);
+    setDocsLoading(true);
+    api
+      .listLibraryDocs(lib.path)
+      .then((docs) => setLibDocs(docs))
+      .catch((e) => setDocsError(`Couldn't read this library: ${String(e)}`))
+      .finally(() => setDocsLoading(false));
+  };
+  // Open a single saved document in its default app (the in-app read path).
+  const openDoc = (d: { path?: string }) => {
+    if (d.path)
+      api.openPath(d.path).catch((e) => setActionError(`Couldn't open the file: ${String(e)}`));
+  };
 
   createEffect(() => {
     const _tick = loadTick();
@@ -224,164 +251,266 @@ export default function LibraryView() {
           )}
         </Show>
 
-        {/* Full-screen spinner ONLY on the first load (empty list). Background
+        {/* DOCUMENT DETAIL — drill into a saved library's documents so the user
+            can OPEN a paper they found in an earlier session (not just reveal the
+            folder). The grid below is hidden while this is open. */}
+        <Show when={selectedLib()}>
+          {(lib) => (
+            <div class="df-libdetail">
+              <div
+                style={{
+                  display: "flex",
+                  "align-items": "center",
+                  gap: "10px",
+                  "margin-bottom": "14px",
+                }}
+              >
+                <button class="df-btn sm ghost" onClick={() => setSelectedLib(null)}>
+                  <ArrowLeft size={13} /> Libraries
+                </button>
+                <div
+                  title={lib().query ?? lib().name}
+                  style={{
+                    "font-size": "16px",
+                    "font-weight": 600,
+                    "min-width": 0,
+                    overflow: "hidden",
+                    "text-overflow": "ellipsis",
+                    "white-space": "nowrap",
+                  }}
+                >
+                  {lib().query ?? lib().name}
+                </div>
+                <span style={{ flex: 1 }} />
+                <button
+                  class="df-btn sm ghost"
+                  onClick={() => {
+                    setActionError(null);
+                    api
+                      .revealInFinder(lib().path)
+                      .catch((e) =>
+                        setActionError(`Couldn't open this library's folder: ${String(e)}`),
+                      );
+                  }}
+                >
+                  <FolderOpen size={12} /> Show folder
+                </button>
+              </div>
+              <Show when={docsError()}>
+                <div style={{ "margin-bottom": "12px" }}>
+                  <Banner kind="bad">{docsError()}</Banner>
+                </div>
+              </Show>
+              <Show
+                when={!docsLoading()}
+                fallback={
+                  <div
+                    role="status"
+                    aria-label="Loading documents"
+                    style={{ display: "flex", "justify-content": "center", padding: "40px 0" }}
+                  >
+                    <Loader2 size={20} class="spin" style={{ color: "var(--ink-3)" }} />
+                  </div>
+                }
+              >
+                <Show
+                  when={libDocs().length > 0}
+                  fallback={
+                    <div style={{ padding: "24px 0", color: "var(--ink-3)", "font-size": "13px" }}>
+                      No openable documents were saved in this library.
+                    </div>
+                  }
+                >
+                  <p class="hint" style={{ "margin-bottom": "10px" }}>
+                    Click a document to open it.
+                  </p>
+                  <For each={libDocs()}>
+                    {(d) => (
+                      <DocRow
+                        kind="saved"
+                        onOpen={openDoc}
+                        doc={{
+                          source: d.source,
+                          title: d.title,
+                          status: "done",
+                          ftype: ftypeFromPath(d.path),
+                          bytes: d.size_bytes,
+                          path: d.path,
+                        }}
+                      />
+                    )}
+                  </For>
+                </Show>
+              </Show>
+            </div>
+          )}
+        </Show>
+
+        {/* LIBRARY LIST — hidden while viewing one library's documents. */}
+        <Show when={!selectedLib()}>
+          {/* Full-screen spinner ONLY on the first load (empty list). Background
             refreshes (run-finished, post-delete) keep the existing grid mounted
             so it doesn't flash blank — which read as "did my libraries vanish?". */}
-        <Show when={loading() && !didFirstLoad()}>
-          <div
-            role="status"
-            aria-label="Loading your libraries"
-            style={{ display: "flex", "justify-content": "center", padding: "64px 0" }}
-          >
-            <Loader2 size={24} class="spin" style={{ color: "var(--ink-3)" }} />
-          </div>
-        </Show>
+          <Show when={loading() && !didFirstLoad()}>
+            <div
+              role="status"
+              aria-label="Loading your libraries"
+              style={{ display: "flex", "justify-content": "center", padding: "64px 0" }}
+            >
+              <Loader2 size={24} class="spin" style={{ color: "var(--ink-3)" }} />
+            </div>
+          </Show>
 
-        <Show when={!loading() && error()}>
-          <div style={{ "margin-bottom": "16px" }}>
-            <Banner kind="bad">
-              <div>
-                {/* If we already have a list on screen, a refetch failure is
+          <Show when={!loading() && error()}>
+            <div style={{ "margin-bottom": "16px" }}>
+              <Banner kind="bad">
+                <div>
+                  {/* If we already have a list on screen, a refetch failure is
                     non-destructive — keep the grid and say so, rather than wiping
                     the user's libraries off the screen. */}
-                {libraries().length > 0
-                  ? "Couldn't refresh — showing your last loaded libraries."
-                  : "We couldn't read your library folder."}{" "}
-                {error()}
-                <div style={{ "margin-top": "8px" }}>
-                  <button class="df-btn sm" onClick={() => setLoadTick((n) => n + 1)}>
-                    <RefreshCw size={12} /> Retry
-                  </button>
+                  {libraries().length > 0
+                    ? "Couldn't refresh — showing your last loaded libraries."
+                    : "We couldn't read your library folder."}{" "}
+                  {error()}
+                  <div style={{ "margin-top": "8px" }}>
+                    <button class="df-btn sm" onClick={() => setLoadTick((n) => n + 1)}>
+                      <RefreshCw size={12} /> Retry
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </Banner>
-          </div>
-        </Show>
+              </Banner>
+            </div>
+          </Show>
 
-        {/* Keep the empty/"No matches" card visible during a BACKGROUND refresh
+          {/* Keep the empty/"No matches" card visible during a BACKGROUND refresh
             (libraries already loaded) — only suppress it during the first load,
             where the spinner shows instead. Mirrors the grid staying mounted. */}
-        <Show when={!error() && sorted().length === 0 && !(loading() && !didFirstLoad())}>
-          <div class="df-empty">
-            <div class="df-empty-mark">
-              <LibraryIcon size={28} />
+          <Show when={!error() && sorted().length === 0 && !(loading() && !didFirstLoad())}>
+            <div class="df-empty">
+              <div class="df-empty-mark">
+                <LibraryIcon size={28} />
+              </div>
+              <h2 class="df-empty-title">{filter() ? "No matches" : "No libraries yet"}</h2>
+              <p class="df-empty-sub">
+                {filter()
+                  ? `Nothing in your library matches “${filter()}”.`
+                  : "Run a search and Document Finder saves everything it downloads into its own collection here."}
+              </p>
+              <button
+                class="df-btn accent"
+                onClick={() => (filter() ? setFilter("") : uiStore.setView("find"))}
+              >
+                {filter() ? "Clear filter" : "Go to Discover"}
+              </button>
             </div>
-            <h2 class="df-empty-title">{filter() ? "No matches" : "No libraries yet"}</h2>
-            <p class="df-empty-sub">
-              {filter()
-                ? `Nothing in your library matches “${filter()}”.`
-                : "Run a search and Document Finder saves everything it downloads into its own collection here."}
-            </p>
-            <button
-              class="df-btn accent"
-              onClick={() => (filter() ? setFilter("") : uiStore.setView("find"))}
-            >
-              {filter() ? "Clear filter" : "Go to Discover"}
-            </button>
-          </div>
-        </Show>
+          </Show>
 
-        {/* Grid stays mounted during a background refresh (no !loading gate) and
+          {/* Grid stays mounted during a background refresh (no !loading gate) and
             hides on error so a stale grid can't render under the error banner. */}
-        {/* Grid stays mounted even on a refetch error (the banner above explains
+          {/* Grid stays mounted even on a refetch error (the banner above explains
             it) — only the empty-list error state hides it. */}
-        <Show when={sorted().length > 0}>
-          <div class="df-libgrid">
-            <For each={sorted()}>
-              {(lib) => {
-                const isActive = () => uiStore.activeLibrary?.path === lib.path;
-                const isExporting = () => exportingPath() === lib.path;
-                const isDeleting = () => deletingPath() === lib.path;
-                const isBusy = () => isExporting() || isDeleting();
-                return (
-                  // Clicking the card opens its folder (the obvious "see my
-                  // documents" action — there's no in-app detail view). Mouse-only
-                  // affordance: NO role=button/tabindex/keydown on the card itself
-                  // (that previously swallowed Enter/Space on the inner buttons);
-                  // keyboard users use the explicit, focusable "Show" button. The
-                  // actions wrapper stops propagation so its buttons act alone.
-                  <div
-                    classList={{
-                      "df-libcard": true,
-                      active: isActive(),
-                      "opacity-60 pointer-events-none": isDeleting(),
-                    }}
-                    title="Open this library's folder"
-                    onClick={() => {
-                      setActionError(null); // a successful reveal shouldn't leave a stale error up
-                      api
-                        .revealInFinder(lib.path)
-                        .catch((e) =>
-                          setActionError(`Couldn't open this library's folder: ${String(e)}`),
-                        );
-                    }}
-                  >
-                    <div class="df-libcard-head">
-                      <div class="df-libcard-q" title={lib.query ?? lib.name}>
-                        {lib.query ?? lib.name}
-                      </div>
-                    </div>
-                    <div class="df-libcard-meta">
-                      <span>
-                        <strong>{lib.n_docs}</strong> document{lib.n_docs === 1 ? "" : "s"}
-                      </span>
-                      <span style={{ color: "var(--ink-4)" }}>·</span>
-                      <span>{formatBytes(lib.size_bytes)}</span>
-                      {/* Run age — distinguishes multiple libraries from the same
-                          query (re-searching a topic) that share an identical title. */}
-                      <Show when={libraryTimestamp(lib.name) !== null}>
-                        <span style={{ color: "var(--ink-4)" }}>·</span>
-                        <span>{formatRelativeTime(libraryTimestamp(lib.name)!)}</span>
-                      </Show>
-                    </div>
+          <Show when={sorted().length > 0}>
+            <div class="df-libgrid">
+              <For each={sorted()}>
+                {(lib) => {
+                  const isActive = () => uiStore.activeLibrary?.path === lib.path;
+                  const isExporting = () => exportingPath() === lib.path;
+                  const isDeleting = () => deletingPath() === lib.path;
+                  const isBusy = () => isExporting() || isDeleting();
+                  return (
+                    // Clicking the card drills into its documents (so the user can
+                    // open a paper they found earlier). The "Show" button still
+                    // reveals the OS folder; "Open documents" is the primary action.
+                    // Mouse-only affordance on the card body: keyboard users tab to
+                    // the explicit, focusable "Open" / "Show" buttons; the actions
+                    // wrapper stops propagation so its buttons act alone.
                     <div
-                      class="df-libcard-actions"
-                      onClick={(e) => {
-                        e.stopPropagation();
+                      classList={{
+                        "df-libcard": true,
+                        active: isActive(),
+                        "opacity-60 pointer-events-none": isDeleting(),
+                      }}
+                      title="View this library's documents"
+                      onClick={() => {
+                        setActionError(null);
+                        openLibraryDocs(lib);
                       }}
                     >
-                      <button
-                        class="df-btn sm"
-                        onClick={() => handleExport(lib)}
-                        disabled={isBusy()}
-                      >
-                        <Show when={isExporting()} fallback={<Archive size={12} />}>
-                          <Loader2 size={12} class="spin" />
+                      <div class="df-libcard-head">
+                        <div class="df-libcard-q" title={lib.query ?? lib.name}>
+                          {lib.query ?? lib.name}
+                        </div>
+                      </div>
+                      <div class="df-libcard-meta">
+                        <span>
+                          <strong>{lib.n_docs}</strong> document{lib.n_docs === 1 ? "" : "s"}
+                        </span>
+                        <span style={{ color: "var(--ink-4)" }}>·</span>
+                        <span>{formatBytes(lib.size_bytes)}</span>
+                        {/* Run age — distinguishes multiple libraries from the same
+                          query (re-searching a topic) that share an identical title. */}
+                        <Show when={libraryTimestamp(lib.name) !== null}>
+                          <span style={{ color: "var(--ink-4)" }}>·</span>
+                          <span>{formatRelativeTime(libraryTimestamp(lib.name)!)}</span>
                         </Show>
-                        Export
-                      </button>
-                      <button
-                        class="df-btn sm ghost"
-                        onClick={() => {
-                          setActionError(null);
-                          api
-                            .revealInFinder(lib.path)
-                            .catch((e) =>
-                              setActionError(`Couldn't open this library's folder: ${String(e)}`),
-                            );
+                      </div>
+                      <div
+                        class="df-libcard-actions"
+                        onClick={(e) => {
+                          e.stopPropagation();
                         }}
-                        disabled={isBusy()}
                       >
-                        <FolderOpen size={12} /> Show
-                      </button>
-                      <span style={{ flex: 1 }} />
-                      <button
-                        class="df-btn sm danger"
-                        onClick={() => handleDelete(lib)}
-                        disabled={isBusy()}
-                        title="Delete library"
-                        aria-label={`Delete ${lib.query ?? lib.name}`}
-                      >
-                        <Show when={isDeleting()} fallback={<Trash2 size={12} />}>
-                          <Loader2 size={12} class="spin" />
-                        </Show>
-                      </button>
+                        <button
+                          class="df-btn sm"
+                          onClick={() => openLibraryDocs(lib)}
+                          disabled={isBusy()}
+                          title="Open this library's documents"
+                        >
+                          <LibraryIcon size={12} /> Open
+                        </button>
+                        <button
+                          class="df-btn sm ghost"
+                          onClick={() => handleExport(lib)}
+                          disabled={isBusy()}
+                        >
+                          <Show when={isExporting()} fallback={<Archive size={12} />}>
+                            <Loader2 size={12} class="spin" />
+                          </Show>
+                          Export
+                        </button>
+                        <button
+                          class="df-btn sm ghost"
+                          onClick={() => {
+                            setActionError(null);
+                            api
+                              .revealInFinder(lib.path)
+                              .catch((e) =>
+                                setActionError(`Couldn't open this library's folder: ${String(e)}`),
+                              );
+                          }}
+                          disabled={isBusy()}
+                        >
+                          <FolderOpen size={12} /> Show
+                        </button>
+                        <span style={{ flex: 1 }} />
+                        <button
+                          class="df-btn sm danger"
+                          onClick={() => handleDelete(lib)}
+                          disabled={isBusy()}
+                          title="Delete library"
+                          aria-label={`Delete ${lib.query ?? lib.name}`}
+                        >
+                          <Show when={isDeleting()} fallback={<Trash2 size={12} />}>
+                            <Loader2 size={12} class="spin" />
+                          </Show>
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                );
-              }}
-            </For>
-          </div>
+                  );
+                }}
+              </For>
+            </div>
+          </Show>
         </Show>
       </div>
     </div>

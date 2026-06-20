@@ -594,6 +594,67 @@ pub async fn open_library(state: State<'_, AppState>, path: String) -> Result<Li
     Ok(info)
 }
 
+/// A single downloaded document inside a saved library, for the in-app
+/// per-library document list (so a user can open a paper they found in an
+/// earlier session, not just from the live run card).
+#[derive(Debug, Serialize)]
+pub struct LibraryDoc {
+    pub title: String,
+    pub source: String,
+    /// Absolute on-disk path, ready for `open_path`.
+    pub path: String,
+    pub size_bytes: Option<u64>,
+    /// Set when the file saved but no text could be extracted (e.g. a scanned PDF).
+    pub extract_error: Option<String>,
+}
+
+/// List the downloaded documents of a saved library (read-only) so the Library
+/// view can show openable rows. Reuses the open_library confinement + read-only +
+/// blocking-pool pattern; only rows with an on-disk file are returned.
+#[tauri::command]
+pub async fn list_library_docs(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Vec<LibraryDoc>, String> {
+    let root = confinement_root(&state)?;
+    let p = safe_within_root(&PathBuf::from(&path), &root)?;
+    let db_path = p.join("library.db");
+    if !db_path.exists() {
+        return Err("library.db not found".into());
+    }
+    let folder = p.clone();
+    let docs = tokio::task::spawn_blocking(move || -> Result<Vec<LibraryDoc>, String> {
+        let conn = open_read_only(&db_path).map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT title, source, local_path, size_bytes, extract_error \
+                 FROM documents \
+                 WHERE local_path IS NOT NULL AND local_path != '' \
+                 ORDER BY title COLLATE NOCASE",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                let local_path: String = row.get(2)?;
+                Ok(LibraryDoc {
+                    title: row.get(0)?,
+                    source: row.get(1)?,
+                    // join() returns local_path as-is if it's already absolute, so
+                    // both relative-to-folder and absolute storage resolve correctly.
+                    path: folder.join(&local_path).to_string_lossy().to_string(),
+                    size_bytes: row.get::<_, Option<i64>>(3)?.map(|n| n.max(0) as u64),
+                    extract_error: row.get(4)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(docs)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ExportArgs {
     pub folder: String,

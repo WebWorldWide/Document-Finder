@@ -97,6 +97,7 @@ export default function FindTab() {
   const [exporting, setExporting] = createSignal(false);
   const [exportedTo, setExportedTo] = createSignal<string | null>(null);
   const [exportError, setExportError] = createSignal<string | null>(null);
+  const [openError, setOpenError] = createSignal<string | null>(null);
   const [speedHist, setSpeedHist] = createSignal<number[]>([]);
   // How many real throughput samples have been pushed this run, so the average
   // isn't diluted by the 32 seed zeros at the start (which made the early ETA
@@ -369,7 +370,14 @@ export default function FindTab() {
   // READ the paper the user just found. Failure (file moved/deleted) is announced.
   const openSaved = (d: StreamDoc) => {
     if (!d.path) return;
-    api.openPath(d.path).catch((e) => uiStore.announce(`Couldn't open the file: ${String(e)}`));
+    setOpenError(null);
+    api.openPath(d.path).catch((e) => {
+      // Visible banner (not just the SR announce) — the row says "click to open",
+      // so a sighted user needs to see why nothing happened (e.g. file moved).
+      const msg = `Couldn't open the file: ${String(e)}`;
+      setOpenError(msg);
+      uiStore.announce(msg);
+    });
   };
   // The saved stream caps at SAVED_SHOWN rows; surface the remainder (with a
   // jump to the full Library) so "Saved 120" above 40 rows doesn't look like 80
@@ -727,6 +735,15 @@ export default function FindTab() {
           <div style={{ "margin-top": "16px" }}>
             <Banner kind="bad" onDismiss={() => setExportError(null)}>
               <strong>Export failed.</strong> {exportError()}
+            </Banner>
+          </div>
+        </Show>
+
+        {/* OPEN-DOCUMENT ERROR — a saved row's file couldn't be opened. */}
+        <Show when={openError()}>
+          <div style={{ "margin-top": "16px" }}>
+            <Banner kind="bad" onDismiss={() => setOpenError(null)}>
+              {openError()} The file may have been moved — use “Folder” to locate it.
             </Banner>
           </div>
         </Show>
