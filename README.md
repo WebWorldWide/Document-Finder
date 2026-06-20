@@ -3,8 +3,8 @@
   <h1>Document Finder</h1>
   <p><strong>Find open-access research across the web, download it in bulk, and bundle it into a tidy local library — ready to drop into any AI context window.</strong></p>
   <p>
-    <a href="https://adamnolle.github.io/Document-Finder/">Website</a> ·
-    <a href="https://github.com/AdamNolle/Document-Finder/releases">Download</a> ·
+    <a href="https://documentfinder.webworldwide.online/">Website</a> ·
+    <a href="https://github.com/WebWorldWide/Document-Finder/releases">Download</a> ·
     <a href="CLAUDE.md">Developer guide</a>
   </p>
 </div>
@@ -41,7 +41,7 @@ _All open-access. No API keys._
 
 ## Installing a release
 
-The [release builds](https://github.com/AdamNolle/Document-Finder/releases) are
+The [release builds](https://github.com/WebWorldWide/Document-Finder/releases) are
 not notarized (the macOS build is ad-hoc signed), so each OS asks you to allow the
 app on first launch:
 

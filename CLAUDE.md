@@ -241,7 +241,7 @@ pnpm tauri icon "icons/Document Finder MacOS.png"
 blue-green accent sampled from the logo and the logo SVG itself (`site/logo.svg`).
 Served at the custom domain **documentfinder.webworldwide.online** via
 `site/CNAME` (included in the uploaded artifact, so it persists across deploys);
-a DNS `CNAME documentfinder → adamnolle.github.io` record points to it. Keep the
+a DNS `CNAME documentfinder → webworldwide.github.io` record points to it. Keep the
 canonical/`og:`/`twitter:` URLs in `site/index.html` on that domain.
 
 ## Third-party licenses
