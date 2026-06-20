@@ -941,14 +941,17 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
             .map(|rest| format!(r"\\{rest}"))
             .or_else(|| s.strip_prefix(r"\\?\").map(str::to_string))
             .unwrap_or_else(|| s.to_string());
-        // explorer.exe needs `/select,` and the path as ONE contiguous token
-        // (`/select,C:\dir\file`). Passed as two separate args, Explorer sees an
-        // empty operand after the comma, fails to highlight the file, and opens the
-        // default folder instead. Rust already passes this as a single argv token
-        // (CommandLineToArgvW quotes the path), so a comma inside the path can't
-        // split it.
+        // explorer.exe needs `/select,<path>` on its command line with quotes around
+        // ONLY the path. Using `.arg()` is wrong: std::process quotes any argument
+        // containing a space around the WHOLE token — `"/select,C:\…\Document
+        // Finder\…"` — putting the quote before `/select`, so Explorer fails to
+        // recognize the switch and opens the default folder with nothing highlighted.
+        // (The default install path always contains a space, so this hit every
+        // reveal.) Emit the command line verbatim with `raw_arg`, quoting just the
+        // path; Windows paths cannot contain `"`, so this is injection-safe.
+        use std::os::windows::process::CommandExt;
         std::process::Command::new("explorer")
-            .arg(format!("/select,{simplified}"))
+            .raw_arg(format!("/select,\"{simplified}\""))
             .spawn()
             .map_err(|e| e.to_string())?;
         Ok(())
