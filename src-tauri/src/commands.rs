@@ -919,6 +919,25 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
     }
 }
 
+/// Open a downloaded document in the OS default application (so the user can read
+/// the paper they just found without digging through the file manager). Targets
+/// are app-written files inside the library; canonicalize rejects garbage/missing
+/// paths, and the `://` guard ensures we open a local FILE — never a URL (which
+/// would otherwise launch the browser).
+#[tauri::command]
+pub fn open_path(path: String) -> Result<(), String> {
+    let raw = PathBuf::from(&path);
+    if path.contains("://") {
+        return Err("path must not be a URI".to_string());
+    }
+    let p = raw
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve path '{}': {e}", raw.display()))?;
+    // `open` uses ShellExecuteW on Windows / `open` on macOS / xdg-open on Linux —
+    // the correct per-OS default-handler launch, with no shell/cmd quoting hazard.
+    open::that_detached(&p).map_err(|e| format!("Couldn't open the file: {e}"))
+}
+
 // =============================================================================
 // AI Model Manager commands (E1)
 // =============================================================================

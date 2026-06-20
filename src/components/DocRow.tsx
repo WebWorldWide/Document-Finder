@@ -13,12 +13,24 @@ export interface StreamDoc {
   bytes?: number;
   error?: string;
   status?: "done" | "failed";
+  /** Absolute on-disk path of a saved file — present makes the row open-on-click. */
+  path?: string;
 }
 
 /** A single document row used in the live stream and the library detail. */
-export default function DocRow(props: { doc: StreamDoc; kind: "in-flight" | "saved" }) {
+export default function DocRow(props: {
+  doc: StreamDoc;
+  kind: "in-flight" | "saved";
+  onOpen?: (doc: StreamDoc) => void;
+}) {
   const color = () => sourceColor(props.doc.source);
   const label = () => sourceLabel(props.doc.source);
+  // A saved row with a real path + handler opens the document on click — turning
+  // the existing hover highlight from a false affordance into a real one.
+  const openable = () => props.kind === "saved" && !!props.onOpen && !!props.doc.path;
+  const open = () => {
+    if (openable()) props.onOpen!(props.doc);
+  };
   const pct = () => {
     const t = props.doc.total ?? 0;
     return t > 0 ? Math.round(((props.doc.downloaded ?? 0) / t) * 100) : null;
@@ -26,7 +38,17 @@ export default function DocRow(props: { doc: StreamDoc; kind: "in-flight" | "sav
   return (
     <div
       classList={{ "df-doc": true, "in-flight": props.kind === "in-flight" }}
-      style={{ "--src-color": color() }}
+      style={{ "--src-color": color(), ...(openable() ? { cursor: "pointer" } : {}) }}
+      role={openable() ? "button" : undefined}
+      tabindex={openable() ? 0 : undefined}
+      title={openable() ? "Open this document" : undefined}
+      onClick={() => open()}
+      onKeyDown={(e) => {
+        if (openable() && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          open();
+        }
+      }}
     >
       <span class="df-doc-source">{label()}</span>
       <div class="df-doc-main">

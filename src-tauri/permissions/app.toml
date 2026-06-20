@@ -15,6 +15,7 @@ commands.allow = [
   "open_library",
   "export_library_zip",
   "reveal_in_finder",
+  "open_path",
   "run_log_info",
   "run_log_tail",
   "list_models",

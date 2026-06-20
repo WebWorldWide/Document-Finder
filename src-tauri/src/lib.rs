@@ -47,6 +47,7 @@ pub fn run() {
             commands::open_library,
             commands::export_library_zip,
             commands::reveal_in_finder,
+            commands::open_path,
             commands::run_log_info,
             commands::run_log_tail,
             commands::list_models,

@@ -179,6 +179,13 @@ export default function SettingsView() {
         uiStore.setActiveLibrary(null);
         runStore.reset();
       }
+      // The AI model weights + embedding cache live in app_data_dir, which the
+      // purge deletes on BOTH branches — so re-list models/embedding from disk,
+      // otherwise the AI cards keep showing "Ready · N MB on disk" with a Delete
+      // button for files that were just erased (a contradiction right under the
+      // "Erased everything" message; we're still on the Settings view so its
+      // onMount refresh never re-runs).
+      void modelsStore.refresh();
       const removed = report?.removed?.length ?? 0;
       const failed = report?.failed?.length ?? 0;
       const msg =

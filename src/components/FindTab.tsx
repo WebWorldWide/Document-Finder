@@ -43,12 +43,16 @@ import {
 } from "@/lib/utils";
 import { humanizeDownloadError, humanizeSourceKind, issueKindTag } from "@/lib/errors";
 
-const PRIMARY_SOURCES: SourceId[] = ALL_SOURCES.filter((s) => !META_SEARCH_COVERED.includes(s));
-// Bulk "Enable all" / "Invert" exclude the standalone `searxng` source: when
-// meta_search (the default) is on, the backend drops searxng as already-covered,
-// so auto-enabling it just shows a checked source that does nothing. It stays
-// individually toggleable in the grid for anyone who wants it on its own.
-const BULK_SOURCES: SourceId[] = PRIMARY_SOURCES.filter((s) => s !== "searxng");
+// The standalone `searxng` source is NOT shown as a user-facing toggle: it's
+// meta_search's own in-process pool fallback, and when meta_search (the default)
+// is on the backend drops searxng as already-covered — so a checked searxng row
+// does nothing. Excluding it from the grid keeps the "N of N" count honest
+// (otherwise "Enable all" could never reach all rows, since it skipped searxng).
+const PRIMARY_SOURCES: SourceId[] = ALL_SOURCES.filter(
+  (s) => !META_SEARCH_COVERED.includes(s) && s !== "searxng",
+);
+// Bulk "Enable all" / "Invert" act on the same visible set as the grid + count.
+const BULK_SOURCES: SourceId[] = PRIMARY_SOURCES;
 
 const STAGE_LABEL: Record<string, string> = {
   llm_expand: "Expand",
@@ -358,7 +362,15 @@ export default function FindTab() {
         ftype: ftypeFromPath(c.local_path),
         // Carry the on-disk size so DocRow can render it next to the checkmark.
         bytes: c.bytes,
+        // Absolute path so the row can open the document in its default app.
+        path: c.absolute_path,
       }));
+  // Open a saved document in the OS default app — the in-app path to actually
+  // READ the paper the user just found. Failure (file moved/deleted) is announced.
+  const openSaved = (d: StreamDoc) => {
+    if (!d.path) return;
+    api.openPath(d.path).catch((e) => uiStore.announce(`Couldn't open the file: ${String(e)}`));
+  };
   // The saved stream caps at SAVED_SHOWN rows; surface the remainder (with a
   // jump to the full Library) so "Saved 120" above 40 rows doesn't look like 80
   // files vanished.
@@ -483,6 +495,20 @@ export default function FindTab() {
       rs().cancelled &&
       rs().found === 0 &&
       rs().completed.length === 0 &&
+      !rs().fatalError,
+  );
+  // A finished run that FOUND candidates but the ranker rejected them all as
+  // off-topic (found > 0, yet nothing saved or failed). noResults() requires
+  // found === 0 so it doesn't fire here — without this the user gets a "Done ·
+  // saved 0" card and only a buried in-column note, with no next step.
+  const allOffTopic = createMemo(
+    () =>
+      !rs().running &&
+      !rs().cancelled &&
+      rs().folder !== null &&
+      rs().found > 0 &&
+      rs().done === 0 &&
+      rs().failed === 0 &&
       !rs().fatalError,
   );
   async function handleExport() {
@@ -722,6 +748,20 @@ export default function FindTab() {
           <div style={{ "margin-top": "22px" }}>
             <Banner kind="warn">
               <strong>Search cancelled</strong> before any documents were saved.
+            </Banner>
+          </div>
+        </Show>
+
+        {/* ALL OFF-TOPIC — found candidates but the ranker kept none. */}
+        <Show when={allOffTopic()}>
+          <div style={{ "margin-top": "22px" }}>
+            <Banner kind="warn">
+              <strong>
+                Found {rs().found} result{rs().found === 1 ? "" : "s"}, but none looked relevant
+                enough to keep.
+              </strong>{" "}
+              They were filtered out as off-topic. Try simpler or broader keywords, or lower the
+              Search quality (Settings → Search quality → Fast) so fewer results get filtered.
             </Banner>
           </div>
         </Show>
@@ -1104,6 +1144,18 @@ export default function FindTab() {
                       <span style={{ color: "var(--ok-ink)", "font-weight": 700 }}>
                         {rs().done}
                       </span>
+                      <Show when={savedDocs().length > 0}>
+                        <span
+                          style={{
+                            color: "var(--ink-3)",
+                            "font-weight": 400,
+                            "font-size": "10.5px",
+                            "margin-left": "6px",
+                          }}
+                        >
+                          · click to open
+                        </span>
+                      </Show>
                     </div>
                     <Show
                       when={savedDocs().length > 0}
@@ -1115,7 +1167,9 @@ export default function FindTab() {
                         </div>
                       }
                     >
-                      <Index each={savedDocs()}>{(d) => <DocRow doc={d()} kind="saved" />}</Index>
+                      <Index each={savedDocs()}>
+                        {(d) => <DocRow doc={d()} kind="saved" onOpen={openSaved} />}
+                      </Index>
                       {renderSavedOverflow()}
                     </Show>
                   </div>
@@ -1138,7 +1192,7 @@ export default function FindTab() {
                       >
                         {!rs().running
                           ? rs().done === 0 && rs().failed === 0
-                            ? "No downloads — all candidates were ranked off-topic."
+                            ? "None matched closely enough to keep — try broader terms or Fast quality."
                             : "Downloads complete."
                           : downloadsStarted()
                             ? "Queue clearing…"
@@ -1167,7 +1221,9 @@ export default function FindTab() {
                     }
                   >
                     <div style={{ "max-height": "360px", "overflow-y": "auto" }}>
-                      <Index each={savedDocs()}>{(d) => <DocRow doc={d()} kind="saved" />}</Index>
+                      <Index each={savedDocs()}>
+                        {(d) => <DocRow doc={d()} kind="saved" onOpen={openSaved} />}
+                      </Index>
                     </div>
                     {renderSavedOverflow()}
                   </Show>
