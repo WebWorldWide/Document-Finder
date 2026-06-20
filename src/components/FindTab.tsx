@@ -743,7 +743,10 @@ export default function FindTab() {
         <Show when={openError()}>
           <div style={{ "margin-top": "16px" }}>
             <Banner kind="bad" onDismiss={() => setOpenError(null)}>
-              {openError()} The file may have been moved — use “Folder” to locate it.
+              {openError()} The file may have been moved or lacks a default app.
+              {/* Only point at the "Folder" button when it's actually on screen
+                  (it's hidden while a run is in progress). */}
+              <Show when={!rs().running && rs().folder}> Use “Folder” below to locate it.</Show>
             </Banner>
           </div>
         </Show>

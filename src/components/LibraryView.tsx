@@ -204,31 +204,35 @@ export default function LibraryView() {
           <div class="df-eyebrow">Library</div>
           <h1 class="df-canvas-title">Library</h1>
         </div>
-        <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
-          <div class="df-inline-search">
-            <Search size={13} style={{ color: "var(--ink-3)" }} />
-            <input
-              type="text"
-              value={filter()}
-              onInput={(e) => setFilter(e.currentTarget.value)}
-              placeholder="Filter libraries…"
-              aria-label="Filter libraries"
-            />
+        {/* Filter + sort apply to the library GRID — hide them while drilled into
+            one library's documents (where they'd be present-but-inert). */}
+        <Show when={!selectedLib()}>
+          <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
+            <div class="df-inline-search">
+              <Search size={13} style={{ color: "var(--ink-3)" }} />
+              <input
+                type="text"
+                value={filter()}
+                onInput={(e) => setFilter(e.currentTarget.value)}
+                placeholder="Filter libraries…"
+                aria-label="Filter libraries"
+              />
+            </div>
+            <div class="df-seg">
+              <For each={SORTS}>
+                {([k, label]) => (
+                  <button
+                    class={sortBy() === k ? "on" : ""}
+                    aria-pressed={sortBy() === k}
+                    onClick={() => setSortBy(k)}
+                  >
+                    {label}
+                  </button>
+                )}
+              </For>
+            </div>
           </div>
-          <div class="df-seg">
-            <For each={SORTS}>
-              {([k, label]) => (
-                <button
-                  class={sortBy() === k ? "on" : ""}
-                  aria-pressed={sortBy() === k}
-                  onClick={() => setSortBy(k)}
-                >
-                  {label}
-                </button>
-              )}
-            </For>
-          </div>
-        </div>
+        </Show>
       </div>
 
       <div class="df-canvas-body" style={{ "padding-top": "20px" }}>
@@ -265,7 +269,15 @@ export default function LibraryView() {
                   "margin-bottom": "14px",
                 }}
               >
-                <button class="df-btn sm ghost" onClick={() => setSelectedLib(null)}>
+                <button
+                  class="df-btn sm ghost"
+                  onClick={() => {
+                    // Clear any detail-context error so it doesn't leak onto the grid.
+                    setActionError(null);
+                    setDocsError(null);
+                    setSelectedLib(null);
+                  }}
+                >
                   <ArrowLeft size={13} /> Libraries
                 </button>
                 <div
@@ -301,45 +313,54 @@ export default function LibraryView() {
                   <Banner kind="bad">{docsError()}</Banner>
                 </div>
               </Show>
-              <Show
-                when={!docsLoading()}
-                fallback={
-                  <div
-                    role="status"
-                    aria-label="Loading documents"
-                    style={{ display: "flex", "justify-content": "center", padding: "40px 0" }}
-                  >
-                    <Loader2 size={20} class="spin" style={{ color: "var(--ink-3)" }} />
-                  </div>
-                }
-              >
+              {/* On a read error show ONLY the banner — not a contradictory
+                  "No openable documents" empty-state below it. */}
+              <Show when={!docsError()}>
                 <Show
-                  when={libDocs().length > 0}
+                  when={!docsLoading()}
                   fallback={
-                    <div style={{ padding: "24px 0", color: "var(--ink-3)", "font-size": "13px" }}>
-                      No openable documents were saved in this library.
+                    <div
+                      role="status"
+                      aria-label="Loading documents"
+                      style={{ display: "flex", "justify-content": "center", padding: "40px 0" }}
+                    >
+                      <Loader2 size={20} class="spin" style={{ color: "var(--ink-3)" }} />
                     </div>
                   }
                 >
-                  <p class="hint" style={{ "margin-bottom": "10px" }}>
-                    Click a document to open it.
-                  </p>
-                  <For each={libDocs()}>
-                    {(d) => (
-                      <DocRow
-                        kind="saved"
-                        onOpen={openDoc}
-                        doc={{
-                          source: d.source,
-                          title: d.title,
-                          status: "done",
-                          ftype: ftypeFromPath(d.path),
-                          bytes: d.size_bytes,
-                          path: d.path,
-                        }}
-                      />
-                    )}
-                  </For>
+                  <Show
+                    when={libDocs().length > 0}
+                    fallback={
+                      <div
+                        style={{ padding: "24px 0", color: "var(--ink-3)", "font-size": "13px" }}
+                      >
+                        No openable documents were saved in this library.
+                      </div>
+                    }
+                  >
+                    <p class="hint" style={{ "margin-bottom": "10px" }}>
+                      Click a document to open it.
+                    </p>
+                    <For each={libDocs()}>
+                      {(d) => (
+                        <DocRow
+                          kind="saved"
+                          onOpen={openDoc}
+                          doc={{
+                            source: d.source,
+                            title: d.title,
+                            status: "done",
+                            ftype: ftypeFromPath(d.path),
+                            bytes: d.size_bytes,
+                            path: d.path,
+                            // Surface "saved but no text extracted" (e.g. scanned PDF)
+                            // — DocRow already renders this as a red sub-line.
+                            error: d.extract_error,
+                          }}
+                        />
+                      )}
+                    </For>
+                  </Show>
                 </Show>
               </Show>
             </div>
@@ -462,7 +483,10 @@ export default function LibraryView() {
                       >
                         <button
                           class="df-btn sm"
-                          onClick={() => openLibraryDocs(lib)}
+                          onClick={() => {
+                            setActionError(null);
+                            openLibraryDocs(lib);
+                          }}
                           disabled={isBusy()}
                           title="Open this library's documents"
                         >
