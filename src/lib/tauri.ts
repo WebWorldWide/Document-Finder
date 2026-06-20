@@ -68,6 +68,15 @@ export interface LibraryInfo {
   size_bytes: number;
 }
 
+export interface LibraryDoc {
+  title: string;
+  source: string;
+  /** Absolute on-disk path, ready for openPath. */
+  path: string;
+  size_bytes?: number;
+  extract_error?: string;
+}
+
 export interface ExportResult {
   dest: string;
   files: number;
@@ -95,6 +104,7 @@ export const api = {
   cancelRun: () => invoke<void>("cancel_run"),
   listLibraries: (root: string) => invoke<LibraryInfo[]>("list_libraries", { root }),
   openLibrary: (path: string) => invoke<LibraryInfo>("open_library", { path }),
+  listLibraryDocs: (path: string) => invoke<LibraryDoc[]>("list_library_docs", { path }),
   exportLibraryZip: (
     folder: string,
     dest: string,

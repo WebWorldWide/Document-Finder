@@ -45,6 +45,7 @@ pub fn run() {
             commands::cancel_run,
             commands::list_libraries,
             commands::open_library,
+            commands::list_library_docs,
             commands::export_library_zip,
             commands::reveal_in_finder,
             commands::open_path,
