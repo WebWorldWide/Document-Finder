@@ -237,10 +237,17 @@ export function syncLibraryRoot(path: string): Promise<unknown> {
   return api.setLibraryRoot(path);
 }
 
-/// Update the library root setting, persist it, and sync it to the backend.
-/// Returns the sync promise so the UI can show an error if it fails.
+/// Sync the chosen root to the backend FIRST, and only persist it on the frontend
+/// once the backend accepts it. A rejected path (typo, missing, too-broad) must
+/// NOT update/persist settings.libraryRoot — otherwise it diverges from the
+/// backend confinement root and silently breaks every search ("outside the allowed
+/// root") and the library listing, persisting across restarts. On success we store
+/// the BACKEND's canonical path so the two can't disagree (symlinks/trailing slash).
+/// Returns the sync promise so the caller can surface a rejection.
 export function setLibraryRoot(path: string): Promise<unknown> {
-  setSettings("libraryRoot", path);
-  saveSettings();
-  return syncLibraryRoot(path);
+  return syncLibraryRoot(path).then((canonical) => {
+    setSettings("libraryRoot", typeof canonical === "string" ? canonical : path);
+    saveSettings();
+    return canonical;
+  });
 }

@@ -454,9 +454,11 @@ export default function FindTab() {
     if (!query().trim() || rs().running || settings.selectedSources.length === 0) return;
     setStopping(false); // clear any stranded "Stopping…" latch from a prior run
     setExportedTo(null);
-    // Also clear a prior export ERROR — otherwise a stale red "Export failed"
-    // banner floats above the new run for its whole duration.
+    // Also clear a prior export ERROR / open-document ERROR — otherwise a stale red
+    // banner floats above the new run for its whole duration (reading as if the new
+    // search failed).
     setExportError(null);
+    setOpenError(null);
     await runStore.startSearch(query());
   }
   // Confirm a Stop only when downloads are actively in flight — cancelling then
@@ -850,10 +852,12 @@ export default function FindTab() {
                       <button
                         class="df-btn sm"
                         onClick={() => {
-                          // Clear stale export banners so they don't float over
-                          // the retry run (handleSearch does the same for a search).
+                          // Clear stale export / open-document banners so they
+                          // don't float over the retry run (handleSearch does the
+                          // same for a search).
                           setExportedTo(null);
                           setExportError(null);
+                          setOpenError(null);
                           void runStore.retryFailed();
                         }}
                         title="Re-attempt the downloads that failed, into the same library"
