@@ -48,6 +48,9 @@ regex = "1"
 once_cell = "1"
 md-5 = "0.10"
 hex = "0.4"
+# Opens a downloaded document in the OS default app (ShellExecuteW on Windows,
+# `open` on macOS, xdg-open on Linux). MIT/Apache-2.0, permissive.
+open = "5"
 percent-encoding = "2"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"

@@ -109,6 +109,7 @@ export const api = {
       },
     }),
   revealInFinder: (path: string) => invoke<void>("reveal_in_finder", { path }),
+  openPath: (path: string) => invoke<void>("open_path", { path }),
   runLogInfo: () => invoke<LogInfo>("run_log_info"),
   runLogTail: (max?: number) => invoke<unknown[]>("run_log_tail", max != null ? { max } : {}),
   listModels: () => invoke<ModelInfo[]>("list_models"),
