@@ -618,7 +618,9 @@ button { font: inherit; cursor: pointer; }
 /* ============== Sources ============== */
 .srcgrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  /* min(100%, 260px) so the track can never exceed the container — avoids a
+     horizontal page scroll on ultra-narrow (Fold-class) viewports. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
   gap: 12px;
 }
 .srccard {
@@ -628,6 +630,13 @@ button { font: inherit; cursor: pointer; }
   box-shadow: 0 0 0 0.5px var(--line);
   border-left: 3px solid var(--c);
   transition: transform 200ms ease, box-shadow 200ms ease;
+  /* Flex column so the stat footer pins to the bottom and lines up across a row
+     even when descriptions differ in length. */
+  display: flex;
+  flex-direction: column;
+}
+.srccard > p {
+  flex: 1;
 }
 .srccard:hover {
   transform: translateY(-2px);
@@ -731,7 +740,9 @@ button { font: inherit; cursor: pointer; }
   line-height: 1.55;
 }
 .step-art {
-  margin-top: 14px;
+  /* auto (not a fixed 14px) so the art pins to the bottom of each step and lines
+     up across the row even when the steps' body copy differs in length. */
+  margin-top: auto;
   background: var(--canvas);
   border-radius: 10px;
   padding: 16px;
@@ -1035,6 +1046,11 @@ button { font: inherit; cursor: pointer; }
   .foot-row { grid-template-columns: 1fr; gap: 32px; }
   .nav-links { display: none; }
 }
+/* Tablets: a balanced 2-col features grid between the 1-col (<=1000) and 3-col
+   (>1000) layouts, so cards don't stretch to full-width rows on iPad-class screens. */
+@media (min-width: 641px) and (max-width: 1000px) {
+  .feats { grid-template-columns: 1fr 1fr; }
+}
 @media (max-width: 640px) {
   .wrap { padding: 0 20px; }
   .band { padding: 64px 0; }
@@ -1042,6 +1058,16 @@ button { font: inherit; cursor: pointer; }
   .display { font-size: 56px; }
   .spec { grid-template-columns: 1fr; gap: 6px; }
   .foot-cols { grid-template-columns: 1fr 1fr; }
+  /* Stack the two secondary download buttons so the Linux formats line fits. */
+  .dl-row { grid-template-columns: 1fr; }
+  /* Comfortable tap target for the header CTAs on phones. */
+  .nav-cta .btn.sm { padding: 10px 14px; }
+  /* The decorative hero preview's fixed sidebar + in-flight columns overflow a
+     phone; narrow the sidebar and drop the columns that don't fit. */
+  .mini-side { width: 128px; padding: 10px 0; }
+  .mini-doc.inflight { grid-template-columns: 56px 1fr; }
+  .mini-doc.inflight .bar,
+  .mini-doc.inflight .b { display: none; }
 }
 
 /* Respect users who prefer reduced motion — neutralize the looping pulse/shimmer

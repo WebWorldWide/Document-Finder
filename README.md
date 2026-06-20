@@ -15,7 +15,7 @@ Document Finder started as a way to **find and compress documents into context f
 
 ## Features
 
-- **Unified discovery** across seven open-access sources, with natural-language query expansion into sub-queries.
+- **Unified discovery** across eight open-access scholarly sources plus built-in web search, with natural-language query expansion into sub-queries.
 - **Live download stream** — watch documents arrive in real time with throughput, ETA, file-type breakdown, and a per-source lane chart as the async Rust backend fetches, retries, and extracts text.
 - **Plain-language results** — every skipped or failed download explains itself in one sentence ("This source blocked the download — it may need a sign-in"), not an HTTP code.
 - **AI-ready exports** — bundle any library (PDFs, EPUBs, extracted text) into a `.zip` for a context window.
@@ -32,16 +32,18 @@ _All open-access. No API keys._
 | [arXiv](https://arxiv.org/) | Preprints in CS, physics, math, and more |
 | [OpenAlex](https://openalex.org/) | ~250M scholarly works, open-access filtered |
 | [Semantic Scholar](https://www.semanticscholar.org/) | ~200M papers with PDF links |
+| [Europe PMC](https://europepmc.org/) | Life-sciences & biomedical literature |
 | [Internet Archive](https://archive.org/) | Books, papers, and scanned media |
 | [DOAJ](https://doaj.org/) | Directory of Open Access Journals |
+| [Zenodo](https://zenodo.org/) | Open-access papers, datasets & software (CERN) |
 | [Project Gutenberg](https://www.gutenberg.org/) | 70,000+ public-domain ebooks |
 | **Web** | Built-in meta-search (DuckDuckGo, Bing, Brave, Mojeek, Marginalia, Startpage) + SearXNG fallback |
 
 ## Installing a release
 
 The [release builds](https://github.com/AdamNolle/Document-Finder/releases) are
-unsigned (the macOS build is ad-hoc signed), so each OS asks you to allow the app
-on first launch:
+not notarized (the macOS build is ad-hoc signed), so each OS asks you to allow the
+app on first launch:
 
 - **macOS** (Apple Silicon) — right-click the app → **Open**, then confirm. If
   macOS still says the app *"is damaged and can't be opened"*, clear the download
