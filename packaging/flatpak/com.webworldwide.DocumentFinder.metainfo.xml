@@ -32,6 +32,15 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.2.0" date="2026-07-01">
+      <description>
+        <p>Linux hardening: more reliable "Show in folder" and "Erase app data,"
+        a fix for a library-folder mismatch on minimal installs without
+        xdg-user-dirs, an opt-in Safe rendering mode for the WebKitGTK
+        blank-window issue, and a fuller Flatpak (AppStream metadata, complete
+        icon set, portal-based file dialogs).</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-06-20">
       <description>
         <p>Initial public release.</p>
