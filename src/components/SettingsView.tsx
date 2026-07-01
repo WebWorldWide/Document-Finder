@@ -32,6 +32,11 @@ import ThemePicker from "./ThemePicker";
 import Logo from "./Logo";
 import { formatBytes } from "@/lib/utils";
 
+// Matches FindTab.tsx's IS_MAC convention — there's no @tauri-apps/plugin-os
+// dependency, so OS is sniffed from the webview's own navigator.
+const IS_LINUX =
+  typeof navigator !== "undefined" && /Linux/.test(navigator.platform || navigator.userAgent || "");
+
 export default function SettingsView() {
   const [logInfo, setLogInfo] = createSignal<LogInfo | null>(null);
   const [warming, setWarming] = createSignal(false);
@@ -66,6 +71,16 @@ export default function SettingsView() {
   // the reset (drops in-memory model singletons + re-reads cleared settings).
   const [purgeOk, setPurgeOk] = createSignal(false);
   const [restarting, setRestarting] = createSignal(false);
+  const [safeRenderMode, setSafeRenderModeSignal] = createSignal(false);
+  const toggleSafeRenderMode = async (enabled: boolean) => {
+    setSafeRenderModeSignal(enabled); // optimistic; matches the checkbox pattern below
+    try {
+      await api.setSafeRenderMode(enabled);
+    } catch (err) {
+      setSafeRenderModeSignal(!enabled);
+      uiStore.announce(`Couldn't update safe rendering mode: ${String(err)}`);
+    }
+  };
 
   // If the LLM is removed (or never installed) while "Thorough" is the selected
   // quality, downgrade to "Balanced" — otherwise the Thorough tab renders both
@@ -217,6 +232,9 @@ export default function SettingsView() {
     setLogInfo(await api.runLogInfo().catch(() => null));
     void modelsStore.refresh();
     void modelsStore.ensureSubscribed();
+    if (IS_LINUX) {
+      setSafeRenderModeSignal(await api.getSafeRenderMode().catch(() => false));
+    }
   });
 
   // Upper bounds matching each field's input max=, enforced here because the
@@ -762,6 +780,35 @@ export default function SettingsView() {
               )}
             </Show>
           </section>
+
+          {/* Linux-only: WebKitGTK blank-window-on-launch workaround */}
+          <Show when={IS_LINUX}>
+            <section class="df-section">
+              <h2>Safe rendering mode</h2>
+              <p class="hint">
+                On some older GPU drivers, the window can open blank on launch. Enabling this
+                disables GPU-accelerated DMABUF rendering, which avoids it. Applies after restart,
+                not the current session.
+              </p>
+              <label
+                style={{
+                  display: "flex",
+                  "align-items": "flex-start",
+                  gap: "8px",
+                  "font-size": "12px",
+                  margin: "10px 0",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={safeRenderMode()}
+                  onChange={(e) => void toggleSafeRenderMode(e.currentTarget.checked)}
+                  style={{ "margin-top": "2px" }}
+                />
+                <span style={{ flex: 1 }}>Enable safe rendering mode (restart to apply)</span>
+              </label>
+            </section>
+          </Show>
 
           {/* Danger zone — clean uninstall */}
           <section class="df-section">

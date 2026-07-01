@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.webworldwide.DocumentFinder</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <name>Document Finder</name>
+  <developer id="online.webworldwide">
+    <name translate="no">Web World Wide</name>
+  </developer>
+  <summary>Find documents for AI conversational awareness</summary>
+  <description>
+    <p>
+      Document Finder searches open-access sources, downloads PDFs, EPUBs, HTML, and
+      plain-text documents in parallel, and bundles them into AI-ready context with
+      full-text BM25 search.
+    </p>
+    <p>
+      It is designed to help build conversational awareness for AI assistants by quickly
+      assembling a focused, local library of source documents on a topic.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.webworldwide.DocumentFinder.desktop</launchable>
+  <url type="homepage">https://documentfinder.webworldwide.online/</url>
+  <url type="vcs-browser">https://github.com/WebWorldWide/Document-Finder</url>
+  <url type="bugtracker">https://github.com/WebWorldWide/Document-Finder/issues</url>
+  <!-- TODO(maintainer): add a real, stable HTTPS-hosted screenshot before an actual
+       Flathub submission (appstreamcli validate passes without one; Flathub review
+       requires it). Don't invent a URL. -->
+  <categories>
+    <category>Office</category>
+    <category>Utility</category>
+  </categories>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0" date="2026-06-20">
+      <description>
+        <p>Initial public release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

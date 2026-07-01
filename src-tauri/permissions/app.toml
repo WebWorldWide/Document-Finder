@@ -30,5 +30,7 @@ commands.allow = [
   "purge_all_data",
   "restart_app",
   "reset_ai_state",
-  "local_searxng_port"
+  "local_searxng_port",
+  "get_safe_render_mode",
+  "set_safe_render_mode"
 ]

@@ -16,7 +16,12 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-tauri-plugin-dialog = "2"
+# Linux: use the real org.freedesktop.portal.FileChooser portal (rfd's
+# xdg-portal backend) instead of the default raw GTK3 file chooser, so the
+# picker can browse the whole host filesystem (incl. removable media) even
+# under stricter sandboxing. macOS/Windows are unaffected — rfd's native
+# backends there aren't gated by this feature switch.
+tauri-plugin-dialog = { version = "2", default-features = false, features = ["xdg-portal"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 
 # Async runtime

@@ -63,6 +63,10 @@ jobs:
           release_id=$(gh api "repos/$GH_REPO/releases" --paginate \
             --jq "[.[] | select(.tag_name==\"$GITHUB_REF_NAME\" and .draft==true)][0].id // empty")
           if [ -z "$release_id" ]; then
+            # SYNC: this notes.md content (esp. the Linux glibc/Flatpak/WebKitGTK
+            # blank-window caveat) is mirrored in README.md ("Installing a
+            # release") and site/index.html (.dl-fine block). Keep all three
+            # in sync — there's no automated check for this prose.
             printf '%s\n' \
               'Native installers for **macOS** (Apple Silicon `.dmg`), **Windows** (`.exe`, `.msi`), and **Linux** (Flatpak, `.deb`, `.rpm`, `.AppImage`).' \
               '' \
@@ -73,7 +77,7 @@ jobs:
               '  xattr -dr com.apple.quarantine "/Applications/Document Finder.app"' \
               '  ```' \
               '- **Windows** — SmartScreen → **More info** → **Run anyway**.' \
-              '- **Linux** — the `.deb`/`.rpm`/AppImage need glibc 2.39+ (built on Ubuntu 24.04); the Flatpak ships its own runtime.' \
+              '- **Linux** — the `.deb`/`.rpm`/`.AppImage` need glibc 2.39+ (built on Ubuntu 24.04), so on older distros (Ubuntu 22.04, Debian 12, RHEL 9, Mint 21) use the **Flatpak**, which ships its own runtime and runs anywhere Flatpak does. If the window opens blank (some older GPU drivers + system WebKitGTK), launch with `WEBKIT_DISABLE_DMABUF_RENDERER=1` set (add `WEBKIT_DISABLE_COMPOSITING_MODE=1` if it persists) — or enable **Settings → Safe rendering mode** and relaunch, which sets the same workaround persistently.' \
               > notes.md
             release_id=$(gh api -X POST "repos/$GH_REPO/releases" \
               -f tag_name="$GITHUB_REF_NAME" \
@@ -122,6 +126,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libgdk-pixbuf-2.0-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
@@ -205,7 +214,8 @@ jobs:
             libsoup-3.0-dev \
             libjavascriptcoregtk-4.1-dev \
             libappindicator3-dev librsvg2-dev patchelf \
-            cmake clang flatpak flatpak-builder
+            cmake clang flatpak flatpak-builder \
+            desktop-file-utils appstream
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           # GNOME runtime (not the bare freedesktop one): only the GNOME runtime
           # bundles WebKitGTK, which the Tauri app dlopen's at launch. Keep this
@@ -257,6 +267,29 @@ jobs:
           # named from tauri.conf.json's version, not the `v`-prefixed tag.
           VERSION="${GITHUB_REF_NAME#v}"
           flatpak build-bundle repo "Document Finder_${VERSION}_x86_64.flatpak" com.webworldwide.DocumentFinder
+
+      - name: Validate desktop file and AppStream metadata
+        working-directory: packaging/flatpak
+        run: |
+          set -euo pipefail
+          echo "Validating .desktop file…"
+          desktop-file-validate build-dir/files/share/applications/com.webworldwide.DocumentFinder.desktop
+          echo "Validating AppStream metainfo…"
+          appstreamcli validate --pedantic --explain build-dir/files/share/metainfo/com.webworldwide.DocumentFinder.metainfo.xml
+
+      - name: Flathub linter (advisory, non-blocking)
+        working-directory: packaging/flatpak
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # flatpak-builder-lint's own README says Flatpak/Docker are the only
+          # supported install paths (not pip) — use the published Flatpak.
+          # Some of its checks (e.g. requiring a Flathub-hosted screenshot)
+          # can't pass while this app ships only via GitHub Releases and isn't
+          # on Flathub yet, hence non-blocking.
+          flatpak install --user -y flathub org.flatpak.Builder
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest com.webworldwide.DocumentFinder.yml
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo repo
 
       - name: Upload Flatpak to the draft release
         env:

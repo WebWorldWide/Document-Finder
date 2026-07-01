@@ -1,3 +1,6 @@
+# Sync: this id must match scripts/uninstall.sh's Flatpak `rm_if` line
+# ($HOME/.var/app/com.webworldwide.DocumentFinder). Cross-checked by
+# src-tauri/tests/linux_identifiers_in_sync.rs.
 id: com.webworldwide.DocumentFinder
 # A Tauri 2 app links libwebkit2gtk-4.1.so.0 / libjavascriptcoregtk-4.1.so.0 at
 # runtime. The bare org.freedesktop.Platform runtime does NOT ship WebKitGTK, so
@@ -19,7 +22,18 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri
-  - --filesystem=home # the library lives under ~/Documents by default
+  # The library lives under ~/Documents by default, and a user-chosen custom
+  # library root can be anywhere under $HOME. File dialogs use
+  # tauri-plugin-dialog's `xdg-portal` feature (rfd/xdg-portal, see
+  # src-tauri/Cargo.toml), so the picker itself can browse the whole host
+  # filesystem incl. removable media via the real
+  # org.freedesktop.portal.FileChooser portal — but Document Finder's ongoing
+  # directory-tree read/write against a chosen library root still needs
+  # direct (non-portal-mediated) filesystem access, so this stays broad
+  # rather than narrowing to --filesystem=xdg-documents. Narrowing further
+  # would require the backend to work with document-portal handles for
+  # custom roots outside $HOME — out of scope for now.
+  - --filesystem=home
   - --talk-name=org.freedesktop.FileManager1 # so "Show in folder" highlights the file (else it falls back to opening the parent folder)
 
 modules:
@@ -28,6 +42,11 @@ modules:
     sources:
       - type: file
         path: document-finder.deb
+      - type: file
+        path: com.webworldwide.DocumentFinder.metainfo.xml
+      - type: file
+        path: ../../icons/Document Finder Icon.svg
+        dest-filename: document-finder-icon.svg # avoids the space in the original filename inside the build dir
     build-commands:
       # Unpack the Tauri-built .deb and install its payload into /app. Globs keep
       # this resilient to Tauri's exact binary/desktop/icon file names.
@@ -35,5 +54,20 @@ modules:
       - tar -xf data.tar.*
       - install -Dm755 usr/bin/* /app/bin/document-finder
       - desk=$(ls usr/share/applications/*.desktop | head -n1); install -Dm644 "$desk" /app/share/applications/com.webworldwide.DocumentFinder.desktop
+      # Tauri 2's bundler (schema 2.11.3, checked 2026-06-30) has no supported
+      # desktopTemplate/custom-.desktop-file hook (bundle.linux.{deb,rpm,appimage}
+      # only expose a `files` map for ADDING files, not overriding generated ones)
+      # — see tauri-apps/tauri#5176. Until upstream ships one, we extract the
+      # generated file and patch Icon= below; release.yml validates the result
+      # with `desktop-file-validate` right after this build.
       - sed -i 's/^Icon=.*/Icon=com.webworldwide.DocumentFinder/' /app/share/applications/com.webworldwide.DocumentFinder.desktop
-      - icon=$(ls usr/share/icons/hicolor/128x128/apps/*.png | head -n1); install -Dm644 "$icon" /app/share/icons/hicolor/128x128/apps/com.webworldwide.DocumentFinder.png
+      # Install every hicolor size the .deb actually contains (not just one
+      # hardcoded size), so the Flatpak ships the same icon set as the native
+      # packages.
+      - |
+        for icon in usr/share/icons/hicolor/*/apps/*.png; do
+          size=$(basename "$(dirname "$(dirname "$icon")")")
+          install -Dm644 "$icon" "/app/share/icons/hicolor/$size/apps/com.webworldwide.DocumentFinder.png"
+        done
+      - install -Dm644 document-finder-icon.svg /app/share/icons/hicolor/scalable/apps/com.webworldwide.DocumentFinder.svg
+      - install -Dm644 com.webworldwide.DocumentFinder.metainfo.xml /app/share/metainfo/com.webworldwide.DocumentFinder.metainfo.xml

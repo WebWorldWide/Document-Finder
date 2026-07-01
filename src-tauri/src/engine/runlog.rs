@@ -35,6 +35,9 @@ pub fn log_path() -> Option<PathBuf> {
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
+        // Sync: "document-finder" must match scripts/uninstall.sh's
+        // XDG_STATE_HOME rm_if line. Cross-checked by
+        // tests/linux_identifiers_in_sync.rs.
         let dir = dirs::state_dir()
             .or_else(dirs::data_local_dir)?
             .join("document-finder");

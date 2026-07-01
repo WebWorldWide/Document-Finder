@@ -123,6 +123,15 @@ pnpm tauri build                                   # native installers
   answering its prompt in `pnpm-workspace.yaml`: `allowBuilds: { esbuild: false }`.
   Installs still pass `--ignore-scripts` (esbuild's binary ships in its platform
   package).
+- **Linux system deps** (mirrors `ci.yml`/`release.yml`'s apt list): `libwebkit2gtk-4.1-dev
+  libgtk-3-dev libglib2.0-dev libgdk-pixbuf-2.0-dev libsoup-3.0-dev
+  libjavascriptcoregtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf cmake
+  clang`. **On Pop!_OS** (and other distros that ship the Ayatana fork),
+  `libappindicator3-dev` conflicts with the already-installed
+  `libayatana-appindicator3-1` — install `libayatana-appindicator3-dev` instead;
+  it satisfies the same build dependency. CI's vanilla `ubuntu-24.04` runners
+  don't hit this (no Ayatana packages preinstalled), so it's a local-dev-only
+  substitution.
 
 ## Verify (mirrors CI)
 
@@ -165,6 +174,10 @@ needs glibc 2.39+ C23 symbols).
   space inside a ternary string (`` `df-doc${c?" x":""}` `` → `"x"` → glued class).
 - `unsafe` is forbidden (`[lints.rust] unsafe_code = "forbid"`); clippy runs at
   `-D warnings` in CI.
+- **Linux identifiers**: `document-finder` (run-log/state dir), the Tauri
+  `identifier` in `tauri.conf.json`, and the Flatpak app id in
+  `packaging/flatpak/*.yml` are each also hardcoded in `scripts/uninstall.sh` —
+  the `linux_identifiers_in_sync` tests fail otherwise.
 
 ## Release
 
@@ -197,7 +210,17 @@ The Flatpak builds against the **GNOME runtime** (`org.gnome.Platform`/`Sdk`),
 not the bare freedesktop runtime, because only the GNOME runtime ships
 `libwebkit2gtk-4.1` (a Tauri Linux app dlopen's it). The flatpak job runs an
 `ldd` smoke check that fails the release if the chosen runtime is missing the lib
-— bump `runtime-version` (manifest) and the `flatpak install` line together.
+— bump `runtime-version` (manifest) and the `flatpak install` line together. It
+also blocking-validates the patched `.desktop` file (`desktop-file-validate`) and
+the AppStream metainfo (`appstreamcli validate --pedantic`,
+`packaging/flatpak/com.webworldwide.DocumentFinder.metainfo.xml`), plus runs
+`flatpak-builder-lint` (the real Flathub linter, via the `org.flatpak.Builder`
+Flatpak — not `pip install`) as a non-blocking advisory check, since some of its
+checks (e.g. a Flathub-hosted screenshot) can't pass before an actual Flathub
+submission. File dialogs use `tauri-plugin-dialog`'s `xdg-portal` feature on
+Linux (real `org.freedesktop.portal.FileChooser`, not the raw GTK3 chooser);
+`--filesystem=home` stays broad regardless, since the custom-library-root
+feature needs direct (non-portal) filesystem tree access.
 
 ## Uninstall / data purge
 
@@ -205,13 +228,14 @@ Clean uninstall is three layers (no native uninstaller can remove the user's
 document library, and shouldn't auto-nuke `~/Documents`):
 - **`purge_all_data` command** (`commands.rs`) — the in-app "Settings → Danger
   zone → Erase app data". It takes **no path argument** by design: it only
-  deletes dirs derived server-side from the app identifier (`app_data_dir()` —
-  AI models + fastembed cache + config), `runlog::log_path()`'s parent (the per-
-  OS log dir), and — only when `include_library` is set — `confinement_root()`
-  (which knows a custom library root). It reuses `force_remove_dir` and is
-  best-effort (returns a `PurgeReport { removed, failed }`). Registered in the
-  usual four places (`commands.rs`, `lib.rs`, `permissions/app.toml`,
-  `src/lib/tauri.ts`).
+  deletes dirs derived server-side from the app identifier (`app_data_dir()` +
+  `app_local_data_dir()` + `app_config_dir()` + `app_cache_dir()` — AI models,
+  fastembed cache, config, and whatever the webview itself caches on Linux),
+  `runlog::log_path()`'s parent (the per-OS log dir), and — only when
+  `include_library` is set — `confinement_root()` (which knows a custom library
+  root). It reuses `force_remove_dir` and is best-effort (returns a
+  `PurgeReport { removed, failed }`). Registered in the usual four places
+  (`commands.rs`, `lib.rs`, `permissions/app.toml`, `src/lib/tauri.ts`).
 - **`scripts/uninstall.{ps1,sh}`** — standalone per-user data wipe for when the
   app is already gone. They only know the **default** `~/Documents/Document
   Finder`; keep their hard-coded identifier (`com.webworldwide.documentfinder`)
@@ -223,7 +247,10 @@ document library, and shouldn't auto-nuke `~/Documents`):
 
 ## Icon regeneration
 
-Master artwork lives in `icons/` (not shipped at runtime):
+Master artwork lives in `icons/` (not shipped at runtime, with one deliberate
+exception: `packaging/flatpak/com.webworldwide.DocumentFinder.yml` pulls
+`Document Finder Icon.svg` directly into the Flatpak build as its scalable
+`hicolor/scalable/apps/` icon, since Tauri's bundler only emits raster sizes).
 `Document Finder Icon.svg` is the vector master (also used as the in-app logo via
 `src/components/Logo.tsx`); `Document Finder MacOS.png` (1024×1024) is the raster
 master. After editing a master, regenerate every runtime size into

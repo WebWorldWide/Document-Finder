@@ -136,4 +136,9 @@ export const api = {
   /** Cleanly restart the whole app process (used to finish a full data wipe). */
   restartApp: () => invoke<void>("restart_app"),
   resetAiState: () => invoke<void>("reset_ai_state"),
+  /** Linux only (always false elsewhere): whether the WEBKIT_DISABLE_DMABUF_RENDERER
+   *  workaround for the WebKitGTK blank-window issue is enabled for the *next* launch. */
+  getSafeRenderMode: () => invoke<boolean>("get_safe_render_mode"),
+  /** Toggle safe rendering mode. Takes effect after restart, not the current session. */
+  setSafeRenderMode: (enabled: boolean) => invoke<void>("set_safe_render_mode", { enabled }),
 };
