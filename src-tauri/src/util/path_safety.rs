@@ -115,17 +115,27 @@ fn lexical_normalize(p: &Path) -> PathBuf {
     comps.iter().collect()
 }
 
+/// Resolve the user's Documents directory, falling back to the home directory
+/// when Documents can't be determined (e.g. a minimal Linux install without
+/// xdg-user-dirs, where `dirs::document_dir()` returns `None`) — otherwise the
+/// very first search dead-ends with a cryptic error.
+///
+/// Shared by `library_root()` below and `commands::default_library_dir()` so
+/// the two can't independently drift apart (they once did: this exact
+/// fallback was inlined in both places, and `scripts/uninstall.sh` mirrored
+/// only one of them, with `or_else(dirs::home_dir)` silently dropped — fixed
+/// by routing both call sites through this single function).
+pub fn documents_or_home_dir() -> Result<PathBuf, String> {
+    dirs::document_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| "Cannot resolve a Documents or home directory".to_string())
+}
+
 /// Resolve the user's Documents/Document Finder library root, or return an
 /// error if the system's Documents directory cannot be determined. Used as the
 /// default confinement root when the user hasn't configured a custom one.
 pub fn library_root() -> Result<PathBuf, String> {
-    // Fall back to the home dir when Documents can't be resolved — on a minimal
-    // Linux install without xdg-user-dirs, document_dir() is None, which would
-    // otherwise dead-end the very first search with a cryptic error.
-    dirs::document_dir()
-        .or_else(dirs::home_dir)
-        .ok_or_else(|| "Cannot resolve a Documents or home directory".to_string())
-        .map(|d| d.join("Document Finder"))
+    documents_or_home_dir().map(|d| d.join("Document Finder"))
 }
 
 #[cfg(test)]

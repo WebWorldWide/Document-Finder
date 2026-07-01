@@ -16,7 +16,8 @@ use crate::engine::{run_pipeline, run_retry_pipeline, RunRequest};
 use crate::events::{ErrorPayload, EV_ERROR};
 use crate::sources::USER_AGENT;
 use crate::util::path_safety::{
-    library_root as default_library_root, safe_creatable_within_root, safe_within_root,
+    documents_or_home_dir, library_root as default_library_root, safe_creatable_within_root,
+    safe_within_root,
 };
 
 /// HTTP client tuned for huge model downloads — connect_timeout fails fast on
@@ -158,12 +159,7 @@ pub struct DefaultDirsResp {
 /// Returns the default library root, e.g. ~/Documents/Document Finder/library.
 #[tauri::command]
 pub fn default_library_dir() -> Result<DefaultDirsResp, String> {
-    // Fall back to the home dir on a minimal Linux box where xdg-user-dirs isn't
-    // installed (document_dir() is None there) — otherwise the first-run library
-    // setup fails and the first search dead-ends with a cryptic error.
-    let docs = dirs::document_dir()
-        .or_else(dirs::home_dir)
-        .ok_or("could not find a Documents or home directory")?;
+    let docs = documents_or_home_dir()?;
     let lib = docs.join("Document Finder").join("library");
     std::fs::create_dir_all(&lib).map_err(|e| e.to_string())?;
     Ok(DefaultDirsResp {
@@ -903,6 +899,26 @@ pub fn run_log_tail(max: Option<usize>) -> Result<Vec<serde_json::Value>, String
     Ok(runlog::read_tail(max.unwrap_or(200)))
 }
 
+// A percent-encoded file:// URI for the D-Bus call in reveal_in_finder's Linux
+// branch below (encode every byte that isn't an RFC 3986 unreserved char, so
+// spaces / unicode / etc. survive intact). Hoisted to a top-level fn (rather
+// than nested inside reveal_in_finder) so it's reachable from the test module
+// at the bottom of this file.
+#[cfg(target_os = "linux")]
+fn file_uri(p: &std::path::Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut s = String::from("file://");
+    for &b in p.as_os_str().as_bytes() {
+        match b {
+            b'/' | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                s.push(b as char)
+            }
+            _ => s.push_str(&format!("%{b:02X}")),
+        }
+    }
+    s
+}
+
 #[tauri::command]
 pub fn reveal_in_finder(path: String) -> Result<(), String> {
     let raw = PathBuf::from(&path);
@@ -959,22 +975,6 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         use std::process::Command;
-        // A percent-encoded file:// URI for the D-Bus call below (encode every
-        // byte that isn't an RFC 3986 unreserved char, so spaces / unicode / etc.
-        // survive intact).
-        fn file_uri(p: &std::path::Path) -> String {
-            use std::os::unix::ffi::OsStrExt;
-            let mut s = String::from("file://");
-            for &b in p.as_os_str().as_bytes() {
-                match b {
-                    b'/' | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                        s.push(b as char)
-                    }
-                    _ => s.push_str(&format!("%{b:02X}")),
-                }
-            }
-            s
-        }
 
         // A directory target: open the folder itself (not its parent).
         if p.is_dir() {
@@ -1001,7 +1001,7 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
             .unwrap_or(std::path::Path::new("/"))
             .to_path_buf();
         std::thread::spawn(move || {
-            let dbus_ok = Command::new("dbus-send")
+            let dbus_ok = match Command::new("dbus-send")
                 .args([
                     "--session",
                     "--dest=org.freedesktop.FileManager1",
@@ -1012,11 +1012,43 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
                     &format!("array:string:{uri}"),
                     "string:",
                 ])
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
+                .output()
+            {
+                Ok(out) if out.status.success() => true,
+                Ok(out) => {
+                    // Benign/expected on many WMs and minimal desktops that have
+                    // no FileManager1 D-Bus service at all (tiling WMs, headless
+                    // Linux, some sandboxes) — debug, not warn.
+                    tracing::debug!(
+                        "reveal_in_finder: dbus-send ran but FileManager1.ShowItems did not \
+                         succeed (exit {:?}): {}",
+                        out.status.code(),
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    );
+                    false
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    tracing::debug!(
+                        "reveal_in_finder: dbus-send binary not found, falling back to xdg-open"
+                    );
+                    false
+                }
+                Err(e) => {
+                    tracing::warn!("reveal_in_finder: dbus-send failed to spawn: {e}");
+                    false
+                }
+            };
             if !dbus_ok {
-                let _ = Command::new("xdg-open").arg(&parent).spawn();
+                tracing::info!(
+                    "reveal_in_finder: falling back to xdg-open {}",
+                    parent.display()
+                );
+                if let Err(e) = Command::new("xdg-open").arg(&parent).spawn() {
+                    tracing::warn!(
+                        "reveal_in_finder: xdg-open fallback also failed to spawn for {}: {e}",
+                        parent.display()
+                    );
+                }
             }
         });
         Ok(())
@@ -1479,10 +1511,43 @@ async fn force_remove_dir(path: &Path) -> Result<&'static str, String> {
             match tokio::fs::remove_dir_all(path).await {
                 Ok(()) => Ok("chmod -R u+rwx + remove_dir_all"),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("already gone"),
-                Err(e2) => Err(format!(
-                    "all delete strategies failed. stage 1 (remove_dir_all): {}, stage 2 (after chmod -R u+rwx): {}",
-                    stage1_msg, e2
-                )),
+                Err(e2) => {
+                    let stage2_msg = format!("after chmod -R u+rwx: {}", e2);
+                    tracing::info!(
+                        "force_remove_dir stage 2 failed for {}: {}",
+                        path.display(),
+                        stage2_msg
+                    );
+
+                    // Stage 3: shell `rm -rf` as a last resort (e.g. an
+                    // immutable `chattr +i` file or a cross-UID bind mount
+                    // chmod can't fix either — but attempting it and
+                    // surfacing rm's real stderr is still more honest than
+                    // giving up after stage 2).
+                    let rm_out = tokio::process::Command::new("rm")
+                        .arg("-rf")
+                        .arg(path)
+                        .output()
+                        .await
+                        .map_err(|spawn_err| {
+                            format!(
+                                "all delete strategies failed; final stage couldn't even spawn rm: {} (stage 1: {}, stage 2: {})",
+                                spawn_err, stage1_msg, stage2_msg
+                            )
+                        })?;
+                    if !rm_out.status.success() {
+                        let stderr = String::from_utf8_lossy(&rm_out.stderr).into_owned();
+                        return Err(format!(
+                            "all delete strategies failed.\n  stage 1 (remove_dir_all): {}\n  stage 2 (after chmod -R u+rwx): {}\n  stage 3 (rm -rf): {}",
+                            stage1_msg, stage2_msg, stderr.trim()
+                        ));
+                    }
+                    tracing::info!(
+                        "force_remove_dir stage 3 (rm -rf) succeeded for {}",
+                        path.display()
+                    );
+                    Ok("rm -rf")
+                }
             }
         }
     }
@@ -1623,6 +1688,22 @@ pub async fn purge_all_data(
         Ok(dir) => targets.push(dir),
         Err(e) => tracing::warn!("purge_all_data: no app_local_data_dir: {e}"),
     }
+    // 1c/1d. Config + cache dirs (identifier-keyed). On Linux these are
+    //    $XDG_CONFIG_HOME/<id> and $XDG_CACHE_HOME/<id> — distinct from
+    //    app_data_dir's $XDG_DATA_HOME/<id> — which scripts/uninstall.sh has
+    //    always targeted defensively (in case the webview/WebKitGTK itself
+    //    writes a browser-style cache there independent of app_data_dir). The
+    //    is_dir() guard below already makes this a safe no-op wherever nothing
+    //    is written (incl. macOS, where app_config_dir() == app_data_dir(),
+    //    same pattern as app_local_data_dir above).
+    match app.path().app_config_dir() {
+        Ok(dir) => targets.push(dir),
+        Err(e) => tracing::warn!("purge_all_data: no app_config_dir: {e}"),
+    }
+    match app.path().app_cache_dir() {
+        Ok(dir) => targets.push(dir),
+        Err(e) => tracing::warn!("purge_all_data: no app_cache_dir: {e}"),
+    }
     // 2. Run-log directory (a different base dir on every OS).
     if let Some(log_dir) = runlog::log_path().and_then(|p| p.parent().map(Path::to_path_buf)) {
         targets.push(log_dir);
@@ -1685,4 +1766,89 @@ pub async fn purge_all_data(
         }
     }
     Ok(report)
+}
+
+/// Whether "safe rendering mode" (see `lib::maybe_relaunch_in_safe_render_mode`)
+/// is enabled for the *next* launch — it cannot affect the already-initialized
+/// WebKitGTK in the current process. Always `false` on non-Linux OSes, which
+/// don't have this WebKitGTK-specific issue.
+#[tauri::command]
+pub fn get_safe_render_mode() -> Result<bool, String> {
+    #[cfg(target_os = "linux")]
+    {
+        Ok(crate::safe_render_marker_path().is_some_and(|p| p.is_file()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(false)
+    }
+}
+
+/// Toggle "safe rendering mode" by creating/removing its marker file. Takes
+/// effect on the *next* launch (the Settings UI must say so) — see
+/// `lib::maybe_relaunch_in_safe_render_mode` for why this can't apply live.
+/// No-op on non-Linux OSes.
+#[tauri::command]
+pub fn set_safe_render_mode(enabled: bool) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let path = crate::safe_render_marker_path()
+            .ok_or("could not resolve a config directory for the safe-render-mode marker")?;
+        if enabled {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&path, "").map_err(|e| e.to_string())?;
+        } else if let Err(e) = std::fs::remove_file(&path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                return Err(e.to_string());
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = enabled;
+        Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_encodes_spaces() {
+        let p = std::path::Path::new("/home/user/My Documents/file.pdf");
+        assert_eq!(file_uri(p), "file:///home/user/My%20Documents/file.pdf");
+    }
+
+    #[test]
+    fn percent_encodes_comma_for_dbus_array_string_safety() {
+        // dbus-send parses `array:string:<uri>` as a comma-separated list — an
+        // unescaped comma in the URI would corrupt the D-Bus argument and could
+        // select/open the wrong path. ',' is not in the RFC 3986 unreserved set,
+        // so it must come out percent-encoded.
+        let p = std::path::Path::new("/home/user/a,b.pdf");
+        assert_eq!(file_uri(p), "file:///home/user/a%2Cb.pdf");
+    }
+
+    #[test]
+    fn percent_encodes_percent_sign() {
+        // A literal '%' must become %25, not be left bare (which would make the
+        // URI ambiguous/un-parseable at the next %XX boundary).
+        let p = std::path::Path::new("/home/user/100%-done.pdf");
+        assert_eq!(file_uri(p), "file:///home/user/100%25-done.pdf");
+    }
+
+    #[test]
+    fn percent_encodes_unicode_filename_byte_by_byte() {
+        // UTF-8 multi-byte sequences (accented + CJK chars here) must each byte
+        // be percent-encoded individually, not the whole codepoint as one unit.
+        let p = std::path::Path::new("/home/user/café 文档.pdf");
+        assert_eq!(
+            file_uri(p),
+            "file:///home/user/caf%C3%A9%20%E6%96%87%E6%A1%A3.pdf"
+        );
+    }
 }

@@ -518,9 +518,15 @@
           <span class="sep">·</span>
           <a href="https://github.com/WebWorldWide/Document-Finder" target="_blank" rel="noopener">source</a>
         </div>
+        <!-- SYNC: mirrors the Linux caveat in README.md ("Installing a
+             release") and .github/workflows/release.yml's notes.md
+             heredoc — update all three together. -->
         <div class="dl-fine mono">
           Linux .deb / .rpm / .AppImage need glibc 2.39+ (Ubuntu 24.04+, Fedora 40+) — on older
-          distros use the Flatpak, which bundles its own runtime.
+          distros use the Flatpak, which bundles its own runtime. If the window opens blank
+          (some older GPU drivers + system WebKitGTK), launch with
+          WEBKIT_DISABLE_DMABUF_RENDERER=1 set (add WEBKIT_DISABLE_COMPOSITING_MODE=1 if it
+          persists) — or enable Settings &rarr; Safe rendering mode and relaunch.
         </div>
       </div>
     </div>

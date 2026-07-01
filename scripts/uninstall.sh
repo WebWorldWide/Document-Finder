@@ -8,6 +8,8 @@
 # zone), which knows the custom location, or delete that folder manually.
 set -u
 
+# Sync: must match tauri.conf.json's "identifier" field exactly. Cross-checked
+# by src-tauri/tests/linux_identifiers_in_sync.rs.
 id="com.webworldwide.documentfinder"
 
 rm_if() {
@@ -50,17 +52,26 @@ case "$(uname -s)" in
     rm_if "${XDG_DATA_HOME:-$HOME/.local/share}/$id"             # models + fastembed + webview website data
     rm_if "${XDG_CONFIG_HOME:-$HOME/.config}/$id"               # config
     rm_if "${XDG_CACHE_HOME:-$HOME/.cache}/$id"                 # caches
+    # Sync: "document-finder" must match src-tauri/src/engine/runlog.rs's Linux
+    # state_dir() join. Cross-checked by tests/linux_identifiers_in_sync.rs.
     rm_if "${XDG_STATE_HOME:-$HOME/.local/state}/document-finder"  # run log
     # Flatpak redirects all per-app data into its sandbox under ~/.var/app using
     # the reverse-DNS *app id* (mixed case — distinct from the lowercase runtime
     # identifier above). Without this, a Flatpak user's downloaded AI model
     # weights survive an uninstall.sh that reports it removed everything.
+    # Must match the `id:` field in packaging/flatpak/com.webworldwide.DocumentFinder.yml
+    # — cross-checked by tests/linux_identifiers_in_sync.rs.
     rm_if "$HOME/.var/app/com.webworldwide.DocumentFinder"        # Flatpak sandbox data (models/config/cache)
     # Resolve the REAL Documents dir — localized / XDG-customized desktops put it
     # somewhere other than ~/Documents, so a non-English user must still be offered
-    # the library for removal. Mirrors the app's dirs::document_dir().
+    # the library for removal. Mirrors the app's
+    # dirs::document_dir().or_else(dirs::home_dir) exactly: xdg-user-dir requires
+    # the same xdg-user-dirs package whose absence makes document_dir() return
+    # None, so the no-xdg-user-dirs fallback here must be bare $HOME (NOT
+    # $HOME/Documents) to match where the app actually creates the library on
+    # that exact configuration.
     docs="$(xdg-user-dir DOCUMENTS 2>/dev/null || true)"
-    [ -z "$docs" ] && docs="$HOME/Documents"
+    [ -z "$docs" ] && docs="$HOME"
     ask_library "$docs/Document Finder"
     echo ""
     echo "Done. To remove the app, use whichever you installed:"
