@@ -35,12 +35,7 @@ export interface SourceDonePayload {
 }
 
 export type SourceErrorKind =
-  | "rate_limit"
-  | "forbidden"
-  | "server_error"
-  | "timeout"
-  | "parse_error"
-  | "other";
+  "rate_limit" | "forbidden" | "server_error" | "timeout" | "parse_error" | "other";
 
 export interface SourceErrorPayload {
   source: string;

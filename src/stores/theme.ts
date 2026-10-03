@@ -5,15 +5,7 @@ import { createSignal } from "solid-js";
 // data-* attributes on <html>; stream layout only changes markup in Discover.
 export type Theme = "paper" | "slate" | "midnight";
 export type Accent =
-  | "sky"
-  | "blue"
-  | "ink"
-  | "electric"
-  | "teal"
-  | "emerald"
-  | "amber"
-  | "crimson"
-  | "plum";
+  "sky" | "blue" | "ink" | "electric" | "teal" | "emerald" | "amber" | "crimson" | "plum";
 export type Density = "compact" | "regular";
 export type StreamLayout = "stacked" | "split";
 
