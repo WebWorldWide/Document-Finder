@@ -151,7 +151,7 @@ jobs:
           # its post-step can't fail the job (the build itself is unaffected).
           save-if: ${{ matrix.platform.os != 'windows-latest' }}
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@v6.0.9
         with:
           version: 11
 
@@ -229,7 +229,7 @@ jobs:
           workspaces: src-tauri
           key: flatpak-linux
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@v6.0.9
         with:
           version: 11
 
