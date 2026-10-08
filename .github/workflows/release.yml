@@ -22,7 +22,7 @@ jobs:
     name: Verify tag matches manifests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Assert tag == package.json == Cargo.toml == tauri.conf.json
         run: |
           TAG="${GITHUB_REF_NAME#v}"
@@ -118,7 +118,7 @@ jobs:
     runs-on: ${{ matrix.platform.os }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Linux system deps
         if: matrix.platform.os == 'ubuntu-24.04'
@@ -201,7 +201,7 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install system + Flatpak deps
         run: |
