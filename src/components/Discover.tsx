@@ -9,7 +9,6 @@ import {
   FolderOpen,
   Library,
   Loader2,
-  RotateCcw,
   Square,
 } from "lucide-solid";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -219,11 +218,11 @@ function statusLine(): string {
       if (s.retry) return `Retrying ${s.planned} documents…`;
       if (s.done === 0 && s.inFlight.length === 0)
         return `Searching ${settings.selectedSources.length} sources…`;
-      return `Saved ${s.done} of ${Math.max(s.planned, s.done + s.failed)} planned so far`;
+      return `Saved ${s.done} of ${Math.max(s.planned, s.done)} so far`;
     case "stopping":
       return "Stopping — finishing the files already in progress…";
     case "done":
-      return `Finished in ${formatDuration(elapsed)} — ${s.done} documents saved${s.failed ? `, ${s.failed} couldn’t be downloaded` : ""}.`;
+      return `Finished in ${formatDuration(elapsed)} — ${s.done} documents saved and ready to read.`;
     case "cancelled":
       return `Stopped — ${s.done} documents saved.`;
     case "error":
@@ -246,7 +245,6 @@ function RunView() {
   });
   const sourceErrors = () =>
     Object.entries(s.sources).filter(([, v]) => v.error && v.error !== "parse_error");
-  const retryable = () => s.failures.filter((f) => !/Same file as/.test(f.error)).length;
   const ended = () => s.status === "done" || s.status === "cancelled";
   const speed = () => {
     const secs = ((s.endedAt || Date.now()) - s.startedAt) / 1000;
@@ -320,7 +318,7 @@ function RunView() {
         <Stage
           id="download"
           name="Download"
-          figure={`${s.done}${s.planned ? ` / ${Math.max(s.planned, s.done + s.failed)}` : ""}`}
+          figure={`${s.done}${s.planned && runStore.live ? ` / ${Math.max(s.planned, s.done)}` : ""}`}
           sub={`${s.inFlight.length} in progress · ${formatBytes(s.bytes)}${speed() > 0 ? ` · ${formatBytes(speed())}/s` : ""}`}
         />
         <Stage
@@ -349,13 +347,10 @@ function RunView() {
               <span class="df-label">Downloads</span>
               <span class="df-tile-key" aria-hidden="true">
                 <span>
-                  <i class="df-tile" data-kind="ok" /> saved
+                  <i class="df-tile df-tile-multi" /> saved (by source)
                 </span>
                 <span>
                   <i class="df-tile" data-kind="live" /> downloading
-                </span>
-                <span>
-                  <i class="df-tile" data-kind="fail" /> failed
                 </span>
                 <span>
                   <i class="df-tile" data-kind="wait" /> queued
@@ -495,38 +490,6 @@ function RunView() {
       </Show>
 
       <div class="df-section">
-        <Show when={s.failures.length > 0}>
-          <details class="df-details">
-            <summary>
-              <ChevronRight size={14} aria-hidden="true" />
-              {s.failures.length} couldn’t be downloaded
-              <Show when={ended() && retryable() > 0}>
-                <button
-                  class="df-btn df-btn-quiet"
-                  style={{ "margin-left": "auto", height: "26px" }}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    void runStore.retryFailed();
-                  }}
-                >
-                  <RotateCcw size={13} aria-hidden="true" /> Try again
-                </button>
-              </Show>
-            </summary>
-            <div class="df-details-body">
-              <dl class="df-kv">
-                <For each={failureGroups()}>
-                  {([reason, n]) => (
-                    <>
-                      <dt class="num">{n} documents</dt>
-                      <dd>{reason}</dd>
-                    </>
-                  )}
-                </For>
-              </dl>
-            </div>
-          </details>
-        </Show>
         <Show when={s.offTopic > 0}>
           <details class="df-details">
             <summary>
@@ -568,6 +531,20 @@ function RunView() {
                   )}
                 </For>
               </dd>
+              <Show when={s.failures.length > 0}>
+                <dt>Replaced</dt>
+                <dd>
+                  {s.failures.length} results weren’t freely downloadable and were swapped for the
+                  next-best matches.
+                  <For each={failureGroups().slice(0, 3)}>
+                    {([reason, n]) => (
+                      <div class="df-muted">
+                        {n} × {reason}
+                      </div>
+                    )}
+                  </For>
+                </dd>
+              </Show>
               <Show when={sourceErrors().length > 0}>
                 <dt>Source issues</dt>
                 <dd>

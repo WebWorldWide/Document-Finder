@@ -97,6 +97,14 @@ export interface DownloadFailedPayload {
   total: number;
 }
 
+/** A started document dropped without counting as a failure. */
+export interface DownloadSkippedPayload {
+  url: string;
+  title: string;
+  source: string;
+  reason: string;
+}
+
 export interface CompletePayload {
   done: number;
   failed: number;
@@ -185,6 +193,7 @@ export type DfEvent =
   | { type: "download_progress"; payload: DownloadProgressPayload }
   | { type: "download_done"; payload: DownloadDonePayload }
   | { type: "download_failed"; payload: DownloadFailedPayload }
+  | { type: "download_skipped"; payload: DownloadSkippedPayload }
   | { type: "complete"; payload: CompletePayload }
   | { type: "cancelled"; payload: CompletePayload }
   | { type: "error"; payload: ErrorPayload }
@@ -206,6 +215,7 @@ const EVENTS = [
   "download_progress",
   "download_done",
   "download_failed",
+  "download_skipped",
   "cancelled",
   "complete",
   "error",

@@ -62,14 +62,23 @@ pub struct RunRequest {
 
 /// Unique candidates we stop discovering at.
 const MAX_CANDIDATES: usize = 1500;
-/// Most documents one search will download.
-pub const MAX_DOWNLOADS: usize = 300;
+/// Documents one search aims to *save*. A document that can't be downloaded
+/// frees its slot for the next-best candidate, so the target is reached with
+/// successes rather than padded with failures.
+pub const MAX_DOWNLOADS: usize = 200;
+/// Upper bound on download attempts per run (successes + replacements).
+const MAX_ATTEMPTS: usize = 420;
+/// After this long, no new downloads start; in-flight ones get TAIL_GRACE.
+const RUN_BUDGET: Duration = Duration::from_secs(210);
+/// Once there's nothing left to start, stragglers get this long to finish
+/// before they're abandoned (quietly — they aren't counted as failures).
+const TAIL_GRACE: Duration = Duration::from_secs(20);
 /// If wave 1 already yields this many kept candidates, skip the feedback wave.
 const ENOUGH_KEPT: usize = 450;
 /// Concurrent download workers (per-host limits keep this polite).
 const DOWNLOAD_WORKERS: usize = 24;
-const WAVE1_DEADLINE: Duration = Duration::from_secs(30);
-const WAVE2_DEADLINE: Duration = Duration::from_secs(20);
+const WAVE1_DEADLINE: Duration = Duration::from_secs(25);
+const WAVE2_DEADLINE: Duration = Duration::from_secs(18);
 /// Downloads begin once this many candidates exist (or after WARMUP_TIME).
 const WARMUP_MIN: usize = 30;
 const WARMUP_TIME: Duration = Duration::from_secs(3);
@@ -176,6 +185,12 @@ struct RunState {
     planned: AtomicUsize,
     done: AtomicUsize,
     failed: AtomicUsize,
+    /// Documents currently being downloaded/read.
+    in_flight: AtomicUsize,
+    /// Jobs handed to workers (every attempt, any outcome).
+    attempts: AtomicUsize,
+    /// Run budget exhausted: start no new downloads.
+    stop_new: AtomicBool,
     /// sha256 → title of files saved this run (duplicate-content guard).
     hashes: Mutex<HashMap<String, String>>,
 }
@@ -198,6 +213,9 @@ impl RunState {
             planned: AtomicUsize::new(0),
             done: AtomicUsize::new(0),
             failed: AtomicUsize::new(0),
+            in_flight: AtomicUsize::new(0),
+            attempts: AtomicUsize::new(0),
+            stop_new: AtomicBool::new(false),
             hashes: Mutex::new(HashMap::new()),
         }
     }
@@ -412,7 +430,8 @@ async fn discover_wave(
 // Dispatcher
 // ---------------------------------------------------------------------------
 
-/// Re-rank the pool and rebuild the best-first queue. Returns the ranking.
+/// Re-rank the pool and rebuild the best-first queue (every kept candidate
+/// not yet started, best first — workers stop once the save target is met).
 fn dispatch_pass(state: &RunState, sink: &dyn Sink, final_pass: bool) -> Vec<(usize, RankedDoc)> {
     let ranked = state.rank_now();
     let kept: Vec<&(usize, RankedDoc)> = ranked
@@ -425,12 +444,11 @@ fn dispatch_pass(state: &RunState, sink: &dyn Sink, final_pass: bool) -> Vec<(us
         ((kept.len() as f32) * EARLY_DISPATCH_SHARE).ceil() as usize
     };
     let started = state.started.lock().clone();
-    let room = MAX_DOWNLOADS.saturating_sub(started.len());
     let queue: Vec<Queued> = kept
         .iter()
         .take(eligible)
         .filter(|(i, _)| !started.contains(i))
-        .take(room)
+        .take(MAX_ATTEMPTS)
         .map(|(i, r)| Queued {
             idx: *i,
             score: r.score,
@@ -438,18 +456,34 @@ fn dispatch_pass(state: &RunState, sink: &dyn Sink, final_pass: bool) -> Vec<(us
             sources: r.doc.sources(),
         })
         .collect();
-    let planned = (started.len() + queue.len()).min(MAX_DOWNLOADS);
-    let planned = if final_pass {
-        planned
-    } else {
-        planned.max(state.planned.load(Ordering::Relaxed))
-    };
-    if state.planned.swap(planned, Ordering::Relaxed) != planned {
-        emit(sink, EV_PLAN, PlanPayload { planned });
-    }
     *state.queue.lock() = queue;
+    update_plan(state, sink, !final_pass);
     state.queue_notify.notify_waiters();
     ranked
+}
+
+/// Recompute how many documents the run expects to save and emit it if it
+/// changed: what's saved + in flight + still queued, capped at the target.
+/// While discovery runs the figure only grows (`monotonic`).
+fn update_plan(state: &RunState, sink: &dyn Sink, monotonic: bool) {
+    let done = state.done.load(Ordering::Relaxed);
+    let in_flight = state.in_flight.load(Ordering::Relaxed);
+    let can_start = !state.stop_new.load(Ordering::Relaxed)
+        && state.attempts.load(Ordering::Relaxed) < MAX_ATTEMPTS;
+    let queued = if can_start {
+        state.queue.lock().len()
+    } else {
+        0
+    };
+    let mut planned = (done + in_flight + queued).min(MAX_DOWNLOADS).max(done);
+    let prev = state.planned.load(Ordering::Relaxed);
+    if monotonic {
+        planned = planned.max(prev);
+    }
+    if prev != planned {
+        state.planned.store(planned, Ordering::Relaxed);
+        emit(sink, EV_PLAN, PlanPayload { planned });
+    }
 }
 
 fn emit_candidates(sink: &dyn Sink, ranked: &[(usize, RankedDoc)]) {
@@ -560,7 +594,10 @@ fn spawn_writer(db_path: PathBuf, run_id: i64) -> tokio::sync::mpsc::UnboundedSe
 struct WorkerCtx {
     sink: Arc<dyn Sink>,
     state: Arc<RunState>,
+    /// User cancel (stops everything).
     cancel: CancellationToken,
+    /// Child of `cancel`, also fired by the tail cutoff: aborts transfers.
+    dl_cancel: CancellationToken,
     client: Arc<reqwest::Client>,
     limiter: Arc<HostLimiter>,
     folder: PathBuf,
@@ -570,27 +607,53 @@ struct WorkerCtx {
     extract_sem: Arc<Semaphore>,
 }
 
+/// True if every known copy of `doc` lives on a host that refuses automated
+/// downloads (and there's no DOI for Unpaywall to find another copy).
+fn unreachable(doc: &Document, limiter: &HostLimiter) -> bool {
+    doc.best_doi().is_none()
+        && doc
+            .all_urls()
+            .iter()
+            .all(|u| limiter.is_blocked(&super::hostlimit::host_of(u)))
+}
+
 async fn next_job(ctx: &WorkerCtx) -> Option<Queued> {
+    let st = &ctx.state;
     loop {
-        if ctx.cancel.is_cancelled() {
+        if ctx.dl_cancel.is_cancelled() || st.stop_new.load(Ordering::Relaxed) {
             return None;
         }
-        let notified = ctx.state.queue_notify.notified();
-        {
-            let mut q = ctx.state.queue.lock();
+        let notified = st.queue_notify.notified();
+        let done = st.done.load(Ordering::Relaxed);
+        let in_flight = st.in_flight.load(Ordering::Relaxed);
+        if done >= MAX_DOWNLOADS || st.attempts.load(Ordering::Relaxed) >= MAX_ATTEMPTS {
+            return None;
+        }
+        // Enough in flight to reach the target: wait — a failure frees a slot.
+        if done + in_flight < MAX_DOWNLOADS {
+            let mut q = st.queue.lock();
             while !q.is_empty() {
                 let job = q.remove(0);
                 // A re-rank may have re-queued a doc another worker already took.
-                if ctx.state.started.lock().insert(job.idx) {
-                    return Some(job);
+                if !st.started.lock().insert(job.idx) {
+                    continue;
                 }
+                // Skip, silently, documents we already know we can't get.
+                if unreachable(&job.doc, &ctx.limiter) {
+                    continue;
+                }
+                st.in_flight.fetch_add(1, Ordering::Relaxed);
+                st.attempts.fetch_add(1, Ordering::Relaxed);
+                return Some(job);
             }
-        }
-        if ctx.state.dispatch_done.load(Ordering::Acquire) {
+            if st.dispatch_done.load(Ordering::Acquire) {
+                return None;
+            }
+        } else if in_flight == 0 {
             return None;
         }
         tokio::select! {
-            _ = ctx.cancel.cancelled() => return None,
+            _ = ctx.dl_cancel.cancelled() => return None,
             _ = notified => {}
             _ = tokio::time::sleep(Duration::from_millis(400)) => {}
         }
@@ -623,6 +686,21 @@ fn fail(ctx: &WorkerCtx, doc: Document, error: String) {
             done,
             failed,
             total,
+        },
+    );
+}
+
+/// A document dropped without counting as a failure (duplicate content, or
+/// abandoned by the tail cutoff / a Stop). Clears its in-progress row.
+fn skip(ctx: &WorkerCtx, doc: &Document, reason: &str) {
+    emit(
+        ctx.sink.as_ref(),
+        EV_DOWNLOAD_SKIPPED,
+        DownloadSkippedPayload {
+            url: doc.url.clone(),
+            title: doc.title.clone(),
+            source: doc.source.clone(),
+            reason: reason.to_string(),
         },
     );
 }
@@ -690,8 +768,8 @@ async fn process(ctx: &WorkerCtx, job: Queued) {
             source: doc.source.clone(),
         },
     );
-    if ctx.cancel.is_cancelled() {
-        return;
+    if ctx.dl_cancel.is_cancelled() {
+        return skip(ctx, &doc, "stopped");
     }
     let slug = doc.slug();
 
@@ -730,7 +808,7 @@ async fn process(ctx: &WorkerCtx, job: Queued) {
             &ctx.folder,
             &ctx.client,
             &ctx.limiter,
-            &ctx.cancel,
+            &ctx.dl_cancel,
             move |ev| {
                 if !ev.force
                     && last.elapsed() < Duration::from_millis(200)
@@ -757,7 +835,7 @@ async fn process(ctx: &WorkerCtx, job: Queued) {
     let (path, cached) = match outcome {
         DownloadOutcome::Saved(p) => (p, false),
         DownloadOutcome::Cached(p) => (p, true),
-        DownloadOutcome::Cancelled => return,
+        DownloadOutcome::Cancelled => return skip(ctx, &doc, "stopped"),
         DownloadOutcome::Failed(e) => return fail(ctx, doc, e),
     };
     let bytes = tokio::fs::metadata(&path)
@@ -782,7 +860,7 @@ async fn process(ctx: &WorkerCtx, job: Queued) {
             if !cached {
                 let _ = tokio::fs::remove_file(&path).await;
             }
-            return fail(ctx, doc, format!("Same file as “{other}”, already saved."));
+            return skip(ctx, &doc, &format!("same file as “{other}”"));
         }
         let index = Arc::clone(&ctx.index);
         let rec_urls = urls.clone();
@@ -915,6 +993,10 @@ async fn worker(ctx: Arc<WorkerCtx>) {
                 );
             }
         }
+        // Free the slot: if this one failed, the next-best candidate starts.
+        ctx.state.in_flight.fetch_sub(1, Ordering::Relaxed);
+        update_plan(&ctx.state, ctx.sink.as_ref(), false);
+        ctx.state.queue_notify.notify_waiters();
     }
 }
 
@@ -970,12 +1052,17 @@ fn worker_ctx(
     lib: &Library,
     index: Arc<Mutex<Option<LibraryIndex>>>,
 ) -> Arc<WorkerCtx> {
+    let limiter = HostLimiter::new();
+    if let Some(i) = index.lock().as_ref() {
+        limiter.preblock(i.blocked_hosts(30));
+    }
     Arc::new(WorkerCtx {
         sink: Arc::clone(sink),
         state: Arc::clone(state),
         cancel: cancel.clone(),
+        dl_cancel: cancel.child_token(),
         client: Arc::new(make_download_client()),
-        limiter: HostLimiter::new(),
+        limiter,
         folder: lib.folder.clone(),
         text_dir: lib.text_dir.clone(),
         writer: spawn_writer(lib.db_path.clone(), lib.run_id),
@@ -985,8 +1072,10 @@ fn worker_ctx(
 }
 
 fn finish(sink: &dyn Sink, state: &RunState, lib: &Library, cancel: &CancellationToken) {
-    let (done, failed, planned) = counts(state);
-    let total = planned.max(done + failed);
+    let (done, failed, _) = counts(state);
+    // The run's result is what it saved; replaced failures aren't "missing".
+    let total = done;
+    state.planned.store(done, Ordering::Relaxed);
     emit_stage(
         sink,
         "download",
@@ -1109,6 +1198,7 @@ pub async fn run_pipeline(
     // Workers start now and idle until the dispatcher queues work.
     let ctx = worker_ctx(&sink, &state, &cancel, &lib, index);
     let mut workers = spawn_workers(Arc::clone(&ctx), DOWNLOAD_WORKERS);
+    let reaper = spawn_reaper(Arc::clone(&ctx), Some(RUN_BUDGET));
 
     // Dispatcher: periodic re-rank → best-first queue.
     let dispatcher = {
@@ -1240,8 +1330,62 @@ pub async fn run_pipeline(
     state.queue_notify.notify_waiters();
 
     while workers.join_next().await.is_some() {}
+    reaper.abort();
+    save_reputation(&ctx);
     finish(sink.as_ref(), &state, &lib, &cancel);
     Ok(())
+}
+
+/// Background guard that keeps a run from dragging on:
+/// * after `budget`, no new downloads start;
+/// * once nothing is left to start, in-flight stragglers get `TAIL_GRACE`
+///   and are then abandoned (quietly — they're not counted as failures).
+fn spawn_reaper(ctx: Arc<WorkerCtx>, budget: Option<Duration>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let t0 = Instant::now();
+        let mut idle_since: Option<Instant> = None;
+        loop {
+            tokio::select! {
+                _ = ctx.cancel.cancelled() => return,
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+            }
+            let st = &ctx.state;
+            if let Some(b) = budget {
+                if t0.elapsed() >= b && !st.stop_new.swap(true, Ordering::Relaxed) {
+                    tracing::info!("run budget reached — finishing in-flight downloads");
+                    st.queue_notify.notify_waiters();
+                }
+            }
+            let done = st.done.load(Ordering::Relaxed);
+            let nothing_to_start = st.stop_new.load(Ordering::Relaxed)
+                || done >= MAX_DOWNLOADS
+                || st.attempts.load(Ordering::Relaxed) >= MAX_ATTEMPTS
+                || (st.dispatch_done.load(Ordering::Acquire) && st.queue.lock().is_empty());
+            if !nothing_to_start {
+                idle_since = None;
+                continue;
+            }
+            if st.in_flight.load(Ordering::Relaxed) == 0 {
+                return;
+            }
+            let since = *idle_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= TAIL_GRACE {
+                tracing::info!("tail cutoff — abandoning slow stragglers");
+                ctx.dl_cancel.cancel();
+                return;
+            }
+        }
+    })
+}
+
+/// Remember which hosts refused downloads (and which worked) for next time.
+fn save_reputation(ctx: &WorkerCtx) {
+    let (blocked, good) = ctx.limiter.reputation();
+    if let Some(i) = ctx.index.lock().as_ref() {
+        if let Err(e) = i.save_hosts(&blocked, &good) {
+            tracing::warn!("couldn't save host reputation: {e}");
+        }
+    }
 }
 
 /// Re-download a fixed list of documents into an existing library (the
@@ -1289,8 +1433,11 @@ pub async fn run_retry_pipeline(
         None,
     );
     let ctx = worker_ctx(&sink, &state, &cancel, &lib, open_index(root.as_deref()));
-    let mut workers = spawn_workers(ctx, DOWNLOAD_WORKERS.min(n.max(1)));
+    let mut workers = spawn_workers(Arc::clone(&ctx), DOWNLOAD_WORKERS.min(n.max(1)));
+    let reaper = spawn_reaper(Arc::clone(&ctx), None);
     while workers.join_next().await.is_some() {}
+    reaper.abort();
+    save_reputation(&ctx);
     finish(sink.as_ref(), &state, &lib, &cancel);
     Ok(())
 }

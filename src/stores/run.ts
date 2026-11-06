@@ -220,7 +220,9 @@ export function apply(ev: DfEvent) {
           s.inFlight = s.inFlight.filter((f) => f.url !== p.url);
           s.done = p.done;
           s.failed = p.failed;
-          s.planned = Math.max(s.planned, p.total, p.done + p.failed);
+          // The backend's plan counts documents to SAVE (failures are
+          // replaced by the next-best match), so `total` is authoritative.
+          s.planned = Math.max(p.total, p.done);
           if (!p.cached) s.bytes += p.bytes;
           s.outcomes.push({ ok: true, source: p.source.split("/")[0], title: p.title });
           s.saved.unshift({
@@ -236,6 +238,9 @@ export function apply(ev: DfEvent) {
         }),
       );
       break;
+    case "download_skipped":
+      setState("inFlight", (list) => list.filter((f) => f.url !== ev.payload.url));
+      break;
     case "download_failed":
       setState(
         produce((s) => {
@@ -243,7 +248,7 @@ export function apply(ev: DfEvent) {
           s.inFlight = s.inFlight.filter((f) => f.url !== p.url);
           s.done = p.done;
           s.failed = p.failed;
-          s.planned = Math.max(s.planned, p.total, p.done + p.failed);
+          s.planned = Math.max(p.total, p.done);
           s.failures.push({ doc: docOf(p), error: p.error });
           s.outcomes.push({ ok: false, source: p.source.split("/")[0], title: p.title });
         }),
@@ -254,7 +259,7 @@ export function apply(ev: DfEvent) {
         produce((s) => {
           s.done = ev.payload.done;
           s.failed = ev.payload.failed;
-          s.planned = Math.max(ev.payload.total, ev.payload.done + ev.payload.failed);
+          s.planned = ev.payload.done;
         }),
       );
       finish("done", ev.payload.folder);
@@ -291,10 +296,10 @@ export function stages(): Record<StageId, StageState> {
     ended ||
     (state.discoveryDone &&
       state.inFlight.length === 0 &&
-      state.done + state.failed >= state.planned &&
+      state.done >= state.planned &&
       state.planned > 0)
       ? "done"
-      : state.inFlight.length > 0 || state.done + state.failed > 0
+      : state.inFlight.length > 0 || state.done > 0
         ? "active"
         : "waiting";
   const read: StageState = ended ? "done" : state.done > 0 ? "active" : "waiting";
@@ -305,7 +310,7 @@ export function progressFraction(): number {
   if (state.status === "done") return 1;
   const total = state.planned;
   if (total <= 0) return 0;
-  return Math.min(1, (state.done + state.failed) / total);
+  return Math.min(1, state.done / total);
 }
 
 async function start(query: string, retry: Failure[] | null = null) {
@@ -345,7 +350,7 @@ export const runStore = {
   apply,
   start: (query: string) => start(query),
   retryFailed: () => {
-    const failures = state.failures.filter((f) => !/Same file as/.test(f.error));
+    const failures = state.failures;
     if (failures.length > 0 && state.folder) return start(state.query, failures);
     return Promise.resolve();
   },

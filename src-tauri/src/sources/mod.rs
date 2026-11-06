@@ -211,8 +211,10 @@ pub fn make_client() -> reqwest::Client {
 pub fn make_download_client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
-        .connect_timeout(std::time::Duration::from_secs(20))
-        .read_timeout(std::time::Duration::from_secs(60))
+        // Fail fast on dead or stalled hosts — the downloader has other
+        // copies to try, and a slow host only delays the whole run.
+        .connect_timeout(std::time::Duration::from_secs(8))
+        .read_timeout(std::time::Duration::from_secs(20))
         .redirect(safe_redirect_policy())
         // SSRF defence-in-depth: resolve to public IPs only, on every hop. See
         // `make_client` — this is the layer that survives DNS rebinding because

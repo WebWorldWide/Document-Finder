@@ -192,7 +192,7 @@ async function simulateRun(query: string) {
   }
   await emit("df:found_total", { count: total });
   await emit("df:ranking_done", { total_candidates: total, kept: 60, rejected: 24 });
-  await emit("df:complete", { done, failed, total: 46, folder: libs[0].path, manifest: "" });
+  await emit("df:complete", { done, failed, total: done, folder: libs[0].path, manifest: "" });
 }
 
 export function installMockBackend() {

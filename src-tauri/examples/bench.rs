@@ -81,6 +81,9 @@ impl Sink for Rec {
                     .collect::<String>();
                 *s.reasons.entry(r).or_insert(0) += 1;
             }
+            "df:download_skipped" => {
+                *s.reasons.entry("(skipped quietly)".into()).or_insert(0) += 1;
+            }
             "df:complete" | "df:cancelled" => s.done = true,
             _ => {}
         }

@@ -41,7 +41,21 @@ pub struct ProgressEvent {
 const MIN_DOC_BYTES: u64 = 4 * 1024;
 
 /// Hard cap per file — prevents a malicious or runaway server from exhausting disk.
-const MAX_FILE_BYTES: u64 = 500 * 1024 * 1024;
+/// Research papers are almost always under 20 MB; anything this large is a
+/// scanned book or a dataset that would stall a run for little text.
+const MAX_FILE_BYTES: u64 = 120 * 1024 * 1024;
+
+/// Hard wall-clock cap on one file's body transfer.
+const MAX_TRANSFER: std::time::Duration = std::time::Duration::from_secs(75);
+/// After this long, a transfer must be making real progress.
+const SLOW_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+/// Below this average rate (after `SLOW_GRACE`) the file is abandoned.
+const MIN_RATE_BPS: f64 = 48.0 * 1024.0;
+/// Abandon a known-size file whose projected finish is further off than this.
+const MAX_PROJECTED: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Failure message for a transfer abandoned by the speed caps.
+pub const SLOW_MSG: &str = "The server was too slow, so we skipped this copy.";
 
 /// Cap on how much of an HTML landing page we'll read while hunting for a PDF
 /// link. Real publisher pages put `citation_pdf_url` in the `<head>`, so this is
@@ -515,6 +529,9 @@ async fn get_document_response(
                 if status == 429 || status == 503 {
                     limiter.penalize(host, ra);
                 }
+                if matches!(status, 401 | 403 | 451) {
+                    limiter.record_refusal(host);
+                }
                 let retryable = status == 429 || (500..=599).contains(&status);
                 if attempt + 1 < ATTEMPTS && retryable {
                     if !nap(cancel, ra.unwrap_or(backoff).min(MAX_WAIT)).await {
@@ -632,6 +649,10 @@ where
         if tried.len() >= MAX_ROUTES {
             break;
         }
+        if limiter.is_blocked(&super::hostlimit::host_of(&url)) {
+            first_err.get_or_insert_with(|| "This source blocks automated downloads.".to_string());
+            continue;
+        }
         tried.push(url.clone());
         match download_url(
             &slug,
@@ -745,6 +766,7 @@ where
                 }
             }
         }
+        limiter.record_refusal(&super::hostlimit::host_of(url));
         return DownloadOutcome::Failed(
             "This link opened a web page, not a downloadable document.".to_string(),
         );
@@ -770,6 +792,7 @@ where
     let mut file = tokio::io::BufWriter::with_capacity(256 * 1024, file);
     let mut head: Vec<u8> = Vec::with_capacity(1024);
     let mut downloaded: u64 = 0;
+    let started = std::time::Instant::now();
     let fail = |msg: String| async {
         let _ = tokio::fs::remove_file(&tmp).await;
         DownloadOutcome::Failed(msg)
@@ -822,6 +845,23 @@ where
             total,
             force: false,
         });
+        // Cap slow transfers: a stalled or crawling server must not hold a
+        // worker (and the end of the run) hostage.
+        let elapsed = started.elapsed();
+        if elapsed > MAX_TRANSFER {
+            drop(file);
+            return fail(SLOW_MSG.to_string()).await;
+        }
+        if elapsed > SLOW_GRACE {
+            let rate = downloaded as f64 / elapsed.as_secs_f64();
+            let projected_too_long = total > downloaded
+                && rate > 0.0
+                && (total - downloaded) as f64 / rate > MAX_PROJECTED.as_secs_f64();
+            if rate < MIN_RATE_BPS || projected_too_long {
+                drop(file);
+                return fail(SLOW_MSG.to_string()).await;
+            }
+        }
     }
     on_progress(ProgressEvent {
         downloaded,
@@ -872,6 +912,8 @@ where
     if let Err(e) = tokio::fs::rename(&tmp, &out).await {
         return fail(format!("Couldn't finalize the download: {e}")).await;
     }
+    limiter.record_ok(&super::hostlimit::host_of(&target));
+    limiter.record_ok(&super::hostlimit::host_of(url));
     DownloadOutcome::Saved(out)
 }
 

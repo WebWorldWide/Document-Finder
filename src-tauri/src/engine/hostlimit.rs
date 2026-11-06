@@ -37,11 +37,36 @@ struct HostState {
     max: f32,
     in_flight: usize,
     cooldown_until: Option<Instant>,
+    /// Successful document downloads from this host (this run).
+    ok: u32,
+    /// Refusals: 401/403, or "a web page, not a document".
+    refusals: u32,
 }
+
+impl HostState {
+    fn new(host: &str) -> Self {
+        let max = host_max(host);
+        HostState {
+            limit: START.min(max),
+            max,
+            in_flight: 0,
+            cooldown_until: None,
+            ok: 0,
+            refusals: 0,
+        }
+    }
+}
+
+/// Refusals (with no success) after which a host is skipped for the rest of
+/// the run, so documents whose only copy lives there are dropped quietly
+/// instead of failing one by one.
+const BLOCK_AFTER: u32 = 2;
 
 #[derive(Debug, Default)]
 pub struct HostLimiter {
     hosts: Mutex<HashMap<String, HostState>>,
+    /// Hosts known (from earlier runs) to refuse automated downloads.
+    preblocked: Mutex<std::collections::HashSet<String>>,
     notify: Notify,
 }
 
@@ -66,15 +91,9 @@ impl HostLimiter {
         loop {
             let wait = {
                 let mut map = self.hosts.lock();
-                let st = map.entry(host.to_string()).or_insert_with(|| {
-                    let max = host_max(host);
-                    HostState {
-                        limit: START.min(max),
-                        max,
-                        in_flight: 0,
-                        cooldown_until: None,
-                    }
-                });
+                let st = map
+                    .entry(host.to_string())
+                    .or_insert_with(|| HostState::new(host));
                 let now = Instant::now();
                 match st.cooldown_until {
                     Some(t) if t > now => Some(t - now),
@@ -115,6 +134,61 @@ impl HostLimiter {
             let pause = retry_after.unwrap_or(DEFAULT_COOLDOWN).min(MAX_COOLDOWN);
             st.cooldown_until = Some(Instant::now() + pause);
         }
+    }
+
+    /// A document downloaded successfully from `host`.
+    pub fn record_ok(&self, host: &str) {
+        let mut map = self.hosts.lock();
+        map.entry(host.to_string())
+            .or_insert_with(|| HostState::new(host))
+            .ok += 1;
+        drop(map);
+        self.preblocked.lock().remove(host);
+    }
+
+    /// `host` refused a document (401/403, or served a page with no file).
+    pub fn record_refusal(&self, host: &str) {
+        self.hosts
+            .lock()
+            .entry(host.to_string())
+            .or_insert_with(|| HostState::new(host))
+            .refusals += 1;
+    }
+
+    /// True if downloads from `host` should not be attempted.
+    pub fn is_blocked(&self, host: &str) -> bool {
+        if host.is_empty() {
+            return false;
+        }
+        let map = self.hosts.lock();
+        match map.get(host) {
+            Some(st) if st.ok > 0 => false,
+            Some(st) if st.refusals >= BLOCK_AFTER => true,
+            _ => {
+                drop(map);
+                self.preblocked.lock().contains(host)
+            }
+        }
+    }
+
+    /// Seed hosts that refused downloads in earlier runs.
+    pub fn preblock<I: IntoIterator<Item = String>>(&self, hosts: I) {
+        self.preblocked.lock().extend(hosts);
+    }
+
+    /// `(blocked, good)` hosts observed this run, for persisting.
+    pub fn reputation(&self) -> (Vec<String>, Vec<String>) {
+        let map = self.hosts.lock();
+        let mut blocked = Vec::new();
+        let mut good = Vec::new();
+        for (h, st) in map.iter() {
+            if st.ok > 0 {
+                good.push(h.clone());
+            } else if st.refusals >= BLOCK_AFTER {
+                blocked.push(h.clone());
+            }
+        }
+        (blocked, good)
     }
 
     #[cfg(test)]
@@ -182,6 +256,25 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         c.cancel();
         assert!(h.await.unwrap());
+    }
+
+    #[test]
+    fn hosts_that_refuse_get_blocked_until_they_succeed() {
+        let l = HostLimiter::new();
+        assert!(!l.is_blocked("pub.example"));
+        l.record_refusal("pub.example");
+        assert!(!l.is_blocked("pub.example"));
+        l.record_refusal("pub.example");
+        assert!(l.is_blocked("pub.example"));
+        l.record_ok("pub.example");
+        assert!(!l.is_blocked("pub.example"));
+        l.preblock(["old.example".to_string()]);
+        assert!(l.is_blocked("old.example"));
+        l.record_ok("old.example");
+        assert!(!l.is_blocked("old.example"));
+        let (blocked, good) = l.reputation();
+        assert!(blocked.is_empty());
+        assert_eq!(good.len(), 2);
     }
 
     #[test]

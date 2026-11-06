@@ -489,7 +489,12 @@ impl LibraryIndex {
                 sha256 TEXT NOT NULL,
                 path TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_files_sha ON files(sha256);",
+            CREATE INDEX IF NOT EXISTS idx_files_sha ON files(sha256);
+            CREATE TABLE IF NOT EXISTS hosts (
+                host TEXT PRIMARY KEY,
+                blocked INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );",
         )?;
         Ok(Self { conn })
     }
@@ -511,6 +516,37 @@ impl LibraryIndex {
             }
         }
         out
+    }
+
+    /// Hosts that refused automated downloads within the last `days` days.
+    pub fn blocked_hosts(&self, days: i64) -> Vec<String> {
+        let since = chrono::Utc::now().timestamp() - days * 86_400;
+        let Ok(mut stmt) = self
+            .conn
+            .prepare("SELECT host FROM hosts WHERE blocked = 1 AND updated_at >= ?1")
+        else {
+            return Vec::new();
+        };
+        stmt.query_map(params![since], |r| r.get::<_, String>(0))
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Persist this run's observations: refusing hosts are remembered as
+    /// blocked; any host that served a document is cleared.
+    pub fn save_hosts(&self, blocked: &[String], good: &[String]) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        let mut stmt = self.conn.prepare_cached(
+            "INSERT INTO hosts (host, blocked, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(host) DO UPDATE SET blocked = excluded.blocked, updated_at = excluded.updated_at",
+        )?;
+        for h in blocked {
+            stmt.execute(params![h, 1, now])?;
+        }
+        for h in good {
+            stmt.execute(params![h, 0, now])?;
+        }
+        Ok(())
     }
 
     pub fn record(&self, urls: &[String], sha256: &str, path: &str) -> Result<()> {
@@ -668,5 +704,10 @@ mod tests {
             .unwrap();
         assert_eq!(idx.lookup_urls(&["https://b".into()]), vec!["/x/y.pdf"]);
         assert!(idx.lookup_urls(&["https://c".into()]).is_empty());
+        idx.save_hosts(&["bad.example".into()], &["good.example".into()])
+            .unwrap();
+        assert_eq!(idx.blocked_hosts(30), vec!["bad.example"]);
+        idx.save_hosts(&[], &["bad.example".into()]).unwrap();
+        assert!(idx.blocked_hosts(30).is_empty());
     }
 }

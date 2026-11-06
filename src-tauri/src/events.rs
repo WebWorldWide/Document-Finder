@@ -38,6 +38,9 @@ pub const EV_DOWNLOAD_STARTED: &str = "df:download_started";
 pub const EV_DOWNLOAD_PROGRESS: &str = "df:download_progress";
 pub const EV_DOWNLOAD_DONE: &str = "df:download_done";
 pub const EV_DOWNLOAD_FAILED: &str = "df:download_failed";
+/// A started document was dropped without counting as a failure (duplicate
+/// content, or abandoned by the tail cutoff / Stop) — clears its row.
+pub const EV_DOWNLOAD_SKIPPED: &str = "df:download_skipped";
 pub const EV_CANCELLED: &str = "df:cancelled";
 pub const EV_COMPLETE: &str = "df:complete";
 pub const EV_ERROR: &str = "df:error";
@@ -206,6 +209,14 @@ pub struct DownloadFailedPayload {
     pub done: usize,
     pub failed: usize,
     pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DownloadSkippedPayload {
+    pub url: String,
+    pub title: String,
+    pub source: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

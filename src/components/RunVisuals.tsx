@@ -14,7 +14,10 @@ export function TileMap() {
   const s = runStore.state;
   const tiles = createMemo(() => {
     const out: { kind: "ok" | "fail" | "live" | "wait"; color?: string; title: string }[] = [];
+    // Only saved documents get tiles: an unavailable result is replaced by
+    // the next-best match, so it never leaves a hole in the map.
     for (const o of s.outcomes) {
+      if (!o.ok) continue;
       out.push({
         kind: o.ok ? "ok" : "fail",
         color: o.ok ? sourceColor(o.source) : undefined,
@@ -35,7 +38,7 @@ export function TileMap() {
       <div
         class="df-tiles"
         role="img"
-        aria-label={`${s.done} saved, ${s.failed} failed, ${s.inFlight.length} downloading, of ${Math.max(s.planned, s.done + s.failed)} planned`}
+        aria-label={`${s.done} saved, ${s.inFlight.length} downloading, of ${Math.max(s.planned, s.done)} planned`}
       >
         <For each={tiles()}>
           {(t) => (
