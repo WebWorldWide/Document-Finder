@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Document Finder — Research, found and read.</title>
+    <title>Document Finder — Ask a question. Get the papers, read.</title>
     <meta
       name="description"
-      content="A free, open-source desktop app that searches open-access libraries, downloads the best papers and books, and turns them into clean, cited text for your AI. No accounts, no API keys, no model downloads."
+      content="A free, open-source desktop app: describe a topic and it searches open-access libraries, downloads the most relevant papers and books, and turns them into clean, cited text for your AI. No accounts, no API keys, no settings."
     />
     <link rel="canonical" href="https://documentfinder.webworldwide.online/" />
     <meta name="theme-color" content="#f3f0e8" media="(prefers-color-scheme: light)" />
@@ -14,10 +14,10 @@
     <meta name="color-scheme" content="light dark" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Document Finder" />
-    <meta property="og:title" content="Document Finder — Research, found and read." />
+    <meta property="og:title" content="Document Finder — Ask a question. Get the papers, read." />
     <meta
       property="og:description"
-      content="Searches open-access libraries in parallel, downloads the best matches, and hands clean, cited text to your AI. macOS, Windows, Linux."
+      content="Searches open-access libraries in parallel, downloads the most relevant papers, and hands clean, cited text to your AI. Free for macOS, Windows and Linux."
     />
     <meta property="og:url" content="https://documentfinder.webworldwide.online/" />
     <meta property="og:image" content="https://documentfinder.webworldwide.online/og.png" />
@@ -50,16 +50,16 @@
     <header class="nav">
       <div class="wrap nav-row">
         <a class="brand" href="#top" aria-label="Document Finder home">
-          <img src="logo.svg" alt="" width="28" height="28" />
+          <img src="logo.svg" alt="" width="26" height="26" />
           <span>Document Finder</span>
         </a>
         <button class="menu-btn" aria-expanded="false" aria-controls="nav-links">Menu</button>
         <nav id="nav-links" class="nav-links" aria-label="Primary">
-          <a href="#how">How it works</a>
+          <a href="#film">See it work</a>
           <a href="#ai">For your AI</a>
           <a href="#sources">Sources</a>
-          <a href="https://github.com/WebWorldWide/Document-Finder">GitHub</a>
-          <a class="btn btn-primary btn-sm" href="#download">Download</a>
+          <a href="#faq">Questions</a>
+          <a class="btn btn-primary btn-sm" href="#download">Download free</a>
         </nav>
       </div>
     </header>
@@ -67,86 +67,127 @@
     <main id="main">
       <!-- 1 · Recognition -->
       <section class="hero" id="top">
-        <div class="wrap">
-          <p class="label">Free · open source · macOS, Windows, Linux</p>
-          <h1 class="display">Research, <em>found</em> and read.</h1>
-          <div class="hero-row">
+        <div class="wrap hero-grid">
+          <p class="label hero-kicker">Free · open source · macOS · Windows · Linux</p>
+          <h1 class="display">
+            Ask a question.<br />
+            Get the papers, <em>read.</em>
+          </h1>
+          <div class="hero-side">
             <p class="lede">
-              Describe a topic in plain language. Document Finder searches open-access libraries in
-              parallel, downloads the best matches, and turns them into clean, cited text your AI
-              can actually use.
+              Describe what you’re researching in plain words. Document Finder searches nine
+              open-access libraries at once, downloads only the documents that are actually about
+              your question, and turns them into clean, cited text your AI can use.
             </p>
             <div class="hero-cta">
-              <a class="btn btn-primary" href="#download" data-os-download>Download for your computer</a>
-              <span class="fine">No accounts · No API keys · No model downloads</span>
+              <a class="btn btn-primary" href="#download" data-os-download>Download free</a>
+              <a class="btn btn-quiet" href="#film">Watch it work ↓</a>
             </div>
           </div>
         </div>
-        <figure class="shot shot-hero wrap">
-          <img
-            src="assets/app-discover.jpg"
-            width="1456"
-            height="816"
-            alt="Document Finder mid-search: 84 candidates found across 8 sources, 13 of 46 documents downloaded, each listed as a numbered catalog entry with its source, year and authors."
-          />
-          <figcaption><span class="label">Fig. 1</span> A search in progress — documents are filed as they arrive.</figcaption>
-        </figure>
       </section>
 
-      <!-- 2 · How it works -->
+      <!-- 2 · Proof: the film -->
+      <section class="film" id="film" aria-labelledby="film-title">
+        <div class="wrap">
+          <h2 id="film-title" class="sr-only">See it work</h2>
+          <figure class="player">
+            <div class="player-frame">
+              <video
+                id="demo"
+                muted
+                playsinline
+                loop
+                preload="metadata"
+                poster="assets/demo-poster.jpg"
+                width="1440"
+                height="900"
+                aria-describedby="film-caption"
+              >
+                <source src="assets/demo.webm" type="video/webm" />
+                <source src="assets/demo.mp4" type="video/mp4" />
+              </video>
+              <button class="play-btn" id="play" aria-label="Play the demo" data-state="paused">
+                <span class="play-icon" aria-hidden="true"></span>
+              </button>
+            </div>
+            <figcaption id="film-caption">
+              <ol class="ruler" id="chapters" aria-label="Chapters — select one to jump there">
+                <li><button data-t="1">Ask in plain language</button></li>
+                <li><button data-t="6">Downloads start in seconds</button></li>
+                <li><button data-t="12.5">Every source, filed</button></li>
+                <li><button data-t="20.5">Search the full text</button></li>
+              </ol>
+              <div class="ruler-track" aria-hidden="true"><i id="ruler-fill"></i></div>
+              <p class="fine film-note">The real app with a demo library · 28 seconds · no sound</p>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- 3 · Numbers -->
+      <section class="facts" aria-label="At a glance">
+        <div class="wrap facts-row">
+          <div><b>9</b><span>open-access sources searched at once</span></div>
+          <div><b>~2&thinsp;s</b><span>to the first saved document in our tests</span></div>
+          <div><b>2</b><span>relevance checks — on the listing, then on the full text</span></div>
+          <div><b>0</b><span>settings, accounts, API keys or AI models to download</span></div>
+        </div>
+      </section>
+
+      <!-- 4 · How it works -->
       <section class="section" id="how">
         <div class="wrap">
           <div class="sec-head">
             <p class="label">How it works</p>
-            <h2 class="title">One question. Three steps. <em>No settings.</em></h2>
+            <h2 class="title">It reads before it <em>keeps.</em></h2>
           </div>
           <ol class="steps">
             <li>
-              <span class="step-n">01</span>
-              <h3>Search</h3>
+              <span class="step-n">01 · Search</span>
+              <h3>Every library, at once</h3>
               <p>
-                Your question fans out to scholarly databases, open repositories and the web at
-                once. Results are de-duplicated across sources and ranked for relevance — then a
-                second pass learns the field’s own vocabulary from the best hits.
+                Your question goes to scholarly databases, open repositories and the web in
+                parallel. Duplicates are merged, typos are corrected from the results themselves,
+                and a second pass learns the field’s own vocabulary.
               </p>
             </li>
             <li>
-              <span class="step-n">02</span>
-              <h3>Download</h3>
+              <span class="step-n">02 · Choose</span>
+              <h3>Only what’s on topic</h3>
               <p>
-                The best matches start downloading within seconds, not minutes. Every open-access
-                copy of a paper is tried — publisher, repository, preprint — and busy servers are
-                slowed for automatically. Anything you’ve downloaded before is reused.
+                A result has to match the substance of your question — every key word, not just
+                one — before it’s downloaded. After download its full text is checked again, and
+                anything off topic is dropped and replaced by the next-best match.
               </p>
             </li>
             <li>
-              <span class="step-n">03</span>
-              <h3>Read</h3>
+              <span class="step-n">03 · Read</span>
+              <h3>Clean text, cited</h3>
               <p>
-                Each PDF, EPUB and web page becomes clean Markdown: headers, page numbers and
-                hyphenation removed, sections and page markers kept, metadata on top. All of it is
-                full-text searchable on your machine.
+                PDFs, EPUBs and web pages become clean Markdown with sections, page numbers and a
+                metadata header — headers, footers and broken hyphenation removed. All of it is
+                full-text searchable on your computer.
               </p>
             </li>
           </ol>
         </div>
       </section>
 
-      <!-- 3 · Proof: the library -->
+      <!-- 5 · Library -->
       <section class="section section-alt">
         <div class="wrap split">
           <div class="split-text">
-            <p class="label">The library</p>
-            <h2 class="title">Every search becomes a <em>library</em> you can search.</h2>
+            <p class="label">Your library</p>
+            <h2 class="title">Find the <em>passage</em>, not just the paper.</h2>
             <p>
-              Search the full text of everything you’ve collected, jump to the exact passage and
-              page, and read a clean preview without leaving the app. Copy a citation, open the
-              original, or hand a single paper to your AI.
+              Every search becomes a library you can search word for word. Jump straight to the
+              page that matters, read a clean preview, copy a citation, or open the original.
             </p>
             <ul class="ticks">
-              <li>Full-text search across every library</li>
+              <li>Full-text search across every library you’ve built</li>
               <li>Authors, year, venue, DOI, citations and license on every document</li>
-              <li>Scanned PDFs flagged clearly instead of failing silently</li>
+              <li>Anything you’ve downloaded before is reused, never fetched twice</li>
             </ul>
           </div>
           <figure class="shot">
@@ -155,49 +196,46 @@
               width="1456"
               height="816"
               loading="lazy"
-              alt="The Library: a full-text search for “memory” shows matching passages with section and page, a document list, and an inspector with metadata, actions and a clean text preview."
+              alt="The Library view: a search for “memory” lists matching passages with section and page, a document list, and an inspector with metadata and a clean reading preview."
             />
-            <figcaption><span class="label">Fig. 2</span> Passages, documents and a reading preview.</figcaption>
           </figure>
         </div>
       </section>
 
-      <!-- 4 · For your AI -->
+      <!-- 6 · For your AI -->
       <section class="section" id="ai">
         <div class="wrap">
           <div class="sec-head">
             <p class="label">For your AI</p>
-            <h2 class="title">Bring sources to <em>any</em> AI.</h2>
+            <h2 class="title">Hand it to <em>any</em> AI.</h2>
             <p class="sec-sub">
-              No local models to download. Your AI — Claude, ChatGPT, Gemini or anything else —
-              does the thinking; Document Finder supplies clean, cited sources.
+              No local models to download. Claude, ChatGPT, Gemini or your own pipeline does the
+              thinking — Document Finder supplies clean, cited sources.
             </p>
           </div>
           <div class="ledger">
             <article>
-              <span class="step-n">A</span>
-              <h3>Copy for AI</h3>
+              <span class="step-n">Copy for AI</span>
+              <h3>Paste into any chat</h3>
               <p>
-                One click packs the best documents into a single corpus sized for a context window
-                — every section starts with its citation. Paste it into any chat.
+                One click packs the best documents into a single text sized for a context window,
+                each section starting with its citation.
               </p>
             </article>
             <article>
-              <span class="step-n">B</span>
-              <h3>Export Markdown</h3>
+              <span class="step-n">Export .md</span>
+              <h3>One file for RAG</h3>
               <p>
-                One <code>.md</code> file with every document’s full text — a section and
-                citation per document, ready for RAG. Or a zip with an index, one Markdown file per document, retrieval-ready
-                <code>chunks.jsonl</code>, a <code>references.bib</code>, and an optional
-                <code>corpus.md</code>. Ready for Projects, custom GPTs or a RAG pipeline.
+                A single Markdown file with every document’s full text, a section and metadata
+                list per document, and page markers — ready for retrieval pipelines.
               </p>
             </article>
             <article>
-              <span class="step-n">C</span>
-              <h3>Connect over MCP</h3>
+              <span class="step-n">MCP</span>
+              <h3>Let Claude read it directly</h3>
               <p>
-                Let Claude Desktop, Claude Code or any MCP client search and read your libraries
-                directly. One click in Settings adds it to Claude Desktop.
+                Claude Desktop, Claude Code or any MCP client can search and read your libraries.
+                One click in Settings connects Claude Desktop.
               </p>
               <pre><code>claude mcp add document-finder -- &lt;app&gt; --mcp</code></pre>
             </article>
@@ -205,13 +243,13 @@
         </div>
       </section>
 
-      <!-- 5 · Sources -->
+      <!-- 7 · Sources -->
       <section class="section section-alt" id="sources">
         <div class="wrap">
           <div class="sec-head">
             <p class="label">Sources</p>
             <h2 class="title">Open access, <em>only.</em></h2>
-            <p class="sec-sub">Nine sources out of the box. No keys, no sign-ins, no paywalls bypassed.</p>
+            <p class="sec-sub">No keys, no sign-ins, and no paywalls bypassed.</p>
           </div>
           <dl class="sources">
             <div><dt><i style="--c: #b31b1b"></i>arXiv</dt><dd>Preprints in physics, maths, computer science and biology</dd></div>
@@ -227,7 +265,48 @@
         </div>
       </section>
 
-      <!-- 6 · Download -->
+      <!-- 8 · Questions -->
+      <section class="section" id="faq">
+        <div class="wrap faq">
+          <div class="sec-head">
+            <p class="label">Questions</p>
+            <h2 class="title">Good to <em>know.</em></h2>
+          </div>
+          <div class="qa">
+            <details>
+              <summary>Is it legal?</summary>
+              <p>
+                It only downloads documents their publishers or authors have made freely
+                available — open-access papers, preprints and public-domain books. Sources that
+                require a subscription or sign-in are skipped, not bypassed.
+              </p>
+            </details>
+            <details>
+              <summary>Where does my data go?</summary>
+              <p>
+                Nowhere but your computer. Searches go straight from the app to the libraries;
+                there’s no Document Finder server and no account.
+              </p>
+            </details>
+            <details>
+              <summary>Do I need an AI subscription?</summary>
+              <p>
+                No. The app works on its own as a research library. If you use an AI, it plugs
+                into any of them — paste, upload the Markdown file, or connect over MCP.
+              </p>
+            </details>
+            <details>
+              <summary>What if a document can’t be downloaded?</summary>
+              <p>
+                It’s replaced automatically by the next-best match, so you end up with documents
+                you can read — not a list of errors.
+              </p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <!-- 9 · Download -->
       <section class="section download" id="download">
         <div class="wrap">
           <div class="sec-head">
@@ -248,11 +327,10 @@
           <!-- SYNC: mirrors the install notes in README.md ("Installing a release") and
                .github/workflows/release.yml's notes.md heredoc — update all three together. -->
           <p class="fine dl-fine">
-            macOS builds are signed and notarized. On Windows, SmartScreen may ask you to confirm
-            the first launch (More info → Run anyway). Linux packages need glibc 2.35+ (Ubuntu
-            22.04, Debian 12 or newer); the Flatpak runs anywhere. If the window opens blank on an
-            older GPU driver, enable Settings → Safe rendering mode or launch with
-            <code>WEBKIT_DISABLE_DMABUF_RENDERER=1</code>.
+            The macOS app is signed with a Developer ID and notarized by Apple. On Windows,
+            SmartScreen may ask once (More info → Run anyway). Linux packages need glibc 2.35+
+            (Ubuntu 22.04, Debian 12 or newer); the Flatpak runs anywhere. If the window opens
+            blank on an older GPU driver, enable Settings → Diagnostics → Safe rendering mode.
           </p>
         </div>
       </section>
@@ -261,7 +339,7 @@
     <footer class="footer">
       <div class="wrap foot-row">
         <div class="brand">
-          <img src="logo.svg" alt="" width="24" height="24" />
+          <img src="logo.svg" alt="" width="22" height="22" />
           <span>Document Finder</span>
         </div>
         <nav aria-label="Footer">
@@ -291,6 +369,61 @@
           }
         });
       })();
+
+      // Film: plays while visible (never with reduced motion), the chapter
+      // ruler tracks playback, chapters seek, and the button toggles play.
+      (function () {
+        var v = document.getElementById("demo");
+        var play = document.getElementById("play");
+        var fill = document.getElementById("ruler-fill");
+        var buttons = Array.prototype.slice.call(document.querySelectorAll("#chapters button"));
+        var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        var userPaused = reduce;
+        fetch("assets/demo-chapters.json")
+          .then(function (r) { return r.json(); })
+          .then(function (ch) {
+            ch.forEach(function (c, i) { if (buttons[i]) buttons[i].dataset.t = c.t; });
+          })
+          .catch(function () {});
+        function sync() {
+          var playing = !v.paused;
+          play.dataset.state = playing ? "playing" : "paused";
+          play.setAttribute("aria-label", playing ? "Pause the demo" : "Play the demo");
+        }
+        v.addEventListener("play", sync);
+        v.addEventListener("pause", sync);
+        play.addEventListener("click", function () {
+          if (v.paused) { userPaused = false; v.play(); } else { userPaused = true; v.pause(); }
+        });
+        buttons.forEach(function (b) {
+          b.addEventListener("click", function () {
+            v.currentTime = parseFloat(b.dataset.t || "0");
+            userPaused = false;
+            v.play();
+          });
+        });
+        v.addEventListener("timeupdate", function () {
+          var t = v.currentTime;
+          var active = 0;
+          buttons.forEach(function (b, i) { if (t >= parseFloat(b.dataset.t) - 0.05) active = i; });
+          buttons.forEach(function (b, i) {
+            if (i === active) b.setAttribute("aria-current", "step");
+            else b.removeAttribute("aria-current");
+          });
+          if (v.duration) fill.style.width = (t / v.duration) * 100 + "%";
+        });
+        if ("IntersectionObserver" in window) {
+          new IntersectionObserver(function (entries) {
+            entries.forEach(function (e) {
+              if (e.isIntersecting && !userPaused) v.play().catch(function () {});
+              else if (!e.isIntersecting) v.pause();
+            });
+          }, { threshold: 0.35 }).observe(v);
+        } else if (!userPaused) {
+          v.play().catch(function () {});
+        }
+      })();
+
       // Highlight the visitor's OS in the download list and label the hero button.
       (function () {
         var ua = navigator.userAgent;
@@ -298,7 +431,7 @@
         if (!os) return;
         var names = { mac: "macOS", win: "Windows", linux: "Linux" };
         var hero = document.querySelector("[data-os-download]");
-        if (hero) hero.textContent = "Download for " + names[os];
+        if (hero) hero.textContent = "Download free for " + names[os];
         var el = document.querySelector('.dl-btn[data-os="' + os + '"]');
         if (el) el.classList.add("is-yours");
       })();

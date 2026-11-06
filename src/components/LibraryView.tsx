@@ -328,9 +328,17 @@ function LibraryDetail(props: { lib: LibraryInfo; onDeleted: () => void }) {
             </button>
             <button
               class="df-btn"
+              title="One Markdown file with every document's full text — for RAG and AI tools"
+              onClick={() => void exportMarkdown(props.lib.path, props.lib.query)}
+            >
+              <FileText size={15} aria-hidden="true" /> Export .md
+            </button>
+            <button
+              class="df-btn"
+              title="Zip with Markdown per document, chunks.jsonl, references.bib and corpus.md"
               onClick={() => void exportLibrary(props.lib.path, props.lib.query)}
             >
-              <FileDown size={15} aria-hidden="true" /> Export
+              <FileDown size={15} aria-hidden="true" /> Export pack
             </button>
             <button
               class="df-btn df-btn-quiet df-btn-icon"

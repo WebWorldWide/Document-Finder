@@ -1,0 +1,14 @@
+# Video brief (devrel-video workflow: brief → capture → compose → QA → poster)
+product: Document Finder
+url: http://localhost:1420   # `pnpm dev` — the app UI with the dev mock backend (src/dev/mock.ts)
+audience: researchers, students and AI users evaluating the app on the website
+message: Ask a question; it finds, downloads and reads the open-access sources for you.
+format: silent 16:9, ~28 s, loops on the homepage hero
+brand: site/site.css tokens (paper #f3f0e8, ink #1b1a17, accent #17705f; Instrument Serif + Archivo)
+beats:
+  - t: 0    label: Ask in plain language          action: type the question, press Find documents
+  - t: 7    label: Downloads start in seconds     action: tiles fill by source, speed chart rises
+  - t: 15   label: Every source, filed            action: scroll the saved list
+  - t: 21   label: Search the full text           action: open Library, search "memory", open a document
+claims: none beyond what the UI shows (demo data is illustrative)
+chapters: rendered as HTML captions on the site (accessible, crisp), not burned in

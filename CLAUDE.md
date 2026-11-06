@@ -210,6 +210,14 @@ back to ad-hoc signing with a workflow warning:
 | `APPLE_API_PRIVATE_KEY` | contents of the downloaded `AuthKey_<id>.p8` |
 | `APPLE_TEAM_ID` | 10-character team ID |
 
+Instead of the three `APPLE_API_*` secrets you can set `APPLE_ID` + `APPLE_PASSWORD`
+(an app-specific password) — Tauri notarizes with either.
+
+**Locally**: `scripts/notarize-mac.sh` builds, signs with the keychain's Developer ID,
+notarizes via a `notarytool` keychain profile (one-time
+`xcrun notarytool store-credentials document-finder --apple-id … --team-id …`),
+staples, and runs `spctl`.
+
 Requires a paid Apple Developer Program membership. The app uses the hardened
 runtime with `src-tauri/Entitlements.plist` (network client +
 `disable-library-validation` so the bundled PDFium dylib loads). Local builds are

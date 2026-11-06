@@ -37,3 +37,4 @@ packaging/flatpak/.flatpak-builder/
 
 # Bundled PDFium (fetched per platform by scripts/fetch-pdfium.mjs)
 src-tauri/resources/pdfium/
+site/video/raw/

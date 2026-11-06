@@ -241,45 +241,244 @@ pre {
 
 /* hero */
 .hero {
-  padding: 96px 0 40px;
+  padding: 88px 0 56px;
 }
-.hero-row {
+.hero-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
-  gap: 48px;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  grid-template-areas:
+    "kicker kicker"
+    "title side";
+  gap: 22px 56px;
   align-items: end;
-  margin-top: 40px;
+}
+.hero-kicker {
+  grid-area: kicker;
+}
+.hero .display {
+  grid-area: title;
+  font-size: clamp(54px, 8.4vw, 128px);
+  margin: 0;
+}
+.hero-side {
+  grid-area: side;
+  padding-bottom: 10px;
 }
 .lede {
-  font-size: 21px;
-  line-height: 1.5;
+  font-size: 19px;
+  line-height: 1.55;
   color: var(--ink-2);
   margin: 0;
-  max-width: 36ch;
+  max-width: 40ch;
   text-wrap: pretty;
 }
 .hero-cta {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 26px;
 }
-.shot {
-  margin: 72px auto 0;
+.btn-quiet {
+  border-color: transparent;
+  color: var(--ink-2);
 }
-.shot img {
-  border-radius: 10px;
+.btn-quiet:hover {
+  color: var(--ink);
+  background: var(--alt);
+}
+
+/* film */
+.film {
+  padding: 0 0 96px;
+}
+.player {
+  margin: 0;
+}
+.player-frame {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
   box-shadow:
-    0 40px 80px -40px rgba(27, 26, 23, 0.45),
+    0 50px 100px -50px rgba(27, 26, 23, 0.5),
     0 0 0 1px var(--rule);
+  aspect-ratio: 1440 / 900;
 }
-.shot figcaption {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
-  margin-top: 14px;
-  font-size: 14px;
+.player-frame video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.play-btn {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 0;
+  background: color-mix(in srgb, var(--ink) 82%, transparent);
+  color: var(--canvas);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform 0.15s, background 0.15s;
+}
+.play-btn:hover {
+  transform: scale(1.06);
+  background: var(--ink);
+}
+.play-icon {
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+}
+.play-btn[data-state="paused"] .play-icon {
+  clip-path: polygon(18% 0, 100% 50%, 18% 100%);
+}
+.play-btn[data-state="playing"] .play-icon {
+  clip-path: polygon(0 0, 36% 0, 36% 100%, 0 100%, 0 0, 64% 0, 100% 0, 100% 100%, 64% 100%, 64% 0);
+}
+.ruler {
+  list-style: none;
+  margin: 22px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0 20px;
+}
+.ruler button {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 520;
   color: var(--ink-3);
+  background: none;
+  border: 0;
+  padding: 14px 0 0;
+  cursor: pointer;
+  position: relative;
+  border-top: 1px solid var(--rule);
+  transition: color 0.2s;
+}
+.ruler button::before {
+  /* the tick: marks the active chapter */
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.ruler button:hover {
+  color: var(--ink);
+}
+.ruler button[aria-current="step"] {
+  color: var(--ink);
+}
+.ruler button[aria-current="step"]::before {
+  width: 36px;
+}
+.ruler-track {
+  height: 2px;
+  background: transparent;
+  margin-top: -2px;
+}
+.ruler-track i {
+  display: none;
+}
+.film-note {
+  margin: 18px 0 0;
+}
+
+/* facts */
+.facts {
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.facts-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+.facts-row div {
+  padding: 34px 24px 34px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.facts-row div + div {
+  padding-left: 24px;
+  border-left: 1px solid var(--rule);
+}
+.facts-row b {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 64px;
+  line-height: 0.9;
+  color: var(--accent-ink);
+}
+.facts-row span {
+  font-size: 15px;
+  color: var(--ink-2);
+  max-width: 22ch;
+}
+
+/* faq */
+.faq {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 56px;
+}
+.faq .sec-head {
+  margin: 0;
+}
+.qa {
+  border-top: 1px solid var(--ink);
+}
+.qa details {
+  border-bottom: 1px solid var(--rule);
+}
+.qa summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 20px 36px 20px 0;
+  font-family: var(--display);
+  font-size: 28px;
+  line-height: 1.1;
+  position: relative;
+}
+.qa summary::-webkit-details-marker {
+  display: none;
+}
+.qa summary::after {
+  content: "+";
+  position: absolute;
+  right: 4px;
+  top: 18px;
+  font-family: var(--sans);
+  font-size: 22px;
+  color: var(--ink-3);
+  transition: transform 0.2s;
+}
+.qa details[open] summary::after {
+  transform: rotate(45deg);
+}
+.qa p {
+  margin: 0 0 22px;
+  color: var(--ink-2);
+  max-width: 60ch;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 /* sections */
@@ -495,10 +694,27 @@ pre {
 
 /* small screens */
 @media (max-width: 960px) {
-  .hero-row,
+  .hero-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas: "kicker" "title" "side";
+  }
+  .faq,
   .split {
     grid-template-columns: 1fr;
     gap: 32px;
+  }
+  .facts-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .facts-row div:nth-child(3) {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .facts-row div:nth-child(n + 3) {
+    border-top: 1px solid var(--rule);
+  }
+  .ruler {
+    grid-template-columns: repeat(2, 1fr);
   }
   .steps,
   .ledger,
@@ -555,14 +771,21 @@ pre {
   .lede {
     font-size: 18px;
   }
-  .shot {
-    margin-top: 40px;
+  .hero {
+    padding: 56px 0 36px;
   }
-  /* Re-crop (not shrink) the product shot on phones: show the run itself. */
-  .shot-hero img {
-    aspect-ratio: 4 / 3.4;
-    object-fit: cover;
-    object-position: 28% 0;
+  /* Re-crop (not shrink) the film on phones: show the run itself. */
+  .player-frame {
+    aspect-ratio: 4 / 3.6;
+  }
+  .player-frame video {
+    object-position: 34% 0;
+  }
+  .facts-row b {
+    font-size: 48px;
+  }
+  .qa summary {
+    font-size: 24px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
