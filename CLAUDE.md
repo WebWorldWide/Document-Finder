@@ -78,7 +78,8 @@ built-in MCP server (`src-tauri/src/mcp.rs`).
     columns, `chunks` + `chunks_fts` FTS5), `LibraryIndex` (library-wide
     url/sha256 → path, for cross-library reuse).
   - `library` — read side shared by commands + MCP: list/search/read, citations,
-    BibTeX, `build_corpus`, `write_ai_pack`.
+    BibTeX, `build_corpus` (budgeted, for Copy for AI), `rag_markdown` (full-text
+    single-file .md export), `write_ai_pack`.
   - `query`, `authority`, `citation_graph`, `manifest` (legacy read path), `runlog`.
 - `util/` — `path_safety` (confine library paths) and `url_safety`
   (`validate_url`: https-only, no credentials, public-IP-only SSRF check, shared

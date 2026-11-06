@@ -211,7 +211,16 @@ pub fn rank_candidates(
         (1.0 + (n - d + 0.5) / (d + 0.5)).ln()
     };
 
-    let n_orig = query.original.len().max(1) as f32;
+    // Coverage only counts query terms that occur somewhere in the pool. A
+    // term no candidate contains is almost always a misspelling or a word the
+    // literature doesn't use ("machien lerning"); requiring it would reject
+    // every result.
+    let n_orig = query
+        .original
+        .iter()
+        .filter(|t| df.get(t.as_str()).copied().unwrap_or(0.0) > 0.0)
+        .count()
+        .max(1) as f32;
     let mut ranked: Vec<RankedDoc> = candidates
         .into_iter()
         .zip(fields)
@@ -756,6 +765,28 @@ mod tests {
         );
         assert!(ranked[0].reject_reason.is_none());
         assert!(ranked[1].reject_reason.is_some());
+    }
+
+    #[test]
+    fn misspelled_terms_dont_reject_everything() {
+        let cands = vec![
+            merged(
+                "Interpretability of machine learning models",
+                None,
+                "openalex",
+                1,
+            ),
+            merged("A survey of model interpretability", None, "arxiv", 1),
+        ];
+        let ranked = rank_candidates(
+            &q(&["machien", "lerning", "interpretability"]),
+            cands,
+            &HashMap::new(),
+        );
+        assert!(
+            ranked.iter().all(|r| r.reject_reason.is_none()),
+            "{ranked:?}"
+        );
     }
 
     #[test]

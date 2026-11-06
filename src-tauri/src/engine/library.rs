@@ -457,6 +457,86 @@ pub fn build_corpus(query: &str, docs: &[DocInfo], budget_tokens: usize) -> Stri
     out
 }
 
+/// One self-contained Markdown file for RAG ingestion: every document's full
+/// clean text, no context budget. Each document is a top-level `#` section
+/// (so heading-aware splitters keep documents apart) followed by a metadata
+/// list a retriever can surface as the citation; the document's own section
+/// headings sit below it (`##`+). Page markers (`<!-- page N -->`) are kept so
+/// chunks can cite pages.
+pub fn rag_markdown(query: &str, docs: &[DocInfo]) -> String {
+    let mut out = format!(
+        "---\ntitle: \"Research library: {}\"\ngenerator: \"Document Finder\"\ncreated: \"{}\"\ndocuments: {}\n---\n\n",
+        query.replace('"', "'"),
+        chrono::Utc::now().format("%Y-%m-%d"),
+        docs.len()
+    );
+    out.push_str("<!-- Each document below starts with a level-1 heading and a metadata list. Cite sources by their citation line. -->\n");
+    for (i, d) in docs.iter().enumerate() {
+        out.push_str(&format!("\n# [{}] {}\n\n", i + 1, d.title.trim()));
+        out.push_str(&format!("- **Citation:** {}\n", citation(d)));
+        if !d.authors.is_empty() {
+            out.push_str(&format!("- **Authors:** {}\n", d.authors.join("; ")));
+        }
+        if let Some(y) = &d.year {
+            out.push_str(&format!("- **Year:** {y}\n"));
+        }
+        if let Some(doi) = &d.doi {
+            out.push_str(&format!("- **DOI:** {doi}\n"));
+        }
+        out.push_str(&format!("- **URL:** {}\n", d.url));
+        out.push_str(&format!(
+            "- **Source:** {}\n",
+            d.sources.join(", ").if_empty(&d.source)
+        ));
+        if let Some(l) = &d.license {
+            out.push_str(&format!("- **License:** {l}\n"));
+        }
+        out.push('\n');
+        let body = read_markdown(d, 32 << 20)
+            .map(|md| {
+                let b = strip_front_matter(&md);
+                // Drop the document's own `# Title` line (already the heading above).
+                match b.strip_prefix("# ") {
+                    Some(rest) => rest
+                        .split_once('\n')
+                        .map(|(_, r)| r.to_string())
+                        .unwrap_or_default(),
+                    None => b.to_string(),
+                }
+            })
+            .or_else(|| {
+                d.abstract_
+                    .clone()
+                    .map(|a| format!("> **Abstract.** {a}\n"))
+            })
+            .unwrap_or_else(|| {
+                format!(
+                    "*No extractable text{}.*\n",
+                    d.extract_error
+                        .as_ref()
+                        .map(|e| format!(" ({e})"))
+                        .unwrap_or_default()
+                )
+            });
+        out.push_str(body.trim());
+        out.push('\n');
+    }
+    out
+}
+
+trait IfEmpty {
+    fn if_empty(self, other: &str) -> String;
+}
+impl IfEmpty for String {
+    fn if_empty(self, other: &str) -> String {
+        if self.is_empty() {
+            other.to_string()
+        } else {
+            self
+        }
+    }
+}
+
 pub fn strip_front_matter(md: &str) -> &str {
     if let Some(rest) = md.strip_prefix("---\n") {
         if let Some(end) = rest.find("\n---\n") {
@@ -717,6 +797,22 @@ mod tests {
             );
         }
         assert!(names.iter().all(|n| !n.contains("library.db")));
+    }
+
+    #[test]
+    fn rag_markdown_has_one_section_per_document() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lib = make_library(tmp.path());
+        let docs = list_docs(&lib).unwrap();
+        let md = rag_markdown("solar panels", &docs);
+        assert!(md.starts_with("---\ntitle: \"Research library: solar panels\""));
+        assert_eq!(md.matches("\n# [").count(), 1);
+        assert!(md.contains("- **DOI:** 10.1/abc"));
+        assert!(md.contains("Perovskite cells are efficient."));
+        assert!(
+            !md.contains("# Solar A\n\nPerovskite"),
+            "own title line removed"
+        );
     }
 
     #[test]

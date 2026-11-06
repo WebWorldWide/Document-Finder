@@ -17,6 +17,7 @@ commands.allow = [
   "search_library",
   "read_doc_markdown",
   "export_library_zip",
+  "export_library_markdown",
   "copy_for_ai",
   "mcp_info",
   "install_mcp_claude_desktop",

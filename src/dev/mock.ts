@@ -216,6 +216,8 @@ export function installMockBackend() {
         case "start_run":
           void simulateRun((a.req as { query: string }).query);
           return null;
+        case "export_library_markdown":
+          return { dest: String(a.dest), files: 12, size_bytes: 1_400_000 };
         case "copy_for_ai":
           return "# corpus\n".repeat(2000);
         case "mcp_info":

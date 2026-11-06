@@ -651,6 +651,62 @@ pub async fn copy_for_ai(
     .map_err(|e| e.to_string())?
 }
 
+/// Export a library (or selected documents) as ONE Markdown file with every
+/// document's full text — for RAG pipelines and AI tools that take a file.
+#[tauri::command]
+pub async fn export_library_markdown(
+    state: State<'_, AppState>,
+    folder: String,
+    dest: String,
+    ids: Option<Vec<i64>>,
+) -> Result<library::PackResult, String> {
+    let root = confinement_root(&state)?;
+    let p = safe_within_root(&PathBuf::from(&folder), &root)?;
+    let dest = PathBuf::from(&dest);
+    if !dest.is_absolute() {
+        return Err("Export destination must be an absolute path.".into());
+    }
+    match dest.parent() {
+        Some(parent) if parent.is_dir() => {}
+        _ => {
+            return Err(
+                "Export destination's folder doesn't exist — pick an existing folder.".into(),
+            )
+        }
+    }
+    if dest.exists() && !dest.is_file() {
+        return Err("Export destination already exists and isn't a file.".into());
+    }
+    tokio::task::spawn_blocking(move || {
+        let mut docs = library::list_docs(&p)?;
+        if let Some(ids) = ids {
+            docs.retain(|d| ids.contains(&d.id));
+        }
+        let conn = library::open_library_db(&p)?;
+        let query: String = conn
+            .query_row(
+                "SELECT query FROM runs ORDER BY created_at DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or_default();
+        let md = library::rag_markdown(&query, &docs);
+        let tmp = dest.with_extension("md.partial");
+        std::fs::write(&tmp, md.as_bytes()).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, &dest).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("Couldn't finish the export: {e}")
+        })?;
+        Ok(library::PackResult {
+            dest: dest.to_string_lossy().to_string(),
+            files: docs.len(),
+            size_bytes: md.len() as u64,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[derive(Debug, Serialize)]
 pub struct McpInfo {
     /// Absolute path of this executable (the MCP server binary).

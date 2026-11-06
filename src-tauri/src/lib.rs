@@ -51,6 +51,7 @@ pub fn run() {
             commands::search_library,
             commands::read_doc_markdown,
             commands::export_library_zip,
+            commands::export_library_markdown,
             commands::copy_for_ai,
             commands::mcp_info,
             commands::install_mcp_claude_desktop,

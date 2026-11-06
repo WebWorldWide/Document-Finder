@@ -18,7 +18,7 @@ import {
   Trash2,
   X,
 } from "lucide-solid";
-import { copyLibraryForAi, exportLibrary } from "@/components/Discover";
+import { copyLibraryForAi, exportLibrary, exportMarkdown } from "@/components/Discover";
 import { refreshLibraries } from "@/components/Sidebar";
 import { api, type LibraryDoc, type LibraryInfo, type SearchHit } from "@/lib/tauri";
 import {
@@ -185,6 +185,13 @@ function Inspector(props: { doc: LibraryDoc; folder: string; onClose: () => void
         </button>
         <button class="df-btn" onClick={() => void copyCitation()}>
           <Quote size={14} aria-hidden="true" /> Cite
+        </button>
+        <button
+          class="df-btn"
+          title="Save this document as a Markdown file"
+          onClick={() => void exportMarkdown(props.folder, d().title, [d().id])}
+        >
+          <FileDown size={14} aria-hidden="true" /> .md
         </button>
         <button
           class="df-btn df-btn-quiet df-btn-icon"

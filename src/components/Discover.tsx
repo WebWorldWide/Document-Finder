@@ -5,6 +5,7 @@ import {
   ChevronRight,
   ClipboardCopy,
   FileDown,
+  FileText,
   FolderOpen,
   Library,
   Loader2,
@@ -53,6 +54,31 @@ export async function exportLibrary(folder: string, query: string) {
   try {
     const r = await api.exportLibraryZip(folder, dest, { budget_tokens: 150_000 });
     uiStore.showToast(`Exported ${r.files} files (${formatBytes(r.size_bytes)})`);
+    void api.revealInFinder(r.dest).catch(() => undefined);
+  } catch (e) {
+    uiStore.showToast(`Export failed: ${String(e)}`);
+  }
+}
+
+/** Export one Markdown file with every document's full text (for RAG). */
+export async function exportMarkdown(folder: string, name: string, ids?: number[]) {
+  const safe =
+    name
+      .replace(/[^\w\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .slice(0, 60) || "library";
+  const dest = await save({
+    title: "Export as Markdown",
+    defaultPath: `${safe}.md`,
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+  if (!dest) return;
+  try {
+    const r = await api.exportLibraryMarkdown(folder, dest, ids ?? null);
+    uiStore.showToast(
+      `Saved ${r.files} document${r.files === 1 ? "" : "s"} as Markdown (${formatBytes(r.size_bytes)})`,
+    );
     void api.revealInFinder(r.dest).catch(() => undefined);
   } catch (e) {
     uiStore.showToast(`Export failed: ${String(e)}`);
@@ -257,8 +283,19 @@ function RunView() {
             <button class="df-btn df-btn-primary" onClick={() => void copyLibraryForAi(s.folder)}>
               <ClipboardCopy size={15} aria-hidden="true" /> Copy for AI
             </button>
-            <button class="df-btn" onClick={() => void exportLibrary(s.folder, s.query)}>
-              <FileDown size={15} aria-hidden="true" /> Export
+            <button
+              class="df-btn"
+              title="One Markdown file with every document's full text — for RAG and AI tools"
+              onClick={() => void exportMarkdown(s.folder, s.query)}
+            >
+              <FileText size={15} aria-hidden="true" /> Export .md
+            </button>
+            <button
+              class="df-btn"
+              title="Zip with Markdown per document, chunks.jsonl, references.bib and corpus.md"
+              onClick={() => void exportLibrary(s.folder, s.query)}
+            >
+              <FileDown size={15} aria-hidden="true" /> Export pack
             </button>
             <button class="df-btn" onClick={() => uiStore.showLibrary(s.folder)}>
               <Library size={15} aria-hidden="true" /> Open in Library

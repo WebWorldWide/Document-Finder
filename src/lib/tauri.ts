@@ -131,6 +131,8 @@ export const api = {
         budget_tokens: opts.budget_tokens ?? null,
       },
     }),
+  exportLibraryMarkdown: (folder: string, dest: string, ids?: number[] | null) =>
+    invoke<ExportResult>("export_library_markdown", { folder, dest, ids: ids ?? null }),
   copyForAi: (folder: string, ids?: number[] | null, budgetTokens?: number) =>
     invoke<string>("copy_for_ai", {
       folder,
