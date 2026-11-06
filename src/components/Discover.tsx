@@ -14,12 +14,14 @@ import {
 } from "lucide-solid";
 import { save } from "@tauri-apps/plugin-dialog";
 import Note from "@/components/Note";
+import { FileTypeBadge, SourceMix, SpeedChart, TileMap } from "@/components/RunVisuals";
 import { api } from "@/lib/tauri";
 import { humanizeDownloadError, humanizeSourceKind } from "@/lib/errors";
 import {
   DEFAULT_ENABLED_SOURCES,
   formatBytes,
   formatDuration,
+  ftypeFromPath,
   sourceColor,
   sourceDesc,
   sourceLabel,
@@ -340,6 +342,48 @@ function RunView() {
         <div style={{ width: `${progressFraction() * 100}%` }} />
       </div>
 
+      <Show when={s.planned > 0 || s.outcomes.length > 0}>
+        <div class="df-visuals">
+          <div class="df-visual-card">
+            <div class="df-section-head">
+              <span class="df-label">Downloads</span>
+              <span class="df-tile-key" aria-hidden="true">
+                <span>
+                  <i class="df-tile" data-kind="ok" /> saved
+                </span>
+                <span>
+                  <i class="df-tile" data-kind="live" /> downloading
+                </span>
+                <span>
+                  <i class="df-tile" data-kind="fail" /> failed
+                </span>
+                <span>
+                  <i class="df-tile" data-kind="wait" /> queued
+                </span>
+              </span>
+            </div>
+            <TileMap />
+            <SourceMix />
+          </div>
+          <div class="df-visual-card">
+            <div class="df-section-head">
+              <span class="df-label">Speed</span>
+              <span class="df-label num">{formatBytes(s.bytes)} total</span>
+            </div>
+            <Show
+              when={s.speedSeries.length >= 2}
+              fallback={
+                <p class="df-muted" style={{ margin: 0 }}>
+                  Measuring…
+                </p>
+              }
+            >
+              <SpeedChart />
+            </Show>
+          </div>
+        </div>
+      </Show>
+
       <Show when={s.status === "error"}>
         <Note tone="bad">{s.error || "Something went wrong."}</Note>
       </Show>
@@ -369,6 +413,7 @@ function RunView() {
                   <div class="df-bar">
                     <i
                       style={{
+                        background: sourceColor(f.source),
                         width:
                           f.total > 0 ? `${Math.min(100, (f.downloaded / f.total) * 100)}%` : "12%",
                       }}
@@ -391,7 +436,11 @@ function RunView() {
             <For each={shownSaved()}>
               {(d) => (
                 <li class="df-slip">
-                  <span class="df-slip-n num">№ {String(d.n).padStart(3, "0")}</span>
+                  <i
+                    class="df-slip-swatch"
+                    style={{ background: sourceColor(d.doc.source) }}
+                    aria-hidden="true"
+                  />
                   <div style={{ "min-width": 0 }}>
                     <button
                       class="df-slip-title"
@@ -403,14 +452,16 @@ function RunView() {
                       {d.doc.title}
                     </button>
                     <div class="df-slip-meta">
-                      <i class="df-dot" style={{ background: sourceColor(d.doc.source) }} />
-                      <span>{sourceLabel(d.doc.source)}</span>
+                      <FileTypeBadge type={ftypeFromPath(d.path)} />
+                      <span class="df-src-chip" style={{ "--src": sourceColor(d.doc.source) }}>
+                        {sourceLabel(d.doc.source)}
+                      </span>
                       <Show when={d.doc.year}>
-                        <span>· {d.doc.year}</span>
+                        <span class="num">{d.doc.year}</span>
                       </Show>
                       <Show when={d.doc.authors.length > 0}>
                         <span>
-                          · {d.doc.authors.slice(0, 2).join(", ")}
+                          {d.doc.authors.slice(0, 2).join(", ")}
                           {d.doc.authors.length > 2 ? " et al." : ""}
                         </span>
                       </Show>

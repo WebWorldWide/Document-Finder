@@ -37,6 +37,13 @@ export interface SourceStat {
   error?: string;
 }
 
+/** One finished download, in arrival order (drives the tile map). */
+export interface Outcome {
+  ok: boolean;
+  source: string;
+  title: string;
+}
+
 /** Saved docs kept in memory for the live ledger (the Library has all). */
 const MAX_SAVED_IN_MEMORY = 2000;
 
@@ -58,6 +65,10 @@ interface State {
   inFlight: InFlight[];
   saved: SavedDoc[];
   failures: Failure[];
+  /** Every finished download (saved or failed) in the order it finished. */
+  outcomes: Outcome[];
+  /** Download speed in bytes/s, sampled once a second while running. */
+  speedSeries: number[];
   bytes: number;
   folder: string;
   error: string;
@@ -80,10 +91,38 @@ const initial = (): State => ({
   inFlight: [],
   saved: [],
   failures: [],
+  outcomes: [],
+  speedSeries: [],
   bytes: 0,
   folder: "",
   error: "",
 });
+
+/** Speed samples kept for the chart (2 minutes at 1/s). */
+const MAX_SPEED_SAMPLES = 120;
+let sampler: ReturnType<typeof setInterval> | undefined;
+let lastBytes = 0;
+
+function startSampler() {
+  stopSampler();
+  lastBytes = 0;
+  sampler = setInterval(() => {
+    const b = state.bytes;
+    const delta = Math.max(0, b - lastBytes);
+    lastBytes = b;
+    setState(
+      produce((s) => {
+        s.speedSeries.push(delta);
+        if (s.speedSeries.length > MAX_SPEED_SAMPLES) s.speedSeries.shift();
+      }),
+    );
+  }, 1000);
+}
+
+function stopSampler() {
+  if (sampler) clearInterval(sampler);
+  sampler = undefined;
+}
 
 const [state, setState] = createStore<State>(initial());
 
@@ -105,6 +144,7 @@ function docOf(p: Partial<Document> & { title: string; url: string; source: stri
 }
 
 function finish(status: RunStatus, folder?: string) {
+  stopSampler();
   setState(
     produce((s) => {
       s.status = status;
@@ -182,6 +222,7 @@ export function apply(ev: DfEvent) {
           s.failed = p.failed;
           s.planned = Math.max(s.planned, p.total, p.done + p.failed);
           if (!p.cached) s.bytes += p.bytes;
+          s.outcomes.push({ ok: true, source: p.source.split("/")[0], title: p.title });
           s.saved.unshift({
             n: p.done,
             doc: docOf(p),
@@ -204,6 +245,7 @@ export function apply(ev: DfEvent) {
           s.failed = p.failed;
           s.planned = Math.max(s.planned, p.total, p.done + p.failed);
           s.failures.push({ doc: docOf(p), error: p.error });
+          s.outcomes.push({ ok: false, source: p.source.split("/")[0], title: p.title });
         }),
       );
       break;
@@ -281,6 +323,7 @@ async function start(query: string, retry: Failure[] | null = null) {
       }
     }),
   );
+  startSampler();
   try {
     if (retry) {
       await api.retryRun({ folder, query, docs: retry.map((f) => f.doc) });
@@ -316,6 +359,7 @@ export const runStore = {
     }
   },
   reset() {
+    stopSampler();
     setState(reconcile(initial()));
   },
   get live() {
