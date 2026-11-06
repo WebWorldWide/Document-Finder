@@ -29,6 +29,10 @@ struct Resp {
 
 #[derive(Debug, Deserialize)]
 struct Paper {
+    #[serde(default, rename = "citationCount")]
+    citation_count: Option<u32>,
+    #[serde(default)]
+    venue: Option<String>,
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
@@ -92,7 +96,8 @@ impl Source for SemanticScholarSource {
                     ("offset", offset.to_string()),
                     (
                         "fields",
-                        "title,authors,year,abstract,openAccessPdf,externalIds".to_string(),
+                        "title,authors,year,abstract,openAccessPdf,externalIds,citationCount,venue"
+                            .to_string(),
                     ),
                 ];
                 let resp = match get_with_retry(&client, BASE, &params).await {
@@ -126,7 +131,15 @@ impl Source for SemanticScholarSource {
                         authors,
                         year: p.year.map(|y| y.to_string()),
                         abstract_: p.abstract_,
+                        doi: p
+                            .external_ids
+                            .as_ref()
+                            .and_then(|e| e.doi.as_deref())
+                            .and_then(crate::engine::dedup::extract_doi),
                         identifier: p.external_ids.and_then(|e| e.doi),
+                        cited_by: p.citation_count,
+                        venue: p.venue.filter(|v| !v.trim().is_empty()),
+                        ..Default::default()
                     });
                 }
                 // Advance the *raw* offset by the page we requested (or the API's

@@ -28,7 +28,7 @@ function Remove-IfExists($path) {
 }
 
 Write-Host "Document Finder - removing app data..."
-Remove-IfExists (Join-Path $env:APPDATA $id)                          # AI models + fastembed cache + config
+Remove-IfExists (Join-Path $env:APPDATA $id)                          # config + WebView data (+ 0.2-era AI models)
 Remove-IfExists (Join-Path $env:LOCALAPPDATA $id)                     # WebView2 (EBWebView) storage: localStorage/IndexedDB/cache
 Remove-IfExists (Join-Path $env:LOCALAPPDATA 'Document Finder\Logs')  # run log
 

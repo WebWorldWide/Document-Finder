@@ -1,26 +1,52 @@
 import { createSignal } from "solid-js";
 import type { LibraryInfo } from "@/lib/tauri";
 
-export type View = "find" | "library" | "settings";
+export type View = "discover" | "library" | "settings";
 
-const [view, setView] = createSignal<View>("find");
-const [activeLibrary, setActiveLibrary] = createSignal<LibraryInfo | null>(null);
-// LibraryView populates this whenever it loads; the Sidebar reads it for the
-// stats tile so we don't double-fetch.
+const [view, setView] = createSignal<View>("discover");
+/** Library folder to show when the Library view opens. */
+const [openLibraryPath, setOpenLibraryPath] = createSignal<string | null>(null);
 const [knownLibraries, setKnownLibraries] = createSignal<LibraryInfo[]>([]);
-// False if the Tauri event listeners failed to register at startup — the live UI
-// (progress, results) can't update in that state, so the Sidebar surfaces it
-// instead of claiming "Backend ready". Set from main.tsx.
 const [listenersReady, setListenersReady] = createSignal(true);
-
-// A single, ALWAYS-MOUNTED screen-reader announcer (rendered in App). Banners
-// are <Show>-mounted with their text, which polite live regions announce
-// unreliably; components call announce() to push the text into this pre-existing
-// region instead. The reset-then-set re-triggers announcement of identical text.
 const [announcement, setAnnouncement] = createSignal("");
+const [toast, setToast] = createSignal<string | null>(null);
+
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Push text into the always-mounted screen-reader live region. */
 function announce(msg: string) {
   setAnnouncement("");
   queueMicrotask(() => setAnnouncement(msg));
+}
+
+/** Brief confirmation at the bottom of the window (also announced). */
+function showToast(msg: string) {
+  setToast(msg);
+  announce(msg);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => setToast(null), 3200);
+}
+
+export interface ConfirmRequest {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  danger?: boolean;
+  resolve: (ok: boolean) => void;
+}
+const [confirmReq, setConfirmReq] = createSignal<ConfirmRequest | null>(null);
+
+/** In-app confirmation dialog (never a blocking browser `confirm`). */
+function confirm(opts: Omit<ConfirmRequest, "resolve">): Promise<boolean> {
+  return new Promise((resolve) => {
+    setConfirmReq({
+      ...opts,
+      resolve: (ok) => {
+        setConfirmReq(null);
+        resolve(ok);
+      },
+    });
+  });
 }
 
 export const uiStore = {
@@ -28,10 +54,14 @@ export const uiStore = {
     return view();
   },
   setView,
-  get activeLibrary() {
-    return activeLibrary();
+  get openLibraryPath() {
+    return openLibraryPath();
   },
-  setActiveLibrary,
+  /** Navigate to a library in the Library view. */
+  showLibrary(path: string | null) {
+    setOpenLibraryPath(path);
+    setView("library");
+  },
   get knownLibraries() {
     return knownLibraries();
   },
@@ -44,13 +74,12 @@ export const uiStore = {
     return announcement();
   },
   announce,
-  /// Aggregate stats across all loaded libraries — count + total bytes + total docs.
-  get lifetimeStats() {
-    const libs = knownLibraries();
-    return {
-      count: libs.length,
-      totalBytes: libs.reduce((acc, l) => acc + l.size_bytes, 0),
-      totalDocs: libs.reduce((acc, l) => acc + l.n_docs, 0),
-    };
+  get toast() {
+    return toast();
   },
+  showToast,
+  get confirmRequest() {
+    return confirmReq();
+  },
+  confirm,
 };

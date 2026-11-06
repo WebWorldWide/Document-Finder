@@ -132,6 +132,7 @@ impl Source for MarginaliaHtmlSource {
                         year: None,
                         abstract_: None,
                         identifier: None,
+                        ..Default::default()
                     });
                     count += 1;
                 }

@@ -35,5 +35,5 @@ packaging/flatpak/.flatpak-builder/
 # Claude Code local config
 .claude/
 
-# AI model files (downloaded at runtime, too large for git)
-src-tauri/resources/
+# Bundled PDFium (fetched per platform by scripts/fetch-pdfium.mjs)
+src-tauri/resources/pdfium/

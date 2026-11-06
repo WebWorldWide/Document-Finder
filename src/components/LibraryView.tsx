@@ -1,664 +1,592 @@
-import { createSignal, createEffect, createMemo, onCleanup, untrack, Show, For } from "solid-js";
 import {
-  Archive,
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  on,
+  onCleanup,
+} from "solid-js";
+import {
+  ClipboardCopy,
+  FileDown,
+  FileText,
   FolderOpen,
-  Loader2,
-  RefreshCw,
-  Trash2,
+  Quote,
   Search,
-  Library as LibraryIcon,
+  Trash2,
+  X,
 } from "lucide-solid";
-import { ArrowLeft } from "lucide-solid";
-import { ask, save } from "@tauri-apps/plugin-dialog";
-import { api, type LibraryInfo, type LibraryDoc } from "@/lib/tauri";
-import { uiStore } from "@/stores/ui";
-import { settings } from "@/stores/settings";
-import { runStore } from "@/stores/run";
+import { copyLibraryForAi, exportLibrary } from "@/components/Discover";
+import { refreshLibraries } from "@/components/Sidebar";
+import { api, type LibraryDoc, type LibraryInfo, type SearchHit } from "@/lib/tauri";
 import {
   compareLibraryRecency,
   formatBytes,
-  libraryTimestamp,
   formatRelativeTime,
-  ftypeFromPath,
+  libraryTimestamp,
+  sourceColor,
+  sourceLabel,
 } from "@/lib/utils";
-import Banner from "./Banner";
-import DocRow from "./DocRow";
-import { humanizeDownloadError } from "@/lib/errors";
+import { runStore } from "@/stores/run";
+import { uiStore } from "@/stores/ui";
 
-type SortKey = "updated" | "docs" | "size";
+type Sort = "best" | "title" | "year";
 
-export default function LibraryView() {
-  const [libraries, setLibraries] = createSignal<LibraryInfo[]>([]);
-  const [loading, setLoading] = createSignal(true);
-  const [error, setError] = createSignal<string | null>(null);
-  const [exportingPath, setExportingPath] = createSignal<string | null>(null);
-  const [deletingPath, setDeletingPath] = createSignal<string | null>(null);
-  const [actionError, setActionError] = createSignal<string | null>(null);
-  const [exportOk, setExportOk] = createSignal<{
-    dest: string;
-    files: number;
-    bytes: number;
-  } | null>(null);
-  const [loadTick, setLoadTick] = createSignal(0);
-  // True once the FIRST list load has settled. The full-screen spinner gates on
-  // this (not on "list currently empty"), so an optimistic delete of the last
-  // library — which momentarily empties the list before refetch — falls through
-  // to the "No libraries yet" empty state instead of flashing the spinner.
-  const [didFirstLoad, setDidFirstLoad] = createSignal(false);
-  const [filter, setFilter] = createSignal("");
-  const [sortBy, setSortBy] = createSignal<SortKey>("updated");
-  // The library whose documents are being viewed in-app (drill-in detail), so a
-  // user can OPEN a paper they found in an earlier session — not just reveal the
-  // folder. null = the library grid.
-  const [selectedLib, setSelectedLib] = createSignal<LibraryInfo | null>(null);
-  const [libDocs, setLibDocs] = createSignal<LibraryDoc[]>([]);
-  const [docsLoading, setDocsLoading] = createSignal(false);
-  const [docsError, setDocsError] = createSignal<string | null>(null);
-  // Open/reveal failures WITHIN the detail view get their own banner rendered
-  // inside the detail block — the shared top-of-page actionError scrolls out of
-  // view in a long document list, making a failed open look like a dead click.
-  const [detailError, setDetailError] = createSignal<string | null>(null);
+function citation(d: LibraryDoc): string {
+  const a = d.authors.slice(0, 3).join(", ") + (d.authors.length > 3 ? " et al." : "");
+  return [
+    a && `${a}${d.year ? ` (${d.year})` : ""}.`,
+    !a && d.year ? `(${d.year}).` : "",
+    `${d.title.replace(/\.$/, "")}.`,
+    d.venue ? `${d.venue}.` : "",
+    d.doi ? `https://doi.org/${d.doi}` : d.url,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
 
-  // Monotonic request id so a slow listLibraryDocs for library A can't overwrite a
-  // later library B's docs (open A → back → open B with A resolving last would
-  // render A's documents — and openable A files — under B's header). Mirrors the
-  // `cancelled` guard the listLibraries effect already uses.
-  let docsReqId = 0;
-  // opts.background: a silent reconcile (e.g. a run that targeted THIS library
-  // just finished). It re-fetches and swaps the list only on success — never
-  // blanking it to a spinner or resetting scroll. A background reconcile must
-  // not empty a list the user is actively reading.
-  const openLibraryDocs = (lib: LibraryInfo, opts: { background?: boolean } = {}) => {
-    // A background reconcile is redundant — and harmful — while a foreground load
-    // is already in flight: the pending foreground load already re-reads fresh
-    // on-disk data, and letting the reconcile bump docsReqId here would discard
-    // that foreground result; if the reconcile then failed, the detail would be
-    // left blank with no spinner and no error. Skip it. (untrack so reading
-    // docsLoading from the run-finished effect doesn't make that effect track it.)
-    if (opts.background && untrack(() => docsLoading())) return;
-    const myId = ++docsReqId;
-    setSelectedLib(lib);
-    // Keep the "active library" concept in sync with the open detail so the
-    // sidebar Recent highlight matches and the nav effect below stays a no-op
-    // for self-initiated opens (guarded so it can't re-trigger itself).
-    if (uiStore.activeLibrary?.path !== lib.path) uiStore.setActiveLibrary(lib);
-    if (!opts.background) {
-      setLibDocs([]);
-      setDocsError(null);
-      setDetailError(null);
-      setExportOk(null); // a grid "Exported …" banner shouldn't linger over the detail
-      setDocsLoading(true);
-      // The clicked card / Open button unmounts as the detail opens, dropping
-      // focus to <body>; move it to the in-detail Back button so a keyboard
-      // user keeps their place (mirrors the post-delete focus restore).
-      requestAnimationFrame(() =>
-        (document.querySelector(".df-detail-back") as HTMLElement | null)?.focus(),
-      );
+/** `[term]` markers from FTS snippets → <mark> spans, safely (no innerHTML). */
+function Snippet(props: { text: string }) {
+  const parts = () => props.text.split(/(\[[^\]]*\])/g);
+  return (
+    <p>
+      <For each={parts()}>
+        {(p) => (p.startsWith("[") && p.endsWith("]") ? <mark>{p.slice(1, -1)}</mark> : <>{p}</>)}
+      </For>
+    </p>
+  );
+}
+
+/** Minimal, safe Markdown rendering for the preview (headings, quotes, paragraphs). */
+function Preview(props: { markdown: string }) {
+  const [limit, setLimit] = createSignal(80);
+  const blocks = createMemo(() => {
+    let md = props.markdown;
+    if (md.startsWith("---\n")) {
+      const end = md.indexOf("\n---\n", 4);
+      if (end > 0) md = md.slice(end + 5);
     }
-    api
-      .listLibraryDocs(lib.path)
-      .then((docs) => {
-        if (myId === docsReqId) setLibDocs(docs);
-      })
-      .catch((e) => {
-        // A background reconcile must not clobber the list or pop an error
-        // banner — keep showing what the user is reading.
-        if (myId === docsReqId && !opts.background)
-          setDocsError(`Couldn't read this library: ${String(e)}`);
-      })
-      .finally(() => {
-        // Always clear the spinner for the LATEST request, even a background one:
-        // if a background reconcile is fired (bumping docsReqId) while a foreground
-        // load is still in flight, the foreground's finally sees a stale id and
-        // skips — so only the background finally can clear docsLoading. Gating it
-        // on !background here would strand the spinner on forever.
-        if (myId === docsReqId) setDocsLoading(false);
-      });
-  };
-  // Open a single saved document in its default app (the in-app read path).
-  const openDoc = (d: { path?: string }) => {
-    if (!d.path) return;
-    setDetailError(null); // clear a prior failure so a later success isn't masked
-    api.openPath(d.path).catch((e) => setDetailError(`Couldn't open the file: ${String(e)}`));
-  };
-
-  createEffect(() => {
-    const _tick = loadTick();
-    const root = settings.libraryRoot;
-    if (!root) {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    api
-      .listLibraries(root)
-      .then((libs) => {
-        if (!cancelled) {
-          setLibraries(libs);
-          uiStore.setKnownLibraries(libs);
-          setLoading(false);
-          setDidFirstLoad(true);
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setError(String(e));
-          setLoading(false);
-          setDidFirstLoad(true);
-        }
-      });
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  // Refresh the grid when a run finishes while the Library tab is open — without
-  // this, a search completing in the background leaves the grid showing pre-run
-  // data with no manual refresh control.
-  let wasRunning = runStore.state.running;
-  createEffect(() => {
-    const running = runStore.state.running;
-    if (wasRunning && !running) {
-      setLoadTick((n) => n + 1);
-      // Also refresh the OPEN detail — but only if the run that just finished
-      // targeted THIS library (its docs may have grown), and as a BACKGROUND
-      // reconcile so an unrelated run can never blank the list the user is
-      // reading or reset their scroll. untrack so this effect depends only on
-      // `running`, not on selectedLib / the run folder.
-      const lib = untrack(() => selectedLib());
-      const folder = untrack(() => runStore.state.folder);
-      if (lib && folder === lib.path) openLibraryDocs(lib, { background: true });
-    }
-    wasRunning = running;
-  });
-
-  // Keep the open detail in sync with sidebar navigation. The Library tab stays
-  // mounted, so clicking a *different* Recent library (which sets activeLibrary)
-  // or the "Library" / "all" entries (which clear it) would otherwise be a dead
-  // click — the detail wouldn't change. Both are driven off activeLibrary, which
-  // openLibraryDocs and Back keep in sync with selectedLib.
-  createEffect(() => {
-    const active = uiStore.activeLibrary;
-    const cur = untrack(() => selectedLib());
-    if (!active) {
-      // Navigated to the library list — close any open detail (focus is handled
-      // by the sidebar's focusMain on those clicks).
-      if (cur) {
-        setDocsError(null);
-        setDetailError(null);
-        setSelectedLib(null);
-      }
-      return;
-    }
-    // A specific library was chosen from the sidebar; open it unless it's already
-    // showing. (Card clicks set selectedLib first, so this stays a no-op there.)
-    if (!cur || active.path !== cur.path) openLibraryDocs(active);
-  });
-
-  const sorted = createMemo(() => {
-    let xs = libraries().slice();
-    const q = filter().trim().toLowerCase();
-    if (q) xs = xs.filter((l) => (l.query ?? l.name).toLowerCase().includes(q));
-    if (sortBy() === "size") xs.sort((a, b) => b.size_bytes - a.size_bytes);
-    else if (sortBy() === "docs") xs.sort((a, b) => b.n_docs - a.n_docs);
-    // Default "updated"/Recent: order by the run timestamp embedded in the
-    // folder name — the backend's reverse-name order is slug-dominated and isn't
-    // actually by recency.
-    else xs.sort((a, b) => compareLibraryRecency(a.name, b.name));
-    return xs;
-  });
-
-  async function handleExport(lib: LibraryInfo) {
-    setActionError(null);
-    setExportOk(null);
-    const dest = await save({
-      defaultPath: `${lib.name}.zip`,
-      filters: [{ name: "ZIP archive", extensions: ["zip"] }],
-    });
-    if (!dest) return;
-    setExportingPath(lib.path);
-    try {
-      const result = await api.exportLibraryZip(lib.path, dest);
-      // Confirm success on-screen — reveal-in-Finder is best-effort and can do
-      // nothing visible (sandbox / headless Linux), leaving the user unsure the
-      // .zip was written.
-      setExportOk({ dest: result.dest, files: result.files, bytes: result.size_bytes });
-      uiStore.announce(
-        `Exported ${result.files} file${result.files === 1 ? "" : "s"} to ${result.dest}`,
-      );
-      // Reveal is a best-effort follow-up — a failure to open the OS file browser
-      // must NOT be reported as an export failure (the .zip is already written).
-      api.revealInFinder(result.dest).catch(() => {});
-    } catch (e) {
-      setActionError(`Couldn't export this library: ${String(e)}`);
-      uiStore.announce(`Export failed: ${String(e)}`);
-    } finally {
-      setExportingPath(null);
-    }
-  }
-
-  async function handleDelete(lib: LibraryInfo) {
-    setActionError(null);
-    setExportOk(null); // clear a stale "Exported …" banner from a prior action
-    const ok = await ask(
-      `Delete library "${lib.query ?? lib.name}"? This permanently removes ${lib.n_docs} document${
-        lib.n_docs === 1 ? "" : "s"
-      } and ${formatBytes(lib.size_bytes)} from disk. This cannot be undone.`,
-      { title: "Delete Library", kind: "warning" },
+    return (
+      md
+        .split(/\n{2,}/)
+        .map((b) => b.trim())
+        // The title and abstract are already shown above the preview.
+        .filter((b) => b && !b.startsWith("# ") && !b.startsWith("> **Abstract.**"))
     );
-    if (!ok) return;
-    if (uiStore.activeLibrary?.path === lib.path) uiStore.setActiveLibrary(null);
-    setDeletingPath(lib.path);
-    try {
-      await api.deleteLibrary(lib.path);
-      // Optimistically drop the card NOW so it can't be re-clicked (Delete/Export
-      // on an already-gone path) during the async refetch window; clear the
-      // deleting latch too since the card is gone. The refetch reconciles disk.
-      setLibraries((xs) => xs.filter((l) => l.path !== lib.path));
-      setDeletingPath(null);
-      setLoadTick((n) => n + 1);
-      // Confirm the (irreversible) delete to screen-reader users — the card just
-      // silently vanishes otherwise (mirrors the export announce above).
-      uiStore.announce(`Deleted library "${lib.query ?? lib.name}".`);
-      // The focused Delete button was unmounted with its card, dropping focus to
-      // <body>; move it to the filter input so a keyboard user keeps their place.
-      requestAnimationFrame(() =>
-        (document.querySelector(".df-inline-search input") as HTMLElement | null)?.focus(),
-      );
-    } catch (e) {
-      setActionError(`Couldn't delete this library: ${String(e)}`);
-      uiStore.announce(`Delete failed: ${String(e)}`);
-      // Only re-enable the card on failure (it still exists).
-      setDeletingPath(null);
-    }
-  }
+  });
+  return (
+    <div class="df-preview">
+      <For each={blocks().slice(0, limit())}>
+        {(b) => {
+          const page = /^<!-- page (\d+) -->$/.exec(b);
+          if (page)
+            return (
+              <div class="df-label" style={{ margin: "14px 0 6px" }}>
+                Page {page[1]}
+              </div>
+            );
+          const h = /^(#{2,4})\s+(.*)$/.exec(b);
+          if (h) {
+            return h[1].length === 2 ? (
+              <h2>{h[2]}</h2>
+            ) : h[1].length === 3 ? (
+              <h3>{h[2]}</h3>
+            ) : (
+              <h4>{h[2]}</h4>
+            );
+          }
+          if (b.startsWith(">"))
+            return <blockquote>{b.replace(/^>\s?/gm, "").replace(/\*\*/g, "")}</blockquote>;
+          return <p>{b}</p>;
+        }}
+      </For>
+      <Show when={blocks().length > limit()}>
+        <button class="df-btn df-btn-quiet" onClick={() => setLimit(limit() + 120)}>
+          Show more
+        </button>
+      </Show>
+    </div>
+  );
+}
 
-  const SORTS: [SortKey, string][] = [
-    ["updated", "Recent"],
-    ["docs", "Docs"],
-    ["size", "Size"],
-  ];
+function Inspector(props: { doc: LibraryDoc; folder: string; onClose: () => void }) {
+  const [md] = createResource(
+    () => props.doc.md_path ?? null,
+    (p) => (p ? api.readDocMarkdown(p) : Promise.resolve("")),
+  );
+  const d = () => props.doc;
+  const copyCitation = async () => {
+    await navigator.clipboard.writeText(citation(d()));
+    uiStore.showToast("Citation copied");
+  };
+  return (
+    <aside class="df-inspector" aria-label="Document details">
+      <div class="df-row" style={{ "justify-content": "space-between" }}>
+        <span class="df-label">
+          <i
+            class="df-dot"
+            style={{ background: sourceColor(d().source), "margin-right": "6px" }}
+          />
+          {d().sources.length > 1
+            ? d().sources.map(sourceLabel).join(" · ")
+            : sourceLabel(d().source)}
+        </span>
+        <button
+          class="df-btn df-btn-quiet df-btn-icon"
+          aria-label="Close details"
+          onClick={props.onClose}
+        >
+          <X size={15} />
+        </button>
+      </div>
+      <h2 class="df-title">{d().title}</h2>
+      <dl class="df-kv">
+        <Show when={d().authors.length}>
+          <dt>Authors</dt>
+          <dd>{d().authors.join(", ")}</dd>
+        </Show>
+        <Show when={d().year}>
+          <dt>Year</dt>
+          <dd class="num">{d().year}</dd>
+        </Show>
+        <Show when={d().venue}>
+          <dt>Published in</dt>
+          <dd>{d().venue}</dd>
+        </Show>
+        <Show when={d().doi}>
+          <dt>DOI</dt>
+          <dd class="mono">{d().doi}</dd>
+        </Show>
+        <Show when={d().pages || d().words}>
+          <dt>Length</dt>
+          <dd class="num">
+            {d().pages ? `${d().pages} pages · ` : ""}
+            {d().words ? `${d().words?.toLocaleString()} words · ` : ""}
+            {d().tokens ? `~${Math.round((d().tokens ?? 0) / 1000)}k tokens` : ""}
+          </dd>
+        </Show>
+        <Show when={d().cited_by}>
+          <dt>Cited by</dt>
+          <dd class="num">{d().cited_by?.toLocaleString()}</dd>
+        </Show>
+        <Show when={d().license}>
+          <dt>License</dt>
+          <dd>{d().license}</dd>
+        </Show>
+      </dl>
+      <div class="df-inspector-actions">
+        <button class="df-btn df-btn-primary" onClick={() => void api.openPath(d().path)}>
+          <FileText size={14} aria-hidden="true" /> Open
+        </button>
+        <button class="df-btn" onClick={() => void copyLibraryForAi(props.folder, [d().id])}>
+          <ClipboardCopy size={14} aria-hidden="true" /> Copy for AI
+        </button>
+        <button class="df-btn" onClick={() => void copyCitation()}>
+          <Quote size={14} aria-hidden="true" /> Cite
+        </button>
+        <button
+          class="df-btn df-btn-quiet df-btn-icon"
+          aria-label="Show in folder"
+          title="Show in folder"
+          onClick={() => void api.revealInFinder(d().path)}
+        >
+          <FolderOpen size={15} />
+        </button>
+      </div>
+      <Show when={d().extract_error}>
+        <p class="df-muted">No text could be extracted: {d().extract_error}</p>
+      </Show>
+      <Show when={d().abstract}>
+        <div class="df-label" style={{ "margin-top": "8px" }}>
+          Abstract
+        </div>
+        <p class="df-read" style={{ "font-size": "13.5px", "margin-top": "6px" }}>
+          {d().abstract}
+        </p>
+      </Show>
+      <Show when={md()}>{(text) => <Preview markdown={text()} />}</Show>
+    </aside>
+  );
+}
+
+function LibraryDetail(props: { lib: LibraryInfo; onDeleted: () => void }) {
+  const [docs, { refetch }] = createResource(
+    () => props.lib.path,
+    (p) => api.listLibraryDocs(p),
+  );
+  const [filter, setFilter] = createSignal("");
+  const [sort, setSort] = createSignal<Sort>("best");
+  const [selected, setSelected] = createSignal<number | null>(null);
+  const [hits, setHits] = createSignal<SearchHit[]>([]);
+
+  // Refresh when a run that wrote into this library finishes.
+  createEffect(
+    on(
+      () => runStore.state.status,
+      (st) => {
+        if ((st === "done" || st === "cancelled") && runStore.state.folder === props.lib.path)
+          void refetch();
+      },
+      { defer: true },
+    ),
+  );
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(
+    on(filter, (q) => {
+      clearTimeout(timer);
+      if (q.trim().length < 2) {
+        setHits([]);
+        return;
+      }
+      timer = setTimeout(() => {
+        api
+          .searchLibrary(q, props.lib.path, 30)
+          .then(setHits)
+          .catch(() => setHits([]));
+      }, 220);
+    }),
+  );
+  onCleanup(() => clearTimeout(timer));
+
+  const visible = createMemo(() => {
+    const q = filter().trim().toLowerCase();
+    let list = (docs() ?? []).filter(
+      (d) =>
+        !q ||
+        d.title.toLowerCase().includes(q) ||
+        d.authors.some((a) => a.toLowerCase().includes(q)),
+    );
+    if (sort() === "title") list = [...list].sort((a, b) => a.title.localeCompare(b.title));
+    if (sort() === "year")
+      list = [...list].sort((a, b) => (b.year ?? "").localeCompare(a.year ?? ""));
+    return list;
+  });
+  const selectedDoc = () => (docs() ?? []).find((d) => d.id === selected()) ?? null;
+  const ts = () => libraryTimestamp(props.lib.name);
+
+  const onListKey = (e: KeyboardEvent) => {
+    const list = visible();
+    if (!list.length) return;
+    const i = list.findIndex((d) => d.id === selected());
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const next = e.key === "ArrowDown" ? Math.min(list.length - 1, i + 1) : Math.max(0, i - 1);
+      setSelected(list[next].id);
+      document.getElementById(`df-doc-${list[next].id}`)?.focus();
+    } else if (e.key === "Enter" && i >= 0) {
+      void api.openPath(list[i].path);
+    }
+  };
+
+  const remove = async () => {
+    const ok = await uiStore.confirm({
+      title: "Delete this library?",
+      body: `“${props.lib.query}” and its ${props.lib.n_docs} downloaded files will be removed from your computer. This can’t be undone.`,
+      confirmLabel: "Delete library",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.deleteLibrary(props.lib.path);
+      uiStore.showToast("Library deleted");
+      props.onDeleted();
+    } catch (e) {
+      uiStore.showToast(`Couldn’t delete: ${String(e)}`);
+    }
+  };
 
   return (
-    <div class="df-canvas">
-      <div class="df-canvas-head">
-        <div>
-          <div class="df-eyebrow">Library</div>
-          <h1 class="df-canvas-title">Library</h1>
-        </div>
-        {/* Filter + sort apply to the library GRID — hide them while drilled into
-            one library's documents (where they'd be present-but-inert). */}
-        <Show when={!selectedLib()}>
-          <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
-            <div class="df-inline-search">
-              <Search size={13} style={{ color: "var(--ink-3)" }} />
-              <input
-                type="text"
-                value={filter()}
-                onInput={(e) => setFilter(e.currentTarget.value)}
-                placeholder="Filter libraries…"
-                aria-label="Filter libraries"
-              />
+    <div class="df-lib-body" data-inspect={selectedDoc() ? "true" : "false"}>
+      <div class="df-lib-docs">
+        <div class="df-page-head" style={{ "margin-bottom": 0 }}>
+          <div style={{ "min-width": 0 }}>
+            <div class="df-label">Library</div>
+            <h1 class="df-title" style={{ "font-size": "38px" }}>
+              {props.lib.query}
+            </h1>
+            <div class="df-muted num" style={{ "margin-top": "6px" }}>
+              {props.lib.n_docs} documents · {formatBytes(props.lib.size_bytes)}
+              {ts() ? ` · ${formatRelativeTime(ts()!)}` : ""}
             </div>
-            <div class="df-seg">
-              <For each={SORTS}>
-                {([k, label]) => (
+          </div>
+          <div class="df-run-actions">
+            <button
+              class="df-btn df-btn-primary"
+              onClick={() => void copyLibraryForAi(props.lib.path)}
+            >
+              <ClipboardCopy size={15} aria-hidden="true" /> Copy for AI
+            </button>
+            <button
+              class="df-btn"
+              onClick={() => void exportLibrary(props.lib.path, props.lib.query)}
+            >
+              <FileDown size={15} aria-hidden="true" /> Export
+            </button>
+            <button
+              class="df-btn df-btn-quiet df-btn-icon"
+              aria-label="Show in folder"
+              title="Show in folder"
+              onClick={() => void api.revealInFinder(props.lib.path)}
+            >
+              <FolderOpen size={15} />
+            </button>
+            <button
+              class="df-btn df-btn-quiet df-btn-icon"
+              aria-label="Delete library"
+              title="Delete library"
+              onClick={() => void remove()}
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
+        </div>
+
+        <div class="df-lib-toolbar">
+          <div class="df-search">
+            <Search size={14} aria-hidden="true" />
+            <input
+              class="df-input"
+              type="search"
+              placeholder="Search titles, authors and full text…"
+              aria-label="Search this library"
+              value={filter()}
+              onInput={(e) => setFilter(e.currentTarget.value)}
+            />
+          </div>
+          <div class="df-seg" role="group" aria-label="Sort">
+            <For
+              each={
+                [
+                  ["best", "Best match"],
+                  ["title", "Title"],
+                  ["year", "Newest"],
+                ] as [Sort, string][]
+              }
+            >
+              {([id, label]) => (
+                <button aria-pressed={sort() === id} onClick={() => setSort(id)}>
+                  {label}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+
+        <Show when={hits().length > 0}>
+          <div class="df-section" style={{ "margin-top": "var(--sp-4)" }}>
+            <div class="df-section-head">
+              <span class="df-label">Passages</span>
+              <span class="df-label num">{hits().length}</span>
+            </div>
+            <For each={hits().slice(0, 12)}>
+              {(h) => (
+                <div class="df-hit">
+                  <button class="df-slip-title" onClick={() => setSelected(h.doc_id)}>
+                    {h.title}
+                  </button>
+                  <div class="df-slip-meta">
+                    {h.heading ? <span>{h.heading}</span> : null}
+                    {h.page_start ? <span>· p. {h.page_start}</span> : null}
+                  </div>
+                  <Snippet text={h.snippet} />
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+
+        <div class="df-section" style={{ "margin-top": "var(--sp-4)" }}>
+          <div class="df-section-head">
+            <span class="df-label">Documents</span>
+            <span class="df-label num">{visible().length}</span>
+          </div>
+          <Show when={!docs.loading} fallback={<p class="df-muted">Loading…</p>}>
+            <Show
+              when={!docs.error}
+              fallback={<p class="df-muted">Couldn’t read this library: {String(docs.error)}</p>}
+            >
+              <div role="listbox" aria-label="Documents" onKeyDown={onListKey}>
+                <For each={visible()}>
+                  {(d) => (
+                    <button
+                      id={`df-doc-${d.id}`}
+                      role="option"
+                      class="df-doc-row"
+                      aria-selected={selected() === d.id}
+                      onClick={() => setSelected(d.id)}
+                      onDblClick={() => void api.openPath(d.path)}
+                    >
+                      <div style={{ "min-width": 0 }}>
+                        <div class="df-slip-title">{d.title}</div>
+                        <div class="df-slip-meta">
+                          <i class="df-dot" style={{ background: sourceColor(d.source) }} />
+                          <span>{sourceLabel(d.source)}</span>
+                          {d.year ? <span>· {d.year}</span> : null}
+                          {d.authors.length ? (
+                            <span>
+                              · {d.authors.slice(0, 2).join(", ")}
+                              {d.authors.length > 2 ? " et al." : ""}
+                            </span>
+                          ) : null}
+                          {d.extract_error ? <span class="df-tag df-tag-warn">no text</span> : null}
+                        </div>
+                      </div>
+                      <span class="df-slip-side num">
+                        {d.pages ? `${d.pages} pp · ` : ""}
+                        {formatBytes(d.size_bytes ?? 0)}
+                      </span>
+                    </button>
+                  )}
+                </For>
+              </div>
+              <Show when={visible().length === 0}>
+                <p class="df-muted">No documents match “{filter()}”.</p>
+              </Show>
+            </Show>
+          </Show>
+        </div>
+      </div>
+      <Show when={selectedDoc()}>
+        {(d) => <Inspector doc={d()} folder={props.lib.path} onClose={() => setSelected(null)} />}
+      </Show>
+    </div>
+  );
+}
+
+export default function LibraryView() {
+  const libs = () =>
+    [...uiStore.knownLibraries].sort((a, b) => compareLibraryRecency(a.name, b.name));
+  const [globalQ, setGlobalQ] = createSignal("");
+  const [globalHits, setGlobalHits] = createSignal<SearchHit[]>([]);
+  const current = () =>
+    libs().find((l) => l.path === uiStore.openLibraryPath) ??
+    (uiStore.openLibraryPath ? null : (libs()[0] ?? null));
+
+  void refreshLibraries();
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(
+    on(globalQ, (q) => {
+      clearTimeout(timer);
+      if (q.trim().length < 2) return setGlobalHits([]);
+      timer = setTimeout(() => {
+        api
+          .searchLibrary(q, null, 40)
+          .then(setGlobalHits)
+          .catch(() => setGlobalHits([]));
+      }, 250);
+    }),
+  );
+  onCleanup(() => clearTimeout(timer));
+
+  return (
+    <Show
+      when={libs().length > 0}
+      fallback={
+        <div class="df-page">
+          <div class="df-empty">
+            <h1 class="df-title" style={{ "font-size": "44px" }}>
+              Your library is <em>empty</em>
+            </h1>
+            <p>Every search becomes a library of clean, searchable documents.</p>
+            <button
+              class="df-btn df-btn-primary df-btn-lg"
+              onClick={() => uiStore.setView("discover")}
+            >
+              Start a search
+            </button>
+          </div>
+        </div>
+      }
+    >
+      <div class="df-lib">
+        <div class="df-lib-list">
+          <div class="df-lib-list-head">
+            <div class="df-label">Libraries</div>
+          </div>
+          <div class="df-search">
+            <Search size={14} aria-hidden="true" />
+            <input
+              class="df-input"
+              type="search"
+              placeholder="Search every library…"
+              aria-label="Search the full text of every library"
+              value={globalQ()}
+              onInput={(e) => setGlobalQ(e.currentTarget.value)}
+            />
+          </div>
+          <Show
+            when={globalQ().trim().length >= 2}
+            fallback={
+              <div>
+                <For each={libs()}>
+                  {(l) => {
+                    const ts = libraryTimestamp(l.name);
+                    return (
+                      <button
+                        class="df-lib-item"
+                        aria-current={current()?.path === l.path}
+                        onClick={() => uiStore.showLibrary(l.path)}
+                      >
+                        <b>{l.query}</b>
+                        <span class="num">
+                          {l.n_docs} docs · {formatBytes(l.size_bytes)}
+                          {ts ? ` · ${formatRelativeTime(ts)}` : ""}
+                        </span>
+                      </button>
+                    );
+                  }}
+                </For>
+              </div>
+            }
+          >
+            <div>
+              <Show when={globalHits().length === 0}>
+                <p class="df-muted" style={{ padding: "0 8px" }}>
+                  No passages match.
+                </p>
+              </Show>
+              <For each={globalHits()}>
+                {(h) => (
                   <button
-                    class={sortBy() === k ? "on" : ""}
-                    aria-pressed={sortBy() === k}
-                    onClick={() => setSortBy(k)}
+                    class="df-lib-item"
+                    onClick={() => uiStore.showLibrary(h.library)}
+                    style={{ "padding-bottom": "12px" }}
                   >
-                    {label}
+                    <span>{h.library_query}</span>
+                    <div style={{ "font-weight": 560, margin: "2px 0" }}>{h.title}</div>
+                    <span>
+                      <Snippet text={h.snippet} />
+                    </span>
                   </button>
                 )}
               </For>
             </div>
-          </div>
-        </Show>
-      </div>
-
-      <div class="df-canvas-body" style={{ "padding-top": "20px" }}>
-        <Show when={actionError()}>
-          <div style={{ "margin-bottom": "16px" }}>
-            <Banner kind="bad" onDismiss={() => setActionError(null)}>
-              {actionError()}
-            </Banner>
-          </div>
-        </Show>
-
-        <Show when={exportOk()}>
-          {(ok) => (
-            <div style={{ "margin-bottom": "16px" }}>
-              <Banner kind="ok" onDismiss={() => setExportOk(null)}>
-                Exported {ok().files} file{ok().files === 1 ? "" : "s"} ({formatBytes(ok().bytes)})
-                to <code>{ok().dest}</code>
-              </Banner>
+          </Show>
+        </div>
+        <Show
+          when={current()}
+          keyed
+          fallback={
+            <div class="df-page">
+              <p class="df-muted">That library is no longer available.</p>
             </div>
-          )}
-        </Show>
-
-        {/* DOCUMENT DETAIL — drill into a saved library's documents so the user
-            can OPEN a paper they found in an earlier session (not just reveal the
-            folder). The grid below is hidden while this is open. */}
-        <Show when={selectedLib()}>
+          }
+        >
           {(lib) => (
-            <div class="df-libdetail">
-              <div
-                style={{
-                  display: "flex",
-                  "align-items": "center",
-                  gap: "10px",
-                  "margin-bottom": "14px",
-                }}
-              >
-                <button
-                  class="df-btn sm ghost df-detail-back"
-                  onClick={() => {
-                    // Clear any detail-context error so it doesn't leak onto the grid.
-                    setActionError(null);
-                    setDocsError(null);
-                    setDetailError(null);
-                    setSelectedLib(null);
-                    // Keep "active library" in sync so re-clicking the same Recent
-                    // entry reopens it (an unchanged activeLibrary wouldn't refire).
-                    uiStore.setActiveLibrary(null);
-                    // The Back button unmounts with the detail, dropping focus to
-                    // <body>; restore it to the grid's filter input.
-                    requestAnimationFrame(() =>
-                      (
-                        document.querySelector(".df-inline-search input") as HTMLElement | null
-                      )?.focus(),
-                    );
-                  }}
-                >
-                  <ArrowLeft size={13} /> Libraries
-                </button>
-                <div
-                  title={lib().query ?? lib().name}
-                  style={{
-                    "font-size": "16px",
-                    "font-weight": 600,
-                    "min-width": 0,
-                    overflow: "hidden",
-                    "text-overflow": "ellipsis",
-                    "white-space": "nowrap",
-                  }}
-                >
-                  {lib().query ?? lib().name}
-                </div>
-                <span style={{ flex: 1 }} />
-                <button
-                  class="df-btn sm ghost"
-                  onClick={() => {
-                    setDetailError(null);
-                    api
-                      .revealInFinder(lib().path)
-                      .catch((e) =>
-                        setDetailError(`Couldn't open this library's folder: ${String(e)}`),
-                      );
-                  }}
-                >
-                  <FolderOpen size={12} /> Show folder
-                </button>
-              </div>
-              {/* In-detail open/reveal failures (rendered here, not the off-screen
-                  top-of-page banner). */}
-              <Show when={detailError()}>
-                <div style={{ "margin-bottom": "12px" }}>
-                  <Banner kind="bad" onDismiss={() => setDetailError(null)}>
-                    {detailError()}
-                  </Banner>
-                </div>
-              </Show>
-              <Show when={docsError()}>
-                <div style={{ "margin-bottom": "12px" }}>
-                  <Banner kind="bad">{docsError()}</Banner>
-                </div>
-              </Show>
-              {/* On a read error show ONLY the banner — not a contradictory
-                  "No openable documents" empty-state below it. */}
-              <Show when={!docsError()}>
-                <Show
-                  when={!docsLoading()}
-                  fallback={
-                    <div
-                      role="status"
-                      aria-label="Loading documents"
-                      style={{ display: "flex", "justify-content": "center", padding: "40px 0" }}
-                    >
-                      <Loader2 size={20} class="spin" style={{ color: "var(--ink-3)" }} />
-                    </div>
-                  }
-                >
-                  <Show
-                    when={libDocs().length > 0}
-                    fallback={
-                      <div
-                        style={{ padding: "24px 0", color: "var(--ink-3)", "font-size": "13px" }}
-                      >
-                        No openable documents were saved in this library.
-                      </div>
-                    }
-                  >
-                    <p class="hint" style={{ "margin-bottom": "10px" }}>
-                      Click a document to open it.
-                      {/* The card count is every document this library saved; the
-                          list shows only those whose file is still on disk. Explain
-                          the gap instead of leaving the user to wonder why fewer
-                          rows appear than the card promised. */}
-                      <Show when={(selectedLib()?.n_docs ?? 0) > libDocs().length}>
-                        {" "}
-                        <span style={{ color: "var(--ink-3)" }}>
-                          {(selectedLib()?.n_docs ?? 0) - libDocs().length} saved{" "}
-                          {(selectedLib()?.n_docs ?? 0) - libDocs().length === 1
-                            ? "file is"
-                            : "files are"}{" "}
-                          no longer on disk.
-                        </span>
-                      </Show>
-                    </p>
-                    <For each={libDocs()}>
-                      {(d) => (
-                        <DocRow
-                          kind="saved"
-                          onOpen={openDoc}
-                          doc={{
-                            source: d.source,
-                            title: d.title,
-                            status: "done",
-                            ftype: ftypeFromPath(d.path),
-                            bytes: d.size_bytes,
-                            path: d.path,
-                            // Surface "saved but no text extracted" (e.g. a scanned
-                            // PDF) as a calm, humanized muted note — the file IS
-                            // openable, so a red "error" on a green-checked row
-                            // would contradict itself.
-                            note: d.extract_error
-                              ? humanizeDownloadError(d.extract_error)
-                              : undefined,
-                          }}
-                        />
-                      )}
-                    </For>
-                  </Show>
-                </Show>
-              </Show>
-            </div>
+            <LibraryDetail
+              lib={lib}
+              onDeleted={() => {
+                uiStore.showLibrary(null);
+                void refreshLibraries();
+              }}
+            />
           )}
         </Show>
-
-        {/* LIBRARY LIST — hidden while viewing one library's documents. */}
-        <Show when={!selectedLib()}>
-          {/* Full-screen spinner ONLY on the first load (empty list). Background
-            refreshes (run-finished, post-delete) keep the existing grid mounted
-            so it doesn't flash blank — which read as "did my libraries vanish?". */}
-          <Show when={loading() && !didFirstLoad()}>
-            <div
-              role="status"
-              aria-label="Loading your libraries"
-              style={{ display: "flex", "justify-content": "center", padding: "64px 0" }}
-            >
-              <Loader2 size={24} class="spin" style={{ color: "var(--ink-3)" }} />
-            </div>
-          </Show>
-
-          <Show when={!loading() && error()}>
-            <div style={{ "margin-bottom": "16px" }}>
-              <Banner kind="bad">
-                <div>
-                  {/* If we already have a list on screen, a refetch failure is
-                    non-destructive — keep the grid and say so, rather than wiping
-                    the user's libraries off the screen. */}
-                  {libraries().length > 0
-                    ? "Couldn't refresh — showing your last loaded libraries."
-                    : "We couldn't read your library folder."}{" "}
-                  {error()}
-                  <div style={{ "margin-top": "8px" }}>
-                    <button class="df-btn sm" onClick={() => setLoadTick((n) => n + 1)}>
-                      <RefreshCw size={12} /> Retry
-                    </button>
-                  </div>
-                </div>
-              </Banner>
-            </div>
-          </Show>
-
-          {/* Keep the empty/"No matches" card visible during a BACKGROUND refresh
-            (libraries already loaded) — only suppress it during the first load,
-            where the spinner shows instead. Mirrors the grid staying mounted. */}
-          <Show when={!error() && sorted().length === 0 && !(loading() && !didFirstLoad())}>
-            <div class="df-empty">
-              <div class="df-empty-mark">
-                <LibraryIcon size={28} />
-              </div>
-              <h2 class="df-empty-title">{filter() ? "No matches" : "No libraries yet"}</h2>
-              <p class="df-empty-sub">
-                {filter()
-                  ? `Nothing in your library matches “${filter()}”.`
-                  : "Run a search and Document Finder saves everything it downloads into its own collection here."}
-              </p>
-              <button
-                class="df-btn accent"
-                onClick={() => (filter() ? setFilter("") : uiStore.setView("find"))}
-              >
-                {filter() ? "Clear filter" : "Go to Discover"}
-              </button>
-            </div>
-          </Show>
-
-          {/* Grid stays mounted during a background refresh (no !loading gate) and
-            hides on error so a stale grid can't render under the error banner. */}
-          {/* Grid stays mounted even on a refetch error (the banner above explains
-            it) — only the empty-list error state hides it. */}
-          <Show when={sorted().length > 0}>
-            <div class="df-libgrid">
-              <For each={sorted()}>
-                {(lib) => {
-                  const isActive = () => uiStore.activeLibrary?.path === lib.path;
-                  const isExporting = () => exportingPath() === lib.path;
-                  const isDeleting = () => deletingPath() === lib.path;
-                  const isBusy = () => isExporting() || isDeleting();
-                  return (
-                    // Clicking the card drills into its documents (so the user can
-                    // open a paper they found earlier). The "Show" button still
-                    // reveals the OS folder; "Open documents" is the primary action.
-                    // Mouse-only affordance on the card body: keyboard users tab to
-                    // the explicit, focusable "Open" / "Show" buttons; the actions
-                    // wrapper stops propagation so its buttons act alone.
-                    <div
-                      classList={{
-                        "df-libcard": true,
-                        active: isActive(),
-                        "opacity-60 pointer-events-none": isDeleting(),
-                      }}
-                      title="View this library's documents"
-                      onClick={() => {
-                        setActionError(null);
-                        openLibraryDocs(lib);
-                      }}
-                    >
-                      <div class="df-libcard-head">
-                        <div class="df-libcard-q" title={lib.query ?? lib.name}>
-                          {lib.query ?? lib.name}
-                        </div>
-                      </div>
-                      <div class="df-libcard-meta">
-                        <span>
-                          <strong>{lib.n_docs}</strong> document{lib.n_docs === 1 ? "" : "s"}
-                        </span>
-                        <span style={{ color: "var(--ink-4)" }}>·</span>
-                        <span>{formatBytes(lib.size_bytes)}</span>
-                        {/* Run age — distinguishes multiple libraries from the same
-                          query (re-searching a topic) that share an identical title. */}
-                        <Show when={libraryTimestamp(lib.name) !== null}>
-                          <span style={{ color: "var(--ink-4)" }}>·</span>
-                          <span>{formatRelativeTime(libraryTimestamp(lib.name)!)}</span>
-                        </Show>
-                      </div>
-                      <div
-                        class="df-libcard-actions"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                        }}
-                      >
-                        <button
-                          class="df-btn sm"
-                          onClick={() => {
-                            setActionError(null);
-                            openLibraryDocs(lib);
-                          }}
-                          disabled={isBusy()}
-                          title="Open this library's documents"
-                        >
-                          <LibraryIcon size={12} /> Open
-                        </button>
-                        <button
-                          class="df-btn sm ghost"
-                          onClick={() => handleExport(lib)}
-                          disabled={isBusy()}
-                        >
-                          <Show when={isExporting()} fallback={<Archive size={12} />}>
-                            <Loader2 size={12} class="spin" />
-                          </Show>
-                          Export
-                        </button>
-                        <button
-                          class="df-btn sm ghost"
-                          onClick={() => {
-                            setActionError(null);
-                            api
-                              .revealInFinder(lib.path)
-                              .catch((e) =>
-                                setActionError(`Couldn't open this library's folder: ${String(e)}`),
-                              );
-                          }}
-                          disabled={isBusy()}
-                        >
-                          <FolderOpen size={12} /> Show
-                        </button>
-                        <span style={{ flex: 1 }} />
-                        <button
-                          class="df-btn sm danger"
-                          onClick={() => handleDelete(lib)}
-                          disabled={isBusy()}
-                          title="Delete library"
-                          aria-label={`Delete ${lib.query ?? lib.name}`}
-                        >
-                          <Show when={isDeleting()} fallback={<Trash2 size={12} />}>
-                            <Loader2 size={12} class="spin" />
-                          </Show>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                }}
-              </For>
-            </div>
-          </Show>
-        </Show>
       </div>
-    </div>
+    </Show>
   );
 }

@@ -4,12 +4,10 @@
 # Like run.ps1, but wipes build artifacts first so you get a from-scratch
 # compile. Two clean depths:
 #
-#   .\rebuild.ps1          Clean just our crate, keep the cached llama.cpp +
-#                          ONNX Runtime native builds. Recompiles ALL app code
-#                          fresh in ~3-6 min. This is what you want 95% of the time.
-#   .\rebuild.ps1 -Full    Nuke the whole target dir, forcing a llama.cpp + ONNX
-#                          Runtime rebuild from source (~15-25 min). Use only when
-#                          you suspect a stale native dependency.
+#   .\rebuild.ps1          Clean just our crate, keep cached dependencies.
+#                          Recompiles all app code fresh in a few minutes.
+#   .\rebuild.ps1 -Full    Nuke the whole target dir and rebuild every
+#                          dependency. Use only when you suspect a stale one.
 #
 # Other switches:
 #   -Dev        After cleaning, run `pnpm tauri dev` (debug + hot reload) instead
@@ -39,7 +37,7 @@ Get-Process -Name "document-finder", "Document Finder" -ErrorAction SilentlyCont
 Start-Sleep -Milliseconds 500
 
 if ($Full) {
-    Write-Info "Full clean - this forces a llama.cpp + ONNX Runtime rebuild (~15-25 min)..."
+    Write-Info "Full clean - rebuilding every dependency..."
     cargo clean --manifest-path src-tauri\Cargo.toml
 } else {
     Write-Info "Cleaning the document-finder crate (keeping cached native deps)..."

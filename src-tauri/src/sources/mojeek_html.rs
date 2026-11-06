@@ -126,6 +126,7 @@ impl Source for MojeekHtmlSource {
                         year: None,
                         abstract_: None,
                         identifier: None,
+                        ..Default::default()
                     });
                     count += 1;
                 }

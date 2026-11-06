@@ -103,13 +103,22 @@ async fn downloads_a_real_pdf_from_a_landing_page_url() {
         year: None,
         abstract_: None,
         identifier: None,
+        ..Default::default()
     };
     let dir = tempfile::tempdir().unwrap();
     let client = make_download_client();
     let cancel = CancellationToken::new();
 
     let t = Instant::now();
-    let outcome = download(&doc, dir.path(), &client, &cancel, |_| {}).await;
+    let outcome = download(
+        &doc,
+        dir.path(),
+        &client,
+        &document_finder_lib::engine::hostlimit::HostLimiter::new(),
+        &cancel,
+        |_| {},
+    )
+    .await;
     println!("download finished in {:?}", t.elapsed());
 
     let path = match outcome {

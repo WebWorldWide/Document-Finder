@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Document Finder",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "com.webworldwide.documentfinder",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "node scripts/fetch-pdfium.mjs && pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "node scripts/fetch-pdfium.mjs && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -40,11 +40,12 @@
       "icons/icon.ico"
     ],
     "category": "Productivity",
-    "shortDescription": "Find documents for AI conversational awareness",
-    "longDescription": "Search open-access sources, download PDFs/EPUBs/HTML/text in parallel, and bundle them into AI-ready context with full-text BM25 search.",
+    "shortDescription": "Find open-access research and package it for AI",
+    "longDescription": "Search open-access sources in parallel, download papers and books, extract clean Markdown, and hand it to your AI — as an export pack, a copy-paste corpus, or live over MCP.",
     "macOS": {
       "minimumSystemVersion": "11.0",
-      "signingIdentity": "-"
+      "hardenedRuntime": true,
+      "entitlements": "Entitlements.plist"
     }
   }
 }

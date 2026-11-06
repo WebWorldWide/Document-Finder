@@ -156,6 +156,7 @@ impl Source for EuropePmcSource {
                         year: h.pub_year,
                         abstract_: h.abstract_text,
                         identifier: h.doi,
+                        ..Default::default()
                     });
                 }
                 let added = docs.len();

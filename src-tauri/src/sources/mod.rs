@@ -52,7 +52,7 @@ pub const SOURCE_IDS: &[&str] = &[
     "startpage",
 ];
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Document {
     pub title: String,
     pub url: String,
@@ -65,12 +65,53 @@ pub struct Document {
     pub abstract_: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
+    /// Normalized DOI (lowercase, no `https://doi.org/` prefix) when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doi: Option<String>,
+    /// Additional candidate download URLs, best first. Filled by sources that
+    /// know several open-access locations (OpenAlex) and by dedup merges, so
+    /// the downloader can fall back when the primary link fails.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alt_urls: Vec<String>,
+    /// Citation count reported by the source (OpenAlex / Semantic Scholar).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cited_by: Option<u32>,
+    /// Venue / journal / publisher name when the source reports one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub venue: Option<String>,
+    /// License string (e.g. `cc-by`) when the source reports one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
 }
 
 static SLUG_NON_ALNUM: Lazy<Regex> = Lazy::new(|| Regex::new(r"[^\w\s-]").unwrap());
 static SLUG_HYPHEN_RUNS: Lazy<Regex> = Lazy::new(|| Regex::new(r"[-\s]+").unwrap());
 
 impl Document {
+    /// Best-known DOI: the explicit field, else one embedded in the
+    /// identifier or URL.
+    pub fn best_doi(&self) -> Option<String> {
+        self.doi
+            .clone()
+            .or_else(|| {
+                self.identifier
+                    .as_deref()
+                    .and_then(crate::engine::dedup::extract_doi)
+            })
+            .or_else(|| crate::engine::dedup::extract_doi(&self.url))
+    }
+
+    /// Primary URL followed by every alternate, de-duplicated, in order.
+    pub fn all_urls(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::with_capacity(1 + self.alt_urls.len());
+        for u in std::iter::once(&self.url).chain(self.alt_urls.iter()) {
+            if !u.is_empty() && !out.iter().any(|o| o == u) {
+                out.push(u.clone());
+            }
+        }
+        out
+    }
+
     /// Filename-safe slug derived from title + 6-char URL hash. Mirrors Python's `slug()`.
     pub fn slug(&self) -> String {
         let cleaned = SLUG_NON_ALNUM.replace_all(&self.title, "");

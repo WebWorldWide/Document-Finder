@@ -128,6 +128,7 @@ impl Source for GutenbergSource {
                         year: None,
                         abstract_: None,
                         identifier: b.id.map(|i| i.to_string()),
+                        ..Default::default()
                     });
                     count += 1;
                 }

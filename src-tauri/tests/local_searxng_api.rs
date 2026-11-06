@@ -44,6 +44,7 @@ fn stub() -> Arc<dyn Source> {
                 year: None,
                 abstract_: Some("Safe systems programming".to_string()),
                 identifier: None,
+                ..Default::default()
             },
             Document {
                 title: "The Rust Book".to_string(),
@@ -53,6 +54,7 @@ fn stub() -> Arc<dyn Source> {
                 year: None,
                 abstract_: None,
                 identifier: None,
+                ..Default::default()
             },
         ],
     })

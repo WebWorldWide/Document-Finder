@@ -5,10 +5,12 @@ use futures::StreamExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
+use super::hostlimit::HostLimiter;
 use crate::sources::Document;
 
 /// Result of an individual download attempt.
@@ -111,15 +113,15 @@ fn referer_for(url: &str) -> Option<String> {
 /// auth). A project address — never the user's — so no PII leaves the machine.
 const UNPAYWALL_CONTACT: &str = "documentfinder@webworldwide.com";
 
-/// Ask Unpaywall for an open-access PDF URL for a DOI, as a last-resort resolver
-/// for a kept candidate whose primary link was paywalled / dead / a landing page
-/// with no resolvable PDF. Returns `best_oa_location.url_for_pdf` when present.
-/// Email param only (no key); the caller scopes this to DOI-bearing candidates.
-pub async fn resolve_oa_pdf_via_unpaywall(client: &reqwest::Client, doi: &str) -> Option<String> {
+/// Ask Unpaywall for open-access PDF URLs for a DOI (best location first,
+/// then up to two others). Email param only (no key).
+pub async fn resolve_oa_pdfs_via_unpaywall(client: &reqwest::Client, doi: &str) -> Vec<String> {
     #[derive(serde::Deserialize)]
     struct UpResp {
         #[serde(default)]
         best_oa_location: Option<UpLoc>,
+        #[serde(default)]
+        oa_locations: Vec<UpLoc>,
     }
     #[derive(serde::Deserialize)]
     struct UpLoc {
@@ -127,9 +129,6 @@ pub async fn resolve_oa_pdf_via_unpaywall(client: &reqwest::Client, doi: &str) -
         url_for_pdf: Option<String>,
     }
     let url = format!("https://api.unpaywall.org/v2/{doi}");
-    // The download client has no overall timeout (for large PDFs), so bound this
-    // lookup tightly — it's only a small JSON fetch, and a slow/hung Unpaywall
-    // must never stall the download task it runs inside.
     let fetch = async {
         let resp = client
             .get(&url)
@@ -141,20 +140,70 @@ pub async fn resolve_oa_pdf_via_unpaywall(client: &reqwest::Client, doi: &str) -
             .ok()?;
         resp.json::<UpResp>().await.ok()
     };
-    let body = tokio::time::timeout(std::time::Duration::from_secs(8), fetch)
+    let Some(body) = tokio::time::timeout(std::time::Duration::from_secs(8), fetch)
         .await
-        .ok()??;
-    body.best_oa_location
-        .and_then(|l| l.url_for_pdf)
-        .filter(|u| !u.is_empty())
+        .ok()
+        .flatten()
+    else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for loc in body.best_oa_location.into_iter().chain(body.oa_locations) {
+        if let Some(u) = loc.url_for_pdf.filter(|u| !u.is_empty()) {
+            if !out.contains(&u) {
+                out.push(u);
+            }
+        }
+        if out.len() >= 3 {
+            break;
+        }
+    }
+    out
 }
 
-/// Cheap, pre-network URL rewrites that turn a known landing-page shape into a
-/// direct document URL without a round-trip. Currently: arXiv `/abs/<id>` →
-/// `/pdf/<id>` (the PDF endpoint serves `%PDF` directly).
+static PMC_ID: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\b(PMC\d{4,})\b").unwrap());
+static OSF_ID: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^https?://osf\.io/([a-z0-9]{5})/?$").unwrap());
+static ARXIV_DOI: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)doi\.org/10\.48550/arxiv\.(\d{4}\.\d{4,5}(?:v\d+)?)").unwrap());
+
+/// Cheap, pre-network rewrites that turn known landing-page shapes into a
+/// direct document URL, saving a round-trip (and often a failure):
+/// arXiv abs/DOI → PDF, PMC / Europe PMC articles → Europe PMC's PDF render,
+/// bioRxiv / medRxiv → `.full.pdf`, OSF project → `/download`.
 pub fn canonicalize_doc_url(url: &str) -> String {
-    if url.contains("arxiv.org/abs/") {
+    let lower = url.to_ascii_lowercase();
+    if lower.contains("arxiv.org/abs/") {
         return url.replace("arxiv.org/abs/", "arxiv.org/pdf/");
+    }
+    if let Some(c) = ARXIV_DOI.captures(url) {
+        return format!("https://arxiv.org/pdf/{}", &c[1]);
+    }
+    let pmc_page = (lower.contains("ncbi.nlm.nih.gov/pmc/articles/")
+        || lower.contains("pmc.ncbi.nlm.nih.gov/articles/")
+        || lower.contains("europepmc.org/article/pmc/")
+        || lower.contains("europepmc.org/articles/"))
+        && !lower.contains(".pdf");
+    if pmc_page {
+        if let Some(c) = PMC_ID.captures(url) {
+            return format!(
+                "https://europepmc.org/backend/ptpmcrender.fcgi?accid={}&blobtype=pdf",
+                c[1].to_uppercase()
+            );
+        }
+    }
+    if (lower.contains("biorxiv.org/content/10.") || lower.contains("medrxiv.org/content/10."))
+        && !lower.ends_with(".pdf")
+        && !lower.contains('?')
+    {
+        let base = url
+            .trim_end_matches('/')
+            .trim_end_matches(".full")
+            .trim_end_matches(".abstract");
+        return format!("{base}.full.pdf");
+    }
+    if let Some(c) = OSF_ID.captures(&lower) {
+        return format!("https://osf.io/{}/download", &c[1]);
     }
     url.to_string()
 }
@@ -236,21 +285,6 @@ static ANCHOR_DOWNLOADISH: Lazy<Regex> = Lazy::new(|| {
     )
     .unwrap()
 });
-
-/// Read at most `cap` bytes of a response body as lossy UTF-8. Used to scan an
-/// HTML landing page without pulling an unbounded body into memory.
-async fn read_body_bytes_capped(resp: reqwest::Response, cap: usize) -> Option<Vec<u8>> {
-    let mut stream = resp.bytes_stream();
-    let mut buf: Vec<u8> = Vec::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.ok()?;
-        buf.extend_from_slice(&chunk);
-        if buf.len() >= cap {
-            break;
-        }
-    }
-    Some(buf)
-}
 
 /// Resolve a relative or absolute href against `base`, returning an absolute URL.
 fn resolve_href(base: &url::Url, href: &str) -> Option<String> {
@@ -420,18 +454,38 @@ async fn read_file_head(path: &Path, n: usize) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// GET a document URL with the document-shaped headers and bounded retry on
-/// 429/5xx. Returns the validated `Response` or a terminal `DownloadOutcome`.
+/// `Retry-After` in its delta-seconds form.
+fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<std::time::Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(std::time::Duration::from_secs)
+}
+
+/// Sleep that returns `false` early if `cancel` fires.
+async fn nap(cancel: &CancellationToken, d: std::time::Duration) -> bool {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => false,
+        _ = tokio::time::sleep(d) => true,
+    }
+}
+
+/// GET a document URL with document-shaped headers and bounded, cancel-aware
+/// retry on 429/5xx/transport errors. Feeds the per-host limiter: success
+/// widens the host's window, 429/503 halves it and honors `Retry-After`.
 async fn get_document_response(
     client: &reqwest::Client,
     url: &str,
     cancel: &CancellationToken,
+    limiter: &HostLimiter,
+    host: &str,
 ) -> Result<reqwest::Response, DownloadOutcome> {
+    const ATTEMPTS: u32 = 3;
+    const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
     let referer = referer_for(url);
-    for attempt in 0..3 {
-        if cancel.is_cancelled() {
-            return Err(DownloadOutcome::Cancelled);
-        }
+    for attempt in 0..ATTEMPTS {
         let mut req = client
             .get(url)
             .header(reqwest::header::ACCEPT, DOC_ACCEPT)
@@ -444,65 +498,65 @@ async fn get_document_response(
         if host_needs_honest_ua(url) {
             req = req.header(reqwest::header::USER_AGENT, REPO_UA);
         }
-        match req.send().await {
-            Ok(r) => match r.error_for_status() {
-                Ok(r) => return Ok(r),
-                Err(e) => {
-                    let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
-                    if attempt < 2 && (status == 429 || (500..=599).contains(&status)) {
-                        let wait = std::time::Duration::from_secs(2 * (attempt + 1) as u64);
-                        tokio::time::sleep(wait).await;
-                        continue;
-                    }
-                    return Err(DownloadOutcome::Failed(format!(
-                        "{}. (HTTP {status})",
-                        http_status_message(status)
-                    )));
+        let sent = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(DownloadOutcome::Cancelled),
+            r = req.send() => r,
+        };
+        let backoff = std::time::Duration::from_secs(2 * (attempt as u64 + 1));
+        match sent {
+            Ok(r) if r.status().is_success() => {
+                limiter.reward(host);
+                return Ok(r);
+            }
+            Ok(r) => {
+                let status = r.status().as_u16();
+                let ra = retry_after(r.headers());
+                if status == 429 || status == 503 {
+                    limiter.penalize(host, ra);
                 }
-            },
-            Err(_e) if attempt < 2 => {
-                let wait = std::time::Duration::from_secs(2 * (attempt + 1) as u64);
-                tokio::time::sleep(wait).await;
-                continue;
+                let retryable = status == 429 || (500..=599).contains(&status);
+                if attempt + 1 < ATTEMPTS && retryable {
+                    if !nap(cancel, ra.unwrap_or(backoff).min(MAX_WAIT)).await {
+                        return Err(DownloadOutcome::Cancelled);
+                    }
+                    continue;
+                }
+                return Err(DownloadOutcome::Failed(format!(
+                    "{}. (HTTP {status})",
+                    http_status_message(status)
+                )));
+            }
+            Err(e) if attempt + 1 < ATTEMPTS && !e.is_builder() && !e.is_redirect() => {
+                if !nap(cancel, backoff).await {
+                    return Err(DownloadOutcome::Cancelled);
+                }
             }
             Err(e) => return Err(DownloadOutcome::Failed(network_error_message(&e))),
         }
     }
-    // The retry loop always returns inside the body; this guard just keeps a
-    // future refactor from turning that into a panic.
     Err(DownloadOutcome::Failed(
         "Download failed after multiple attempts.".to_string(),
     ))
 }
 
-pub async fn download<F>(
-    doc: &Document,
-    dest_dir: &Path,
-    client: &reqwest::Client,
-    cancel: &CancellationToken,
-    mut on_progress: F,
-) -> DownloadOutcome
-where
-    F: FnMut(ProgressEvent) + Send,
-{
-    let initial_url = canonicalize_doc_url(&doc.url);
-    let initial_ext = ext_from(&initial_url, "");
-    let slug = doc.slug();
-    let mut out = dest_dir.join(format!("{}{}", slug, initial_ext));
+type ByteStream = futures::stream::BoxStream<'static, reqwest::Result<bytes::Bytes>>;
 
-    // Resume-skip: only honor an existing file if it passes magic-byte checks.
-    // Older runs of this app saved HTML landing pages with .pdf extensions —
-    // those need to be re-attempted (or rejected) rather than reused. A valid
-    // existing file is reported as `Cached` (not `Saved`) and emits NO progress,
-    // so its size is never charged to the live network-throughput graph.
-    //
-    // Probe ALL candidate extensions, not just the URL-derived `initial_ext`:
-    // the file is ultimately stored under an extension reconciled from the
-    // Content-Type + magic bytes, which often differs from the URL path (e.g. a
-    // Gutenberg extensionless URL defaults to `.pdf` here but saves as `.epub`).
-    // Keying resume on `initial_ext` alone re-downloaded such docs in full on
-    // every re-run of the same query. Mirrors reuse_from_siblings' ext probe and
-    // its symlink discipline (skip planted symlinks rather than trust them).
+/// Pull the next chunk, racing a cancel. `Err(())` = cancelled.
+async fn next_chunk(
+    stream: &mut ByteStream,
+    cancel: &CancellationToken,
+) -> Result<Option<reqwest::Result<bytes::Bytes>>, ()> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(()),
+        c = stream.next() => Ok(c),
+    }
+}
+
+/// Valid existing copy of this slug in `dest_dir` (any document extension).
+/// Stale junk under a slot is removed so a fresh download has a clean path.
+pub async fn existing_copy(dest_dir: &Path, slug: &str) -> Option<PathBuf> {
     const RESUME_EXTS: [&str; 4] = [".pdf", ".epub", ".html", ".txt"];
     for ext in RESUME_EXTS {
         let candidate = dest_dir.join(format!("{slug}{ext}"));
@@ -513,32 +567,128 @@ where
             continue;
         }
         if meta.len() >= MIN_DOC_BYTES && existing_file_is_valid(&candidate).await {
-            return DownloadOutcome::Cached(candidate);
+            return Some(candidate);
         }
-        // Stale junk under this extension — wipe so the new download has a clean slot.
         let _ = tokio::fs::remove_file(&candidate).await;
     }
+    None
+}
 
-    // Fetch loop: try the (canonicalized) document URL; if the server returns an
-    // HTML landing page, resolve it to a real PDF link ONCE and retry. This is
-    // the difference between "most web/meta-search results fail" and "they
-    // download" — search engines overwhelmingly return landing-page URLs, not
-    // direct PDFs.
-    //
-    // SSRF guard: every URL we connect to (the original AND any resolved hop)
-    // is validated (http/https only, no credentials, resolves to a public IP)
-    // before we connect. Redirects are re-checked by the client's redirect
-    // policy (see `sources::make_client` / `make_download_client`).
-    let mut target = initial_url;
-    let mut resolved_once = false;
-    // Set once we've confirmed (via magic bytes) that a Content-Type: text/html
-    // response is ACTUALLY a document, so the re-fetch skips the content-type gate.
-    let mut force_accept = false;
-    let (resp, content_type) = loop {
+/// Download `doc`, trying its primary URL, then each merged/alternate URL,
+/// then Unpaywall's open-access locations for its DOI. A valid copy already
+/// in `dest_dir` is reused (`Cached`, no network). The first failure's
+/// message is reported if every route fails.
+pub async fn download<F>(
+    doc: &Document,
+    dest_dir: &Path,
+    client: &reqwest::Client,
+    limiter: &Arc<HostLimiter>,
+    cancel: &CancellationToken,
+    mut on_progress: F,
+) -> DownloadOutcome
+where
+    F: FnMut(ProgressEvent) + Send,
+{
+    /// Bound on routes tried per document so one stubborn doc can't hog a worker.
+    const MAX_ROUTES: usize = 5;
+    let slug = doc.slug();
+    if let Some(p) = existing_copy(dest_dir, &slug).await {
+        return DownloadOutcome::Cached(p);
+    }
+    let mut tried: Vec<String> = Vec::new();
+    let mut first_err: Option<String> = None;
+    let mut routes: Vec<String> = doc.all_urls();
+    let mut asked_unpaywall = false;
+    let mut i = 0;
+    loop {
+        if i >= routes.len() {
+            // Out of known URLs: ask Unpaywall once for more (DOI-bearing docs).
+            if asked_unpaywall || tried.len() >= MAX_ROUTES {
+                break;
+            }
+            asked_unpaywall = true;
+            let Some(doi) = doc.best_doi() else { break };
+            let found = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return DownloadOutcome::Cancelled,
+                r = resolve_oa_pdfs_via_unpaywall(client, &doi) => r,
+            };
+            let before = routes.len();
+            for u in found {
+                if !routes.contains(&u) {
+                    routes.push(u);
+                }
+            }
+            if routes.len() == before {
+                break;
+            }
+            continue;
+        }
+        let url = canonicalize_doc_url(&routes[i]);
+        i += 1;
+        if tried.contains(&url) {
+            continue;
+        }
+        if tried.len() >= MAX_ROUTES {
+            break;
+        }
+        tried.push(url.clone());
+        match download_url(
+            &slug,
+            &url,
+            dest_dir,
+            client,
+            limiter,
+            cancel,
+            &mut on_progress,
+        )
+        .await
+        {
+            DownloadOutcome::Failed(e) => {
+                tracing::debug!("route failed for {}: {url}: {e}", doc.title);
+                first_err.get_or_insert(e);
+            }
+            other => return other,
+        }
+        if cancel.is_cancelled() {
+            return DownloadOutcome::Cancelled;
+        }
+    }
+    DownloadOutcome::Failed(
+        first_err.unwrap_or_else(|| "No downloadable link was found for this document.".into()),
+    )
+}
+
+/// One route: fetch `url` (following up to two landing-page → PDF hops) and
+/// stream it into `<slug>.<ext>` atomically.
+#[allow(clippy::too_many_arguments)]
+async fn download_url<F>(
+    slug: &str,
+    url: &str,
+    dest_dir: &Path,
+    client: &reqwest::Client,
+    limiter: &Arc<HostLimiter>,
+    cancel: &CancellationToken,
+    on_progress: &mut F,
+) -> DownloadOutcome
+where
+    F: FnMut(ProgressEvent) + Send,
+{
+    const MAX_HOPS: usize = 2;
+    let mut target = url.to_string();
+    let mut hops = 0usize;
+
+    // Resolve to a document body: (permit, prefix bytes already read, rest of
+    // the stream, content-type, content-length).
+    let (_permit, prefix, mut stream, content_type, total) = loop {
         if let Err(reason) = crate::util::url_safety::validate_download_url(&target).await {
             return DownloadOutcome::Failed(format!("Blocked for safety: {reason}"));
         }
-        let resp = match get_document_response(client, &target, cancel).await {
+        let host = super::hostlimit::host_of(&target);
+        let Some(permit) = limiter.acquire(&host, cancel).await else {
+            return DownloadOutcome::Cancelled;
+        };
+        let resp = match get_document_response(client, &target, cancel, limiter, &host).await {
             Ok(r) => r,
             Err(outcome) => return outcome,
         };
@@ -548,61 +698,59 @@ where
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
-
-        if !force_accept && reject_content_type(&target, &content_type).is_some() {
-            // Landing page / JSON / XML. Try to resolve a PDF link from the
-            // HTML body — but only once, to bound work and avoid loops.
-            if !resolved_once {
-                let base = resp.url().clone();
-                let body = read_body_bytes_capped(resp, HTML_RESOLVE_CAP).await;
-                // Some OA endpoints (extensionless /download, /bitstream, OJS
-                // galley links) serve a REAL PDF/EPUB body under Content-Type:
-                // text/html. Trust the magic bytes over the header — exactly like
-                // the post-download reconcile step — and re-fetch + accept it as a
-                // document rather than dropping a valid file with a misleading
-                // "opened a web page" error. (Scan only the first 1 KB so an HTML
-                // page that merely mentions "%PDF" in its body isn't mis-detected.)
-                if let Some(b) = &body {
-                    let head = &b[..b.len().min(1024)];
-                    if sniff_doc_ext(head).is_some() {
-                        force_accept = true;
-                        continue;
-                    }
-                }
-                let resolved = body
-                    .as_ref()
-                    .and_then(|b| resolve_pdf_from_html(&String::from_utf8_lossy(b), &base));
-                if let Some(pdf_url) = resolved {
-                    // Skip if the resolved link points back at the URL we just
-                    // requested OR the page's own (post-redirect) final URL —
-                    // re-fetching it would just return the same HTML.
-                    if pdf_url != target && pdf_url != base.as_str() {
-                        target = pdf_url;
-                        resolved_once = true;
-                        continue;
-                    }
-                }
-            }
-            return DownloadOutcome::Failed(
-                "This link opened a web page, not a downloadable document.".to_string(),
+        let total = resp.content_length().unwrap_or(0);
+        if reject_content_type(&target, &content_type).is_none() {
+            break (
+                permit,
+                Vec::new(),
+                resp.bytes_stream().boxed(),
+                content_type,
+                total,
             );
         }
-        break (resp, content_type);
+
+        // Looks like a web page. Peek the first KB: some OA endpoints serve a
+        // real PDF/EPUB under `text/html` — if so, keep streaming THIS response
+        // (no second request) instead of re-fetching it.
+        let base = resp.url().clone();
+        let mut stream: ByteStream = resp.bytes_stream().boxed();
+        let mut buf: Vec<u8> = Vec::new();
+        while buf.len() < 1024 {
+            match next_chunk(&mut stream, cancel).await {
+                Err(()) => return DownloadOutcome::Cancelled,
+                Ok(Some(Ok(c))) => buf.extend_from_slice(&c),
+                Ok(_) => break,
+            }
+        }
+        if sniff_doc_ext(&buf[..buf.len().min(1024)]).is_some() {
+            break (permit, buf, stream, String::new(), total);
+        }
+        // A real page: read (bounded) and hunt for the PDF link.
+        while buf.len() < HTML_RESOLVE_CAP {
+            match next_chunk(&mut stream, cancel).await {
+                Err(()) => return DownloadOutcome::Cancelled,
+                Ok(Some(Ok(c))) => buf.extend_from_slice(&c),
+                Ok(_) => break,
+            }
+        }
+        drop(stream);
+        drop(permit);
+        if hops < MAX_HOPS {
+            if let Some(pdf_url) = resolve_pdf_from_html(&String::from_utf8_lossy(&buf), &base) {
+                let pdf_url = canonicalize_doc_url(&pdf_url);
+                if pdf_url != target && pdf_url != base.as_str() {
+                    target = pdf_url;
+                    hops += 1;
+                    continue;
+                }
+            }
+        }
+        return DownloadOutcome::Failed(
+            "This link opened a web page, not a downloadable document.".to_string(),
+        );
     };
 
-    let final_ext = ext_from(&target, &content_type);
-    if final_ext != initial_ext {
-        out = dest_dir.join(format!("{slug}{final_ext}"));
-    }
-    let total = resp
-        .headers()
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(0);
-
-    // Pre-reject oversized files declared in Content-Length before writing
-    // anything. (`total == 0` means "unknown length" and is never > the cap.)
+    let guessed_ext = ext_from(&target, &content_type);
     if total > MAX_FILE_BYTES {
         return DownloadOutcome::Failed(format!(
             "This file is too large to download (over {} MB).",
@@ -610,54 +758,64 @@ where
         ));
     }
 
-    // Stream into a sibling `.part` temp, then atomically rename to `out` only
-    // after the bytes pass every validation. This guarantees the FINAL path never
-    // holds a truncated body, so the resume-skip check above (which trusts a
-    // 4-byte magic header) can never accept a half-written file left behind by a
-    // crash / kill / power-loss mid-stream. One temp per doc-slug, in the same
-    // dir, so the rename stays on one filesystem (atomic on all target OSes).
-    let tmp = out.with_extension("part");
-    let mut file = match File::create(&tmp).await {
+    // Stream into a sibling `.part` temp, then atomically rename only after
+    // the bytes pass validation, so the final path never holds a truncated
+    // body. Buffered (256 KB) so small network chunks don't each cost a
+    // blocking-pool hop.
+    let tmp = dest_dir.join(format!("{slug}.part"));
+    let file = match File::create(&tmp).await {
         Ok(f) => f,
         Err(e) => return DownloadOutcome::Failed(format!("Couldn't create the file on disk: {e}")),
     };
-
+    let mut file = tokio::io::BufWriter::with_capacity(256 * 1024, file);
+    let mut head: Vec<u8> = Vec::with_capacity(1024);
     let mut downloaded: u64 = 0;
-    let mut stream = resp.bytes_stream();
+    let fail = |msg: String| async {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        DownloadOutcome::Failed(msg)
+    };
+
+    let mut pending: Option<bytes::Bytes> = if prefix.is_empty() {
+        None
+    } else {
+        Some(bytes::Bytes::from(prefix))
+    };
     loop {
-        let chunk_res = tokio::select! {
-            c = stream.next() => c,
-            _ = cancel.cancelled() => {
-                drop(file);
-                let _ = tokio::fs::remove_file(&tmp).await;
-                return DownloadOutcome::Cancelled;
-            }
-        };
-        let Some(chunk_res) = chunk_res else { break };
-        let chunk = match chunk_res {
-            Ok(c) => c,
-            Err(e) => {
-                drop(file);
-                let _ = tokio::fs::remove_file(&tmp).await;
-                return DownloadOutcome::Failed(network_error_message(&e));
-            }
+        let chunk = match pending.take() {
+            Some(c) => c,
+            None => match next_chunk(&mut stream, cancel).await {
+                Err(()) => {
+                    drop(file);
+                    let _ = tokio::fs::remove_file(&tmp).await;
+                    return DownloadOutcome::Cancelled;
+                }
+                Ok(None) => break,
+                Ok(Some(Err(e))) => {
+                    drop(file);
+                    return fail(network_error_message(&e)).await;
+                }
+                Ok(Some(Ok(c))) => c,
+            },
         };
         if chunk.is_empty() {
             continue;
         }
+        if head.len() < 1024 {
+            let take = (1024 - head.len()).min(chunk.len());
+            head.extend_from_slice(&chunk[..take]);
+        }
         if let Err(e) = file.write_all(&chunk).await {
             drop(file);
-            let _ = tokio::fs::remove_file(&tmp).await;
-            return DownloadOutcome::Failed(format!("Couldn't save the file to disk: {e}"));
+            return fail(format!("Couldn't save the file to disk: {e}")).await;
         }
         downloaded += chunk.len() as u64;
         if downloaded > MAX_FILE_BYTES {
             drop(file);
-            let _ = tokio::fs::remove_file(&tmp).await;
-            return DownloadOutcome::Failed(format!(
+            return fail(format!(
                 "This file is too large to download (over {} MB).",
                 MAX_FILE_BYTES / 1024 / 1024
-            ));
+            ))
+            .await;
         }
         on_progress(ProgressEvent {
             downloaded,
@@ -665,68 +823,34 @@ where
             force: false,
         });
     }
-
-    // Terminal, un-throttled progress event: guarantees the true final byte
-    // count reaches the throughput graph even for fast or unknown-length
-    // (chunked, total==0) downloads whose last chunk would otherwise be
-    // suppressed by the caller's time-based throttle.
     on_progress(ProgressEvent {
         downloaded,
         total: if total == 0 { downloaded } else { total },
         force: true,
     });
-
-    // fsync before rename so a power loss right after the rename can't surface a
-    // metadata-but-no-data file; flush alone doesn't reach the disk.
     if let Err(e) = file.flush().await {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return DownloadOutcome::Failed(format!("Couldn't finish saving the file to disk: {e}"));
-    }
-    if let Err(e) = file.sync_all().await {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return DownloadOutcome::Failed(format!("Couldn't finish saving the file to disk: {e}"));
+        drop(file);
+        return fail(format!("Couldn't finish saving the file to disk: {e}")).await;
     }
     drop(file);
 
-    // Validate the TEMP file before promoting it. Use symlink_metadata (NOT
-    // metadata) and reject a symlink: if something swapped our `.part` for a
-    // symlink between sync_all and the rename, following it would let the final
-    // `rename` publish a link pointing outside the library. Mirrors the symlink
-    // discipline in reuse_from_siblings / commands.rs.
     let tmp_meta = match tokio::fs::symlink_metadata(&tmp).await {
         Ok(m) => m,
-        Err(e) => {
-            let _ = tokio::fs::remove_file(&tmp).await;
-            return DownloadOutcome::Failed(format!("Couldn't read the saved file: {e}"));
-        }
+        Err(e) => return fail(format!("Couldn't read the saved file: {e}")).await,
     };
     if tmp_meta.file_type().is_symlink() {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return DownloadOutcome::Failed("The saved file was unexpectedly replaced.".to_string());
+        return fail("The saved file was unexpectedly replaced.".to_string()).await;
     }
     let size = tmp_meta.len();
     if size == 0 {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return DownloadOutcome::Failed("The server returned no data.".to_string());
+        return fail("The server returned no data.".to_string()).await;
     }
     if size < MIN_DOC_BYTES {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return DownloadOutcome::Failed(format!(
+        return fail(format!(
             "The server returned only {size} bytes — likely an error page, not the document."
-        ));
+        ))
+        .await;
     }
-    // Sniff the real magic bytes and reconcile the extension. (The temp file's
-    // `.part` extension means the old `check_magic_bytes(&tmp)` was a no-op, so
-    // the download path never validated bytes.) An ambiguous Content-Type that
-    // `ext_from` defaulted to `.pdf` is re-typed to its true kind so extraction
-    // works; a promised binary that isn't a document is rejected.
-    let head = match read_file_head(&tmp, 1024).await {
-        Ok(h) => h,
-        Err(e) => {
-            let _ = tokio::fs::remove_file(&tmp).await;
-            return DownloadOutcome::Failed(format!("Couldn't verify the saved file: {e}"));
-        }
-    };
     let ct_lower = content_type.to_lowercase();
     let url_lower = target.to_lowercase();
     let url_path = url_lower.split('?').next().unwrap_or(&url_lower);
@@ -734,84 +858,41 @@ where
         || ct_lower.contains("epub")
         || url_path.ends_with(".pdf")
         || url_path.ends_with(".epub");
-    match reconcile_doc_ext(&head, final_ext, claimed_binary) {
-        Ok(real_ext) => {
-            if real_ext != final_ext {
-                out = dest_dir.join(format!("{slug}{real_ext}"));
-            }
-        }
+    let real_ext = match reconcile_doc_ext(&head, guessed_ext, claimed_binary) {
+        Ok(e) => e,
         Err(()) => {
-            let _ = tokio::fs::remove_file(&tmp).await;
-            return DownloadOutcome::Failed(
+            return fail(
                 "The downloaded file wasn't a valid document (it was probably an error page)."
                     .to_string(),
-            );
+            )
+            .await
         }
-    }
-
-    // All checks passed — atomically publish the complete file.
+    };
+    let out = dest_dir.join(format!("{slug}{real_ext}"));
     if let Err(e) = tokio::fs::rename(&tmp, &out).await {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return DownloadOutcome::Failed(format!("Couldn't finalize the download: {e}"));
+        return fail(format!("Couldn't finalize the download: {e}")).await;
     }
-
     DownloadOutcome::Saved(out)
 }
 
-/// Cross-library reuse: if an identical document (same slug = cleaned title +
-/// 6-char URL hash) was already downloaded into a SIBLING library under `root`,
-/// copy that file into `dest_dir` instead of re-fetching it from the network.
-///
-/// The file is COPIED (not linked), so each per-query library stays
-/// self-contained; only the redundant download is skipped. Returns the
-/// copied-in path, or `None` if no valid sibling copy exists. Opt-in: the
-/// orchestrator passes `root` only when the user enables "reuse across
-/// libraries", because reusing a local copy means a remote update wouldn't be
-/// picked up.
-pub async fn reuse_from_siblings(doc: &Document, dest_dir: &Path, root: &Path) -> Option<PathBuf> {
-    let slug = doc.slug();
-    // The slug matches only when BOTH title and URL match (the URL hash), so a
-    // hit is a genuine duplicate, not a title collision. The download path
-    // stores under one of these extensions.
-    const EXTS: [&str; 4] = [".pdf", ".epub", ".html", ".txt"];
-    let mut entries = tokio::fs::read_dir(root).await.ok()?;
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        // Async file-type check; skip non-dirs and the current run's own folder.
-        let Ok(ft) = entry.file_type().await else {
-            continue;
-        };
-        if !ft.is_dir() {
-            continue;
-        }
-        let dir = entry.path();
-        if dir == dest_dir {
-            continue;
-        }
-        for ext in EXTS {
-            let candidate = dir.join(format!("{slug}{ext}"));
-            // Use symlink_metadata (NOT metadata) and skip symlinks, so a symlink
-            // planted in a sibling folder can't redirect the copy to a file
-            // OUTSIDE the library root. Mirrors the symlink discipline in
-            // commands.rs (folder_size_bytes / the zip writer).
-            let Ok(meta) = tokio::fs::symlink_metadata(&candidate).await else {
-                continue;
-            };
-            if meta.file_type().is_symlink() {
-                continue;
-            }
-            // Only reuse a file that still passes the same validation a fresh
-            // download would (size floor + magic bytes), so we never propagate a
-            // stale junk/error-page file saved by an older, laxer downloader.
-            if meta.len() < MIN_DOC_BYTES || !existing_file_is_valid(&candidate).await {
-                continue;
-            }
-            let dest = dest_dir.join(format!("{slug}{ext}"));
-            if tokio::fs::copy(&candidate, &dest).await.is_ok() {
-                return Some(dest);
-            }
-        }
+/// Copy a previously downloaded file (found via the library-wide index) into
+/// `dest_dir` as `<slug>.<ext>`, if it still passes the same validation a
+/// fresh download would. Symlinks are never followed.
+pub async fn reuse_file(src: &Path, dest_dir: &Path, slug: &str) -> Option<PathBuf> {
+    let meta = tokio::fs::symlink_metadata(src).await.ok()?;
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return None;
     }
-    None
+    if meta.len() < MIN_DOC_BYTES || !existing_file_is_valid(src).await {
+        return None;
+    }
+    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("pdf");
+    let dest = dest_dir.join(format!("{slug}.{ext}"));
+    if dest == src {
+        return Some(dest);
+    }
+    tokio::fs::copy(src, &dest).await.ok()?;
+    Some(dest)
 }
 
 #[cfg(test)]
@@ -965,90 +1046,98 @@ mod tests {
             year: None,
             abstract_: None,
             identifier: None,
+            ..Default::default()
         }
     }
 
     #[tokio::test]
-    async fn reuse_copies_identical_file_from_a_sibling_library() {
-        let root = tempfile::tempdir().unwrap();
-        let lib_a = root.path().join("query-a-1-1");
-        let lib_b = root.path().join("query-b-2-2");
-        tokio::fs::create_dir_all(&lib_a).await.unwrap();
-        tokio::fs::create_dir_all(&lib_b).await.unwrap();
-
-        let doc = test_doc("Shared Paper", "https://example.org/shared.pdf");
-        let mut pdf = b"%PDF-1.7\n".to_vec();
-        pdf.resize(9000, b' '); // > MIN_DOC_BYTES, valid magic
-        let src = lib_a.join(format!("{}.pdf", doc.slug()));
-        tokio::fs::write(&src, &pdf).await.unwrap();
-
-        let reused = reuse_from_siblings(&doc, &lib_b, root.path()).await;
-        assert!(reused.is_some(), "should reuse the sibling copy");
-        let dest = reused.unwrap();
-        assert!(
-            dest.starts_with(&lib_b),
-            "copy lands in the destination library"
-        );
-        assert!(
-            tokio::fs::metadata(&dest).await.is_ok(),
-            "copied file exists"
-        );
-    }
-
-    #[tokio::test]
-    async fn reuse_returns_none_when_no_sibling_has_it() {
-        let root = tempfile::tempdir().unwrap();
-        let lib_b = root.path().join("query-b");
-        tokio::fs::create_dir_all(&lib_b).await.unwrap();
-        let doc = test_doc("Lonely", "https://example.org/lonely.pdf");
-        assert!(reuse_from_siblings(&doc, &lib_b, root.path())
-            .await
-            .is_none());
-    }
-
-    #[tokio::test]
-    async fn reuse_ignores_an_invalid_sibling_file() {
+    async fn reuse_copies_a_valid_indexed_file() {
         let root = tempfile::tempdir().unwrap();
         let lib_a = root.path().join("query-a");
         let lib_b = root.path().join("query-b");
         tokio::fs::create_dir_all(&lib_a).await.unwrap();
         tokio::fs::create_dir_all(&lib_b).await.unwrap();
+        let doc = test_doc("Shared Paper", "https://example.org/shared.pdf");
+        let mut pdf = b"%PDF-1.7\n".to_vec();
+        pdf.resize(9000, b' ');
+        let src = lib_a.join(format!("{}.pdf", doc.slug()));
+        tokio::fs::write(&src, &pdf).await.unwrap();
+        let dest = reuse_file(&src, &lib_b, &doc.slug()).await.unwrap();
+        assert!(dest.starts_with(&lib_b));
+        assert!(tokio::fs::metadata(&dest).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn reuse_rejects_invalid_or_missing_files() {
+        let root = tempfile::tempdir().unwrap();
         let doc = test_doc("Junk", "https://example.org/junk.pdf");
-        // A .pdf that is actually an HTML error page must NOT be reused.
-        let mut junk = b"<!DOCTYPE html><html>nope</html>".to_vec();
-        junk.resize(9000, b' ');
-        tokio::fs::write(lib_a.join(format!("{}.pdf", doc.slug())), &junk)
-            .await
-            .unwrap();
-        assert!(reuse_from_siblings(&doc, &lib_b, root.path())
+        let missing = root.path().join("nope.pdf");
+        assert!(reuse_file(&missing, root.path(), &doc.slug())
             .await
             .is_none());
+        let mut junk = b"<!DOCTYPE html><html>nope</html>".to_vec();
+        junk.resize(9000, b' ');
+        let src = root.path().join("junk.pdf");
+        tokio::fs::write(&src, &junk).await.unwrap();
+        let out = root.path().join("out");
+        tokio::fs::create_dir_all(&out).await.unwrap();
+        assert!(reuse_file(&src, &out, &doc.slug()).await.is_none());
     }
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn reuse_skips_a_symlinked_sibling_file() {
+    async fn reuse_never_follows_symlinks() {
         let root = tempfile::tempdir().unwrap();
-        let lib_a = root.path().join("query-a");
-        let lib_b = root.path().join("query-b");
-        tokio::fs::create_dir_all(&lib_a).await.unwrap();
-        tokio::fs::create_dir_all(&lib_b).await.unwrap();
         let doc = test_doc("Linked", "https://example.org/linked.pdf");
-        // A valid PDF the symlink points to — if symlinks were followed, it would
-        // be copied and the assert below would fail.
         let mut pdf = b"%PDF-1.7\n".to_vec();
         pdf.resize(9000, b' ');
         let target = root.path().join("real-target.pdf");
         tokio::fs::write(&target, &pdf).await.unwrap();
-        let link = lib_a.join(format!("{}.pdf", doc.slug()));
+        let link = root.path().join("link.pdf");
         std::os::unix::fs::symlink(&target, &link).unwrap();
+        let out = root.path().join("out");
+        tokio::fs::create_dir_all(&out).await.unwrap();
+        assert!(reuse_file(&link, &out, &doc.slug()).await.is_none());
+    }
 
-        assert!(
-            reuse_from_siblings(&doc, &lib_b, root.path())
-                .await
-                .is_none(),
-            "a symlinked sibling file must not be followed/copied"
+    #[test]
+    fn rewrites_known_landing_pages() {
+        assert_eq!(
+            canonicalize_doc_url("https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1234567/"),
+            "https://europepmc.org/backend/ptpmcrender.fcgi?accid=PMC1234567&blobtype=pdf"
         );
+        assert_eq!(
+            canonicalize_doc_url("https://www.biorxiv.org/content/10.1101/2020.01.01.123456v2"),
+            "https://www.biorxiv.org/content/10.1101/2020.01.01.123456v2.full.pdf"
+        );
+        assert_eq!(
+            canonicalize_doc_url("https://osf.io/ab12c/"),
+            "https://osf.io/ab12c/download"
+        );
+        assert_eq!(
+            canonicalize_doc_url("https://doi.org/10.48550/arXiv.2101.00001"),
+            "https://arxiv.org/pdf/2101.00001"
+        );
+        assert_eq!(
+            canonicalize_doc_url("https://example.com/x.pdf"),
+            "https://example.com/x.pdf"
+        );
+    }
+
+    #[tokio::test]
+    async fn download_reuses_existing_copy_without_network() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc = test_doc("Already Here", "https://invalid.invalid/a.pdf");
+        let mut pdf = b"%PDF-1.7\n".to_vec();
+        pdf.resize(9000, b' ');
+        tokio::fs::write(dir.path().join(format!("{}.pdf", doc.slug())), &pdf)
+            .await
+            .unwrap();
+        let client = reqwest::Client::new();
+        let limiter = HostLimiter::new();
+        let cancel = CancellationToken::new();
+        let out = download(&doc, dir.path(), &client, &limiter, &cancel, |_| {}).await;
+        assert!(matches!(out, DownloadOutcome::Cached(_)));
     }
 
     #[tokio::test]

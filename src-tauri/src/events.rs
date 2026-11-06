@@ -6,6 +6,27 @@ use serde::Serialize;
 
 use crate::sources::Document;
 
+/// Where pipeline events go. The app implements it on `AppHandle` (Tauri
+/// events to the webview); tests and the benchmark use a recording sink, so
+/// the whole pipeline runs headless.
+pub trait Sink: Send + Sync + 'static {
+    fn emit_value(&self, event: &str, payload: serde_json::Value);
+}
+
+impl Sink for tauri::AppHandle {
+    fn emit_value(&self, event: &str, payload: serde_json::Value) {
+        use tauri::Emitter;
+        let _ = self.emit(event, payload);
+    }
+}
+
+/// Emit a typed payload through a [`Sink`].
+pub fn emit<P: Serialize>(sink: &dyn Sink, event: &str, payload: P) {
+    if let Ok(v) = serde_json::to_value(payload) {
+        sink.emit_value(event, v);
+    }
+}
+
 pub const EV_KEYWORDS: &str = "df:keywords";
 pub const EV_SUBQUERY_START: &str = "df:subquery_start";
 pub const EV_SOURCE_START: &str = "df:source_start";
@@ -28,9 +49,9 @@ pub const EV_ERROR: &str = "df:error";
 pub const EV_CANDIDATE: &str = "df:candidate";
 pub const EV_RANKING_DONE: &str = "df:ranking_done";
 
-// AI model lifecycle events (Tier 2 + Tier 3 + model manager).
-pub const EV_MODEL_PROGRESS: &str = "df:model_progress";
-pub const EV_MODEL_STATUS: &str = "df:model_status";
+// How many documents the pipeline currently plans to download (grows as
+// discovery finds more relevant candidates; the progress denominator).
+pub const EV_PLAN: &str = "df:plan";
 
 // Universal pipeline-stage event. Emitted at the boundary of every
 // orchestrator phase so the UI can render an at-a-glance progress strip.
@@ -207,7 +228,8 @@ pub struct CandidatePayload {
     pub doc: Document,
     /// Sources that returned this candidate (>=1; many for cross-source dupes).
     pub sources: Vec<String>,
-    pub tfidf: f32,
+    /// Topical relevance (BM25F × concept coverage).
+    pub relevance: f32,
     pub rrf: f32,
     pub authority: f32,
     pub score: f32,
@@ -220,6 +242,11 @@ pub struct CandidatePayload {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct PlanPayload {
+    pub planned: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct RankingDonePayload {
     pub total_candidates: usize,
     pub kept: usize,
@@ -227,28 +254,8 @@ pub struct RankingDonePayload {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ModelProgressPayload {
-    pub model_id: String,
-    pub downloaded: u64,
-    pub total: u64,
-    pub bytes_per_sec: u64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ModelStatusPayload {
-    pub model_id: String,
-    /// One of: "downloading", "verifying", "ready", "failed", "cancelled",
-    /// "embedding", "embedding_failed", "llm_warming", "llm_expanding",
-    /// "llm_filtering". Keep in sync with `ModelStatusPayload` in
-    /// `src/lib/events.ts`.
-    pub status: String,
-    pub detail: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct PipelineStagePayload {
-    /// One of: "discovery", "rank", "semantic_rerank", "llm_expand",
-    /// "llm_filter", "citation_enrich", "download", "extract".
+    /// One of: "discovery", "rank", "download", "extract".
     pub stage: String,
     /// "started" | "progress" | "done" | "skipped"
     pub state: String,

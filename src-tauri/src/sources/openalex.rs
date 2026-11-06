@@ -15,8 +15,12 @@ const BASE: &str = "https://api.openalex.org/works";
 /// can reconstruct the abstract — without it every OpenAlex doc would carry a
 /// title only, and any relevant work whose title lacks the literal query tokens
 /// scores TF-IDF 0 and gets dropped before download.
-const SELECT: &str =
-    "id,title,publication_year,best_oa_location,primary_location,authorships,abstract_inverted_index";
+const SELECT: &str = "id,doi,title,publication_year,best_oa_location,primary_location,locations,\
+authorships,abstract_inverted_index,cited_by_count";
+
+/// Project contact for OpenAlex's "polite pool" (faster, more reliable
+/// responses). A project address — never the user's.
+const POLITE_CONTACT: &str = "documentfinder@webworldwide.com";
 
 /// Hosts that redirect PDF URLs to HTML landing pages.
 const REDIRECTOR_HOSTS: &[&str] = &["hdl.handle.net", "doi.org", "dx.doi.org", "purl.org"];
@@ -87,6 +91,12 @@ struct Work {
     #[serde(default)]
     primary_location: Option<Location>,
     #[serde(default)]
+    locations: Vec<Location>,
+    #[serde(default)]
+    doi: Option<String>,
+    #[serde(default)]
+    cited_by_count: Option<u32>,
+    #[serde(default)]
     authorships: Vec<Authorship>,
     #[serde(default)]
     abstract_inverted_index: Option<HashMap<String, Vec<i64>>>,
@@ -125,6 +135,52 @@ fn reconstruct_abstract(inverted: &HashMap<String, Vec<i64>>) -> Option<String> 
 struct Location {
     #[serde(default)]
     pdf_url: Option<String>,
+    #[serde(default)]
+    landing_page_url: Option<String>,
+    #[serde(default)]
+    license: Option<String>,
+    #[serde(default)]
+    is_oa: Option<bool>,
+    #[serde(default)]
+    source: Option<LocSource>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocSource {
+    #[serde(default)]
+    display_name: Option<String>,
+}
+
+/// Every candidate URL for a work, best first: direct PDF links from the best
+/// OA location, the primary location and every other OA location, then OA
+/// landing pages (the downloader resolves `citation_pdf_url` from them).
+fn candidate_urls(w: &Work) -> Vec<String> {
+    let locs: Vec<&Location> = w
+        .best_oa_location
+        .iter()
+        .chain(w.primary_location.iter())
+        .chain(w.locations.iter())
+        .collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |u: &str| {
+        if !u.is_empty() && !out.iter().any(|o| o == u) {
+            out.push(u.to_string());
+        }
+    };
+    for l in &locs {
+        if let Some(u) = l.pdf_url.as_deref().filter(|u| is_likely_pdf_url(u)) {
+            push(u);
+        }
+    }
+    for l in &locs {
+        if l.is_oa != Some(false) {
+            if let Some(u) = l.landing_page_url.as_deref() {
+                push(u);
+            }
+        }
+    }
+    out.truncate(6);
+    out
 }
 
 #[derive(Debug, Deserialize)]
@@ -172,6 +228,7 @@ impl Source for OpenAlexSource {
                     ("filter", "is_oa:true".to_string()),
                     ("select", SELECT.to_string()),
                     ("cursor", cur),
+                    ("mailto", POLITE_CONTACT.to_string()),
                 ];
                 let resp = match get_with_retry(&client, BASE, &params).await {
                     Ok(r) => r,
@@ -187,38 +244,40 @@ impl Source for OpenAlexSource {
                 let next_cursor = data.meta.and_then(|m| m.next_cursor);
                 let mut docs = Vec::with_capacity(data.results.len());
                 for w in data.results {
-                    let candidates = [
-                        w.best_oa_location.as_ref().and_then(|l| l.pdf_url.clone()),
-                        w.primary_location.as_ref().and_then(|l| l.pdf_url.clone()),
-                    ];
-                    // OpenAlex's `pdf_url` is supposed to be a direct PDF
-                    // link but in practice often points at Handle resolvers
-                    // or repository landing pages that serve HTML. Filter
-                    // those out — the downloader's content-type check
-                    // would reject them anyway, but skipping early saves a
-                    // network round-trip per item.
-                    let url = candidates
-                        .into_iter()
-                        .flatten()
-                        .find(|u| is_likely_pdf_url(u));
-                    let Some(url) = url else { continue };
+                    let mut urls = candidate_urls(&w);
+                    if urls.is_empty() {
+                        continue;
+                    }
+                    let url = urls.remove(0);
+                    let venue = w
+                        .primary_location
+                        .as_ref()
+                        .and_then(|l| l.source.as_ref())
+                        .and_then(|s| s.display_name.clone());
+                    let license = w.best_oa_location.as_ref().and_then(|l| l.license.clone());
+                    let doi = w.doi.as_deref().and_then(crate::engine::dedup::extract_doi);
                     let authors: Vec<String> = w
                         .authorships
-                        .into_iter()
-                        .filter_map(|a| a.author.and_then(|x| x.display_name))
+                        .iter()
+                        .filter_map(|a| a.author.as_ref().and_then(|x| x.display_name.clone()))
                         .collect();
                     let abstract_ = w
                         .abstract_inverted_index
                         .as_ref()
                         .and_then(reconstruct_abstract);
                     docs.push(Document {
-                        title: w.title.unwrap_or_else(|| "Untitled".to_string()),
+                        title: w.title.clone().unwrap_or_else(|| "Untitled".to_string()),
                         url,
                         source: "openalex".to_string(),
                         authors,
                         year: w.publication_year.map(|y| y.to_string()),
                         abstract_,
-                        identifier: w.id,
+                        identifier: w.id.clone(),
+                        doi,
+                        alt_urls: urls,
+                        cited_by: w.cited_by_count,
+                        venue,
+                        license,
                     });
                 }
                 let added = docs.len();

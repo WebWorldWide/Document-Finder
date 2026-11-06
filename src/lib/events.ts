@@ -118,7 +118,7 @@ export interface CandidatePayload {
   abstract?: string;
   identifier?: string;
   sources: string[]; // all sources that returned this candidate
-  tfidf: number;
+  relevance: number;
   rrf: number;
   authority: number;
   score: number;
@@ -127,44 +127,18 @@ export interface CandidatePayload {
   final_rank: number | null;
 }
 
+/** How many documents the run currently plans to download (grows). */
+export interface PlanPayload {
+  planned: number;
+}
+
 export interface RankingDonePayload {
   total_candidates: number;
   kept: number;
   rejected: number;
 }
 
-export interface ModelProgressPayload {
-  model_id: string;
-  downloaded: number;
-  total: number;
-  bytes_per_sec: number;
-}
-
-export interface ModelStatusPayload {
-  model_id: string;
-  status:
-    | "downloading"
-    | "verifying"
-    | "ready"
-    | "failed"
-    | "cancelled"
-    | "embedding"
-    | "embedding_failed"
-    | "llm_warming"
-    | "llm_expanding"
-    | "llm_filtering";
-  detail: string | null;
-}
-
-export type PipelineStage =
-  | "discovery"
-  | "rank"
-  | "semantic_rerank"
-  | "llm_expand"
-  | "llm_filter"
-  | "citation_enrich"
-  | "download"
-  | "extract";
+export type PipelineStage = "discovery" | "rank" | "download" | "extract";
 
 export type PipelineState = "started" | "progress" | "done" | "skipped";
 
@@ -216,8 +190,9 @@ export type DfEvent =
   | { type: "error"; payload: ErrorPayload }
   | { type: "candidate"; payload: CandidatePayload }
   | { type: "ranking_done"; payload: RankingDonePayload }
-  | { type: "model_progress"; payload: ModelProgressPayload }
-  | { type: "model_status"; payload: ModelStatusPayload };
+  | { type: "plan"; payload: PlanPayload }
+  | { type: "pipeline_stage"; payload: PipelineStagePayload }
+  | { type: "meta_search_health"; payload: MetaSearchHealthPayload };
 
 const EVENTS = [
   "keywords",
@@ -236,8 +211,9 @@ const EVENTS = [
   "error",
   "candidate",
   "ranking_done",
-  "model_progress",
-  "model_status",
+  "plan",
+  "pipeline_stage",
+  "meta_search_health",
 ] as const;
 
 export async function listenAll(handler: (e: DfEvent) => void): Promise<UnlistenFn> {

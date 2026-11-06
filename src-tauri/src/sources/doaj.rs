@@ -148,6 +148,7 @@ impl Source for DOAJSource {
                         year,
                         abstract_: bib.abstract_,
                         identifier: None,
+                        ..Default::default()
                     });
                 }
                 // Advance `yielded` by EMITTED docs, not raw API hits (`n`):

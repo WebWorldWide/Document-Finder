@@ -1,8 +1,8 @@
 # Pin the macOS deployment target for every cargo invocation in this crate.
 #
 # The default cc-rs value (10.7 / 10.13) silently breaks builds whenever a
-# C/C++ dependency uses anything from macOS 10.15+ (e.g. llama-cpp-sys-2's
-# bundled llama.cpp uses std::filesystem::path, introduced in 10.15).
+# C/C++ dependency uses anything from macOS 10.15+ (e.g. bundled SQLite /
+# zstd builds via cc-rs).
 #
 # 11.0 is the honest floor — Apple Silicon doesn't exist below 11.0 anyway.
 # tauri.conf.json's bundle.macOS.minimumSystemVersion sets the same value

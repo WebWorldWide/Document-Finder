@@ -7,69 +7,82 @@ Written to double as context for coding agents.
 
 Document Finder is a Tauri 2 desktop app: a **Rust** backend (`src-tauri/`) and a
 **Solid.js + Vite + TypeScript** frontend (`src/`). It searches open-access
-sources in parallel, downloads documents, extracts text, and stores everything in
-per-query SQLite libraries on disk.
+sources in parallel, downloads documents, extracts clean Markdown + chunks, and
+stores everything in per-query SQLite libraries on disk. There are **no AI models
+and no user-tunable depth/quality knobs** (removed in 0.3): ranking is model-free
+and the pipeline sizes itself. AI access is via export, "Copy for AI", and the
+built-in MCP server (`src-tauri/src/mcp.rs`).
 
 ## Architecture
 
 ### Frontend (`src/`)
-- `App.tsx` / `main.tsx` — shell and entry; `main.tsx` imports `stores/theme`
-  (applies `data-*` before first paint) and registers the global Tauri event
-  listeners (kept in `window.__dfUnlisten` for cleanup).
-- `components/` — `Sidebar`, `FindTab` (Discover: hero query + rich Sources panel
-  + live run card), `LibraryView`, `SettingsView`, `WelcomeDialog`, plus the
-  shared editorial pieces `DocRow`, `SourcePanel`, `Sparkline`, `Banner`,
-  `ProgressBar`, `Logo`, `ThemePicker`, and the AI/health widgets
-  `ModelDownloadCard`, `ModelStatusBadge`, `MetaSearchHealthBar`. The live
-  download stream + pipeline rail live inside `FindTab` (no separate
-  `LiveResultsView`/`PipelineStrip`).
-- `stores/` — Solid signals: `ui` (routing + known libraries), `theme`
-  (`theme`/`accent`/`density`/`streamLayout`), `settings`, `models`, `pipeline`,
-  `run` (active search state, incl. per-source live stats + cumulative bytes).
-- `lib/` — `tauri.ts` (typed `invoke` bindings + `RunRequest`/`Document` types),
-  `events.ts` (event names + payloads, mirror of `src-tauri/src/events.rs`),
-  `utils.ts` (`SOURCE_LABELS`, `sourceColor`, `sourceDesc`, `ftypeFromPath`,
-  formatters), `errors.ts` (plain-language error humanizers for the UI).
-- `styles/globals.css` — Tailwind v4 (`@import "tailwindcss"`) plus the editorial
-  design system (`df-*` classes). Themes are driven by **`data-theme`** on
-  `<html>` (`paper` | `slate` | `midnight`), accents by **`data-accent`** (9), and
-  density by **`data-density`** (`compact` | `regular`); defaults are
-  `slate` + `sky`. Per-source colors are `--color-source-<id>` tokens. Legacy
-  `--color-*` names are aliased to the editorial tokens, and a small compatibility
-  shim maps a few old skeuomorphic class names for the not-fully-rewritten
-  AI/welcome widgets.
+- `main.tsx` — entry: applies the theme, registers Tauri event listeners
+  (`listenAll` → `runStore.apply`), syncs the library root. In `pnpm dev` without
+  Tauri it installs `src/dev/mock.ts` (mock backend for design review; dev-only).
+- `App.tsx` — shell: `Sidebar` + one of `Discover` / `LibraryView` /
+  `SettingsView`, plus `Overlays` (confirm dialog + toast) and the SR announcer.
+- `components/` — `Discover` (hero query, source picker, live run view: three
+  stages Search/Download/Read, in-progress list, the "filed" ledger, failure and
+  details disclosures; also exports `copyLibraryForAi` / `exportLibrary`),
+  `LibraryView` (library list + global full-text search, document list with
+  passage search, inspector with metadata + Markdown preview), `SettingsView`
+  (appearance, library folder, Connect your AI / MCP, diagnostics, erase data,
+  about), `Sidebar`, `Note`, `Overlays`, `Logo`.
+- `stores/` — `run` (live run reducer + `stages()` / `progressFraction()`),
+  `ui` (view routing, toasts, in-app `confirm()`), `settings` (library root +
+  selected sources only), `theme` (`system` / `light` / `dark`).
+- `lib/` — `tauri.ts` (typed `invoke` bindings), `events.ts` (event payloads;
+  mirror of `src-tauri/src/events.rs`), `utils.ts`, `errors.ts`.
+- `styles/globals.css` — the design system (see `.planning/design-contract.md`):
+  Instrument Serif + Archivo bundled via `@fontsource` (the CSP blocks CDNs),
+  `[data-theme=light|dark]` tokens, one accent, `df-*` classes. Never use
+  template-literal class ternaries (see Conventions).
 
 ### Backend (`src-tauri/src/`)
-- `lib.rs` — Tauri builder, `invoke_handler!` (the command allowlist), and the
-  setup hook that spawns the in-process SearXNG server. Also installs a panic
-  hook that logs `tokio::spawn` task panics.
+- `lib.rs` — Tauri builder, `invoke_handler!` (the command allowlist), setup
+  hook (in-process SearXNG, PDFium resource dir). `--mcp` as the first CLI arg
+  runs the MCP stdio server instead of the app. `APP_IDENTIFIER` lives here.
 - `commands.rs` — every `#[tauri::command]`. Must stay in sync with
   `permissions/app.toml` (enforced by the `permissions_in_sync` test).
-- `events.rs` — event-name constants, payload structs, and `classify_source_error`.
+- `events.rs` — event-name constants, payload structs, `classify_source_error`,
+  and the `Sink` trait (the pipeline emits through it, so it runs headless in
+  tests and `examples/bench.rs`).
+- `mcp.rs` — read-only MCP server (JSON-RPC over stdio): `list_libraries`,
+  `search_library`, `list_documents`, `get_document`, `get_passages`. Finds the
+  library root via a file the app writes on `set_library_root`.
 - `sources/` — `trait Source` (`mod.rs`) with one module per backend:
   `arxiv`, `openalex`, `semantic_scholar`, `europe_pmc`, `internet_archive`,
-  `doaj`, `zenodo`, `gutenberg`, and the web layer: `meta_search` (aggregator) over six HTML
-  scrapers (`duckduckgo`, `bing_html`, `brave_html`, `mojeek_html`,
-  `marginalia_html`, `startpage_html`) with `searxng_pool` and `local_searxng`
-  as fallbacks. `web_common` holds shared scraping helpers. `mod.rs` also has
-  `build_source`, `SOURCE_IDS`, the `Document` struct, `make_client`, the browser
-  `USER_AGENT`, and `get_with_retry` (exponential backoff on 429/5xx). Unpaywall
-  is a downloader-side DOI→OA-PDF resolver (not a `Source`).
-- `engine/` — `orchestrator` (the search→download→extract→rank pipeline),
-  `query` (sub-query expansion + slugging), `db` (SQLite, `CREATE TABLE IF NOT
-  EXISTS`, no migrations yet), `downloader` (concurrent download with a
-  `Content-Length` size cap and `tokio::select!` cancellation; sends document-
-  biased `Accept`/`Accept-Language`/`Referer` headers to cut 4xx rejections, and
-  emits plain-language failure strings), `extract` (PDF/EPUB text, panic-guarded),
-  `ranking` (TF-IDF + optional semantic rerank), `dedup`, `authority`,
-  `citation_graph`, `manifest` (legacy read path only), `runlog` (JSONL run log).
-- `ai/` — optional, feature-gated. `embeddings` (BGE-Small via `fastembed`/ort,
-  `ai-embeddings`), `llm` (Qwen 2.5 1.5B via `llama-cpp-2`, `ai-llm`), plus
-  `registry`, `downloader` (model fetch + SHA256), `storage`, `state`. Models
-  live behind resettable `RwLock<Option<…>>` singletons so a poisoned/failed
-  model can be reset without restarting the app.
-- `util/` — `path_safety` (confine library paths to Documents) and `url_safety`
-  (`validate_url`: https-only, no credentials, public-IP-only SSRF check).
+  `doaj`, `zenodo`, `gutenberg`, and the web layer: `meta_search` over six HTML
+  scrapers with `searxng_pool` and `local_searxng` as fallbacks. `Document`
+  carries `doi`, `alt_urls` (fallback download URLs), `cited_by`, `venue`,
+  `license`; `best_doi()` / `all_urls()` are the accessors to use.
+- `engine/`:
+  - `orchestrator` — the streaming pipeline (module doc has the full story).
+    Wave 1 discovery → a dispatcher re-ranks every second and feeds a
+    best-first queue → download workers start within seconds → pseudo-relevance
+    feedback wave 2 + bounded citation graph → single SQLite writer thread.
+    Budgets are internal constants (`MAX_CANDIDATES`, `MAX_DOWNLOADS`, …); there
+    is no user-facing depth.
+  - `ranking` — BM25F + concept coverage + phrase bonus + RRF agreement +
+    authority + citations; `expansion_terms` / `feedback_subqueries` (RM3).
+  - `dedup` — lossless merge (URLs become fallbacks; DOI/abstract/metadata
+    filled in).
+  - `downloader` — route chain (all URLs → Unpaywall OA locations), landing
+    page → PDF resolution (2 hops), known-repository rewrites
+    (`canonicalize_doc_url`), cancel-aware retries honouring `Retry-After`.
+  - `hostlimit` — per-host AIMD concurrency.
+  - `extract` (PDFium → `pdf-extract` fallback, EPUB spine order, HTML, TXT
+    encoding detection), `textclean` (headers/footers, hyphenation, headings,
+    page markers, chunking), `html2md`.
+  - `db` — schema + `PRAGMA user_version` migrations (v2 added metadata
+    columns, `chunks` + `chunks_fts` FTS5), `LibraryIndex` (library-wide
+    url/sha256 → path, for cross-library reuse).
+  - `library` — read side shared by commands + MCP: list/search/read, citations,
+    BibTeX, `build_corpus`, `write_ai_pack`.
+  - `query`, `authority`, `citation_graph`, `manifest` (legacy read path), `runlog`.
+- `util/` — `path_safety` (confine library paths) and `url_safety`
+  (`validate_url`: https-only, no credentials, public-IP-only SSRF check, shared
+  DNS cache with `PublicOnlyResolver`).
 
 ### Web meta-search & local SearXNG
 `MetaSearchSource` fans out to the six scrapers concurrently with a per-engine
@@ -91,47 +104,34 @@ instance URL is SSRF-validated. No Docker, no Python, no setup.
 ```bash
 ./run.ps1     # Windows
 ./run.sh      # macOS / Linux  (installs pnpm if missing)
-```
-
-**Clean rebuild — one command, every OS** (Windows / macOS / Linux):
-
-```bash
-pnpm clean-build         # clean app crate + caches, release-fast build
-pnpm clean-build:full    # also rebuild llama.cpp + ONNX from scratch (15-25 min)
-pnpm clean-build:dev     # debug build + hot reload (tauri dev)
-```
-
-`scripts/rebuild.mjs` cleans the Rust build + Vite/dist caches, reinstalls JS
-deps, and runs the full Tauri build. Named `clean-build`, not `rebuild`, so it
-doesn't collide with pnpm's built-in `rebuild` command.
-
-Manual:
-
-```bash
-pnpm install --frozen-lockfile --ignore-scripts
 pnpm tauri dev
-pnpm tauri build                                   # native installers
+pnpm tauri build                 # native installers
+pnpm clean-build[:full|:dev]     # cross-OS clean rebuild (scripts/rebuild.mjs)
 ```
 
-- **Feature flags** (`src-tauri/Cargo.toml`): `default = custom-protocol +
-  ai-embeddings + ai-llm`. The AI features build llama.cpp + ONNX Runtime from
-  source (needs `cmake` + `clang`/LLVM with `libclang` on `PATH`; first build is
-  10–25 min). For fast dev rebuilds without AI:
-  `cargo build --no-default-features --features=custom-protocol`.
-- **pnpm 11 / esbuild**: pnpm 11 refuses to silently skip esbuild's (unneeded)
-  build script and hard-errors before every `pnpm <script>`. Resolved by
-  answering its prompt in `pnpm-workspace.yaml`: `allowBuilds: { esbuild: false }`.
-  Installs still pass `--ignore-scripts` (esbuild's binary ships in its platform
-  package).
-- **Linux system deps** (mirrors `ci.yml`/`release.yml`'s apt list): `libwebkit2gtk-4.1-dev
-  libgtk-3-dev libglib2.0-dev libgdk-pixbuf-2.0-dev libsoup-3.0-dev
-  libjavascriptcoregtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf cmake
-  clang`. **On Pop!_OS** (and other distros that ship the Ayatana fork),
-  `libappindicator3-dev` conflicts with the already-installed
-  `libayatana-appindicator3-1` — install `libayatana-appindicator3-dev` instead;
-  it satisfies the same build dependency. CI's vanilla `ubuntu-24.04` runners
-  don't hit this (no Ayatana packages preinstalled), so it's a local-dev-only
-  substitution.
+- **PDFium**: the PDF engine is a native library bundled per platform from
+  `src-tauri/resources/pdfium/` (git-ignored). `scripts/fetch-pdfium.mjs`
+  (`pnpm fetch-pdfium`) downloads the pinned build from bblanchon/pdfium-binaries
+  (`chromium/8125`, matching `pdfium-render`'s `pdfium_latest` feature — bump
+  both together). Tauri's before-dev/build commands run it automatically, but
+  **plain `cargo build/test/clippy` fails in `build.rs` until it has been run
+  once** (tauri-build checks bundle resources exist). macOS bundles it into
+  `Contents/Frameworks` (`tauri.macos.conf.json`); Linux/Windows as resources
+  (`tauri.{linux,windows}.conf.json`). At runtime `extract::pdfium()` searches
+  the resource dir, the exe dir, `../Frameworks`, and `PDFIUM_DYNAMIC_LIB_PATH`,
+  falling back to `pdf-extract` if it can't load.
+- **UI without Tauri**: `pnpm dev` and open http://localhost:1420 — the dev mock
+  backend (`src/dev/mock.ts`) simulates libraries and a live run.
+- **Benchmark**: `cargo run --release --example bench -- "query" …` runs the real
+  pipeline headless against the live sources and prints time-to-first-doc,
+  saved/failed, text %, throughput. `--example extract -- file.pdf` prints the
+  extracted Markdown + stats.
+- **pnpm 11 / esbuild**: `pnpm-workspace.yaml` sets `allowBuilds: { esbuild: false }`;
+  installs pass `--ignore-scripts`.
+- **Linux system deps** (mirrors `ci.yml`/`release.yml`): `libwebkit2gtk-4.1-dev
+  libgtk-3-dev libglib2.0-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+  libappindicator3-dev librsvg2-dev patchelf`. On Pop!_OS (Ayatana fork) use
+  `libayatana-appindicator3-dev` instead of `libappindicator3-dev`.
 
 ## Verify (mirrors CI)
 
@@ -144,17 +144,16 @@ pnpm test          # vitest
 pnpm build         # vite
 ```
 
-Backend (fast lane — skips the heavy AI build):
+Backend (run `pnpm fetch-pdfium` once first):
 ```bash
 cargo fmt   --manifest-path src-tauri/Cargo.toml --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --features=custom-protocol --all-targets -- -D warnings
-cargo test  --manifest-path src-tauri/Cargo.toml --no-default-features --features=custom-protocol
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test  --manifest-path src-tauri/Cargo.toml
 ```
 
 `ci.yml` runs all of the above on every PR to `main`; the full 3-OS Tauri build
 matrix runs on push-to-`main` or a `full-build`-labelled PR. `release.yml` builds
-installers on a `v*` tag (Linux on **ubuntu-24.04** — the ONNX Runtime binary
-needs glibc 2.39+ C23 symbols).
+installers on a `v*` tag (Linux on **ubuntu-22.04** → glibc 2.35+ packages).
 
 ## Conventions
 
@@ -188,23 +187,32 @@ needs glibc 2.39+ C23 symbols).
    git tag vx.y.z
    git push origin main --tags
    ```
-2. A `create-release` job opens **one** draft Release for the tag (so the three
-   matrix legs don't race to create duplicate drafts), then `release.yml` builds
-   installers and uploads them to that draft via tauri-action's `releaseId` —
-   macOS (Apple Silicon `.dmg`, **ad-hoc signed**), Linux (`.deb`, `.rpm`,
-   `.AppImage`, and a `.flatpak` from `packaging/flatpak/`, glibc 2.39+), Windows
-   (`.exe` + `.msi`). Review, edit notes, publish.
+2. A `create-release` job opens **one** draft Release for the tag, then
+   `release.yml` builds installers into it via tauri-action's `releaseId` —
+   macOS (Apple Silicon `.dmg`, **Developer ID signed + notarized**), Linux
+   (`.deb`, `.rpm`, `.AppImage`, plus a `.flatpak` from `packaging/flatpak/`),
+   Windows (`.exe` + `.msi`). Review, edit notes, publish.
 
-The macOS build is **ad-hoc signed** (`bundle.macOS.signingIdentity = "-"` in
-`tauri.conf.json`, also set via `APPLE_SIGNING_IDENTITY: '-'` in `release.yml`).
-Ad-hoc signing is required on Apple Silicon — without it a downloaded (quarantined)
-arm64 app gets the unrecoverable Gatekeeper *"is damaged"* verdict, **not** the
-milder "unidentified developer" prompt. Ad-hoc signing removes the "damaged" wall
-but is **not** notarization, so first launch still needs a manual allow:
-- **macOS** — right-click the app → **Open**, then confirm. If macOS still
-  refuses: `xattr -dr com.apple.quarantine "/Applications/Document Finder.app"`.
-  (Zero-friction opens would require a paid Developer ID cert + notarization.)
-- **Windows** — SmartScreen → **More info** → **Run anyway**.
+### macOS notarization
+
+The macOS leg signs with a Developer ID and notarizes when these **repository
+secrets** exist (Settings → Secrets and variables → Actions); otherwise it falls
+back to ad-hoc signing with a workflow warning:
+
+| Secret | What |
+|---|---|
+| `APPLE_CERTIFICATE` | base64 of the *Developer ID Application* certificate exported as `.p12` (`base64 -i cert.p12 \| pbcopy`) |
+| `APPLE_CERTIFICATE_PASSWORD` | the `.p12` export password |
+| `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: Web World Wide (TEAMID1234)` |
+| `APPLE_API_ISSUER` | App Store Connect API issuer ID (Users and Access → Integrations → Keys) |
+| `APPLE_API_KEY` | the API key ID |
+| `APPLE_API_PRIVATE_KEY` | contents of the downloaded `AuthKey_<id>.p8` |
+| `APPLE_TEAM_ID` | 10-character team ID |
+
+Requires a paid Apple Developer Program membership. The app uses the hardened
+runtime with `src-tauri/Entitlements.plist` (network client +
+`disable-library-validation` so the bundled PDFium dylib loads). Local builds are
+unsigned unless you export the same variables.
 
 The Flatpak builds against the **GNOME runtime** (`org.gnome.Platform`/`Sdk`),
 not the bare freedesktop runtime, because only the GNOME runtime ships
@@ -229,8 +237,8 @@ document library, and shouldn't auto-nuke `~/Documents`):
 - **`purge_all_data` command** (`commands.rs`) — the in-app "Settings → Danger
   zone → Erase app data". It takes **no path argument** by design: it only
   deletes dirs derived server-side from the app identifier (`app_data_dir()` +
-  `app_local_data_dir()` + `app_config_dir()` + `app_cache_dir()` — AI models,
-  fastembed cache, config, and whatever the webview itself caches on Linux),
+  `app_local_data_dir()` + `app_config_dir()` + `app_cache_dir()` — config,
+  legacy 0.2 model files, and whatever the webview itself caches),
   `runlog::log_path()`'s parent (the per-OS log dir), and — only when
   `include_library` is set — `confinement_root()` (which knows a custom library
   root). It reuses `force_remove_dir` and is best-effort (returns a
@@ -264,8 +272,10 @@ pnpm tauri icon "icons/Document Finder MacOS.png"
 
 `site/` is a static product page deployed to GitHub Pages by
 `.github/workflows/pages.yml` on push to `main`. One-time setup: repo
-**Settings → Pages → Source: GitHub Actions**. It reuses the app's palette with a
-blue-green accent sampled from the logo and the logo SVG itself (`site/logo.svg`).
+**Settings → Pages → Source: GitHub Actions**. It shares the app's design system
+(Instrument Serif + Archivo self-hosted in `site/fonts/`, the same tokens) and
+shows real product screenshots (`site/assets/`, captured from the dev mock UI;
+re-capture after visual changes). `site/og.png` (1200×630) is the link preview.
 Served at the custom domain **documentfinder.webworldwide.online** via
 `site/CNAME` (included in the uploaded artifact, so it persists across deploys);
 a DNS `CNAME documentfinder → webworldwide.github.io` record points to it. Keep the
@@ -277,27 +287,17 @@ Document Finder is licensed under **GNU AGPL-3.0-or-later** (see [`LICENSE`](LIC
 copyright Web World Wide. The third-party components below are informational and do
 not modify any component's terms. License inventory last audited **2026-05-30**.
 
-**AI model weights (downloaded at runtime, never bundled or redistributed).** The
-optional local-LLM feature downloads weights on demand from Hugging Face to the
-user's machine, under the publisher's license. The catalog lists only permissively
-licensed models compatible with AGPL; each download is verified against a pinned
-SHA-256 (`src-tauri/src/ai/registry.rs`):
-
-| Model | Publisher | License | Source |
-|---|---|---|---|
-| Qwen 2.5 1.5B Instruct (GGUF, Q4_K_M) — *default* | Alibaba Cloud (Qwen) | Apache-2.0 | `Qwen/Qwen2.5-1.5B-Instruct-GGUF` |
-| Qwen 2.5 0.5B Instruct (GGUF, Q4_K_M) | Alibaba Cloud (Qwen) | Apache-2.0 | `Qwen/Qwen2.5-0.5B-Instruct-GGUF` |
-
-The text-embedding model (BGE-Small-EN-v1.5, MIT) is fetched and cached by the
-`fastembed` library at runtime. Models with non-commercial/custom-restricted terms
-(Qwen2.5-3B "qwen-research", Llama Community License, Mistral Research License) are
-deliberately **excluded** so the defaults add no restrictions beyond ours.
+**Bundled native library.** PDFium (BSD-3-Clause, Google/Chromium) via the
+bblanchon/pdfium-binaries builds; its license ships next to it
+(`pdfium/PDFIUM-LICENSE.txt`). **Fonts**: Instrument Serif and Archivo (SIL OFL
+1.1), bundled in the app via `@fontsource` and in `site/fonts/` with their
+licenses. No AI model weights are downloaded or bundled (removed in 0.3).
 
 **Rust dependencies** are all permissive / AGPL-compatible — predominantly
 `MIT OR Apache-2.0`, with assorted MIT/BSD/Zlib/ISC/Unicode-3.0 and a few MPL-2.0
 (file-level). No GPL-2.0-only/AGPL/SSPL/BUSL/CC-BY-NC/proprietary deps. Notable
-native libs (all permissive): `llama-cpp-2`/`llama.cpp` (MIT), ONNX Runtime via
-`ort` (MIT), `fastembed` (Apache-2.0), `rusqlite`/bundled SQLite (public domain /
+native/parsing libs (all permissive): `pdfium-render` (MIT/Apache-2.0),
+`pdf-extract` (MIT), `scraper` (ISC), `rusqlite`/bundled SQLite (public domain /
 MIT), `reqwest` + `rustls` (MIT / Apache-2.0).
 
 **JavaScript / npm dependencies** are all permissive — mostly MIT, with ISC,

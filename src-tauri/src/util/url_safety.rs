@@ -58,12 +58,9 @@ async fn validate_url_inner(raw: &str, allowed_schemes: &[&str]) -> Result<Url, 
     let port = url.port_or_known_default().unwrap_or(443);
     // Bound the pre-flight lookup so a host with a slow/hung resolver can't stall
     // the task that calls this (a download task has no overall request timeout).
-    let lookup = tokio::net::lookup_host(format!("{host}:{port}"));
-    let addrs: Vec<_> = tokio::time::timeout(std::time::Duration::from_secs(5), lookup)
+    let addrs: Vec<SocketAddr> = cached_lookup(host, port)
         .await
-        .map_err(|_| format!("DNS resolution timed out for '{host}'"))?
-        .map_err(|e| format!("DNS resolution failed for '{host}': {e}"))?
-        .collect();
+        .map_err(|e| format!("DNS resolution failed for '{host}': {e}"))?;
 
     if addrs.is_empty() {
         return Err(format!("Rejected: '{host}' did not resolve to any address"));
@@ -79,6 +76,47 @@ async fn validate_url_inner(raw: &str, allowed_schemes: &[&str]) -> Result<Url, 
     }
 
     Ok(url)
+}
+
+/// Short-lived DNS cache shared by the pre-flight validator and the
+/// connection-time resolver, so a download costs one lookup per host per
+/// minute instead of two per connection. Both consumers still apply the
+/// private-IP check to whatever is returned.
+type DnsCache =
+    parking_lot::Mutex<std::collections::HashMap<String, (std::time::Instant, Vec<IpAddr>)>>;
+static DNS_CACHE: once_cell::sync::Lazy<DnsCache> = once_cell::sync::Lazy::new(Default::default);
+const DNS_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+async fn cached_lookup(host: &str, port: u16) -> std::io::Result<Vec<SocketAddr>> {
+    let key = host.to_ascii_lowercase();
+    if let Some((at, ips)) = DNS_CACHE.lock().get(&key) {
+        if at.elapsed() < DNS_TTL {
+            return Ok(ips.iter().map(|ip| SocketAddr::new(*ip, port)).collect());
+        }
+    }
+    let lookup = tokio::net::lookup_host(format!("{host}:0"));
+    let resolved: Vec<SocketAddr> =
+        match tokio::time::timeout(std::time::Duration::from_secs(5), lookup).await {
+            Ok(r) => r?.collect(),
+            Err(_) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "DNS resolution timed out",
+                ))
+            }
+        };
+    let ips: Vec<IpAddr> = resolved.iter().map(|a| a.ip()).collect();
+    if !ips.is_empty() {
+        let mut cache = DNS_CACHE.lock();
+        if cache.len() > 2048 {
+            cache.clear();
+        }
+        cache.insert(key, (std::time::Instant::now(), ips.clone()));
+    }
+    Ok(ips
+        .into_iter()
+        .map(|ip| SocketAddr::new(ip, port))
+        .collect())
 }
 
 /// A reqwest DNS resolver that drops private/reserved IPs at resolution time.
@@ -107,8 +145,11 @@ impl Resolve for PublicOnlyResolver {
             let host = name.as_str().to_owned();
             // Port 0: reqwest substitutes the real destination port; only the
             // resolved IPs matter for the privacy decision.
-            let resolved = tokio::net::lookup_host(format!("{host}:0")).await?;
-            let public: Vec<SocketAddr> = resolved.filter(|a| !is_private_ip(&a.ip())).collect();
+            let resolved = cached_lookup(&host, 0).await?;
+            let public: Vec<SocketAddr> = resolved
+                .into_iter()
+                .filter(|a| !is_private_ip(&a.ip()))
+                .collect();
             if public.is_empty() {
                 let err: Box<dyn std::error::Error + Send + Sync> =
                     format!("blocked: '{host}' resolves only to private/reserved addresses").into();

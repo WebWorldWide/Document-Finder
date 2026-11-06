@@ -132,6 +132,7 @@ impl Source for StartpageHtmlSource {
                         year: None,
                         abstract_: None,
                         identifier: None,
+                        ..Default::default()
                     });
                     count += 1;
                 }

@@ -32,6 +32,16 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.3.0" date="2026-11-06">
+      <description>
+        <p>A redesigned app and a much faster, smarter search: downloads start within
+        seconds, every open-access copy of a paper is tried, and text is extracted as
+        clean Markdown with sections and page numbers. New full-text search across
+        libraries, an AI export pack, "Copy for AI", and an MCP server so Claude and
+        other AI apps can read your libraries. No AI model downloads and no settings
+        to tune.</p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-07-01">
       <description>
         <p>Linux hardening: more reliable "Show in folder" and "Erase app data,"

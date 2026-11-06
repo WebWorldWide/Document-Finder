@@ -7,42 +7,15 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 use tokio_util::sync::CancellationToken;
 
-use crate::ai;
-use crate::ai::registry;
-use crate::ai::state::{snapshot, AiState, ModelInfo, ModelStatus};
 use crate::engine::db::open_read_only;
+use crate::engine::library;
 use crate::engine::runlog;
 use crate::engine::{run_pipeline, run_retry_pipeline, RunRequest};
 use crate::events::{ErrorPayload, EV_ERROR};
-use crate::sources::USER_AGENT;
 use crate::util::path_safety::{
     documents_or_home_dir, library_root as default_library_root, safe_creatable_within_root,
     safe_within_root,
 };
-
-/// HTTP client tuned for huge model downloads — connect_timeout fails fast on
-/// dead URLs but there is NO overall .timeout, because the default
-/// `make_client()` uses 60s which would silently kill a 2GB download
-/// mid-stream.
-fn make_model_download_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .connect_timeout(std::time::Duration::from_secs(30))
-        // Per-read (idle) timeout: a half-open connection that stalls mid-stream
-        // (peer sends no bytes and no FIN — common on flaky mobile/VPN links)
-        // would otherwise hang `stream.next()` forever, freezing the download at a
-        // stale byte count until the user cancels. Each received chunk resets this
-        // window, so slow-but-progressing downloads are unaffected. Mirrors
-        // `make_download_client` in sources/mod.rs.
-        .read_timeout(std::time::Duration::from_secs(60))
-        .redirect(crate::sources::safe_redirect_policy())
-        .dns_resolver(std::sync::Arc::new(
-            crate::util::url_safety::PublicOnlyResolver,
-        ))
-        // Intentionally NO overall .timeout — model files take many minutes.
-        .build()
-        .expect("model http client")
-}
 
 #[derive(Default)]
 pub struct AppState {
@@ -148,6 +121,8 @@ pub fn set_library_root(state: State<'_, AppState>, path: String) -> Result<Stri
     }
     let mut root = state.library_root.lock().unwrap_or_else(|e| e.into_inner());
     *root = Some(canonical.clone());
+    // Record it for the headless MCP server (`--mcp`), which has no webview.
+    crate::mcp::save_library_root(&canonical);
     Ok(canonical.to_string_lossy().to_string())
 }
 
@@ -255,7 +230,8 @@ pub async fn start_run(
             }
             let _clear_guard = ClearTokenOnDrop(app2.clone());
 
-            let result = run_pipeline(app2.clone(), req, token).await;
+            let sink: std::sync::Arc<dyn crate::events::Sink> = std::sync::Arc::new(app2.clone());
+            let result = run_pipeline(sink, Some(app2.clone()), req, token).await;
             if let Err(e) = result {
                 let _ = app2.emit(
                     EV_ERROR,
@@ -280,17 +256,6 @@ pub struct RetryRequest {
     pub query: String,
     /// The documents to re-download (the failed ones from the previous run).
     pub docs: Vec<crate::sources::Document>,
-    #[serde(default = "default_retry_concurrency")]
-    pub concurrency: usize,
-    #[serde(default = "default_retry_extract")]
-    pub extract: bool,
-}
-
-fn default_retry_concurrency() -> usize {
-    8
-}
-fn default_retry_extract() -> bool {
-    true
 }
 
 #[tauri::command]
@@ -326,8 +291,6 @@ pub async fn retry_run(
         let app2 = app.clone();
         let query = req.query;
         let docs = req.docs;
-        let concurrency = req.concurrency;
-        let extract = req.extract;
         tokio::spawn(async move {
             use tauri::Emitter;
             // RAII guard: clear the run's cancel token on EVERY exit (incl. a
@@ -347,16 +310,8 @@ pub async fn retry_run(
             }
             let _clear_guard = ClearTokenOnDrop(app2.clone());
 
-            let result = run_retry_pipeline(
-                app2.clone(),
-                folder,
-                query,
-                docs,
-                concurrency,
-                extract,
-                token,
-            )
-            .await;
+            let sink: std::sync::Arc<dyn crate::events::Sink> = std::sync::Arc::new(app2.clone());
+            let result = run_retry_pipeline(sink, folder, query, docs, token).await;
             if let Err(e) = result {
                 let _ = app2.emit(
                     EV_ERROR,
@@ -603,141 +558,247 @@ pub async fn open_library(state: State<'_, AppState>, path: String) -> Result<Li
     Ok(info)
 }
 
-/// A single downloaded document inside a saved library, for the in-app
-/// per-library document list (so a user can open a paper they found in an
-/// earlier session, not just from the live run card).
-#[derive(Debug, Serialize)]
-pub struct LibraryDoc {
-    pub title: String,
-    pub source: String,
-    /// Absolute on-disk path, ready for `open_path`.
-    pub path: String,
-    pub size_bytes: Option<u64>,
-    /// Set when the file saved but no text could be extracted (e.g. a scanned PDF).
-    pub extract_error: Option<String>,
-}
-
-/// List the downloaded documents of a saved library (read-only) so the Library
-/// view can show openable rows. Reuses the open_library confinement + read-only +
-/// blocking-pool pattern; only rows with an on-disk file are returned.
+/// List a saved library's documents (with full metadata) for the Library
+/// view. Only rows whose file still exists inside the library are returned.
 #[tauri::command]
 pub async fn list_library_docs(
     state: State<'_, AppState>,
     path: String,
-) -> Result<Vec<LibraryDoc>, String> {
+) -> Result<Vec<library::DocInfo>, String> {
     let root = confinement_root(&state)?;
     let p = safe_within_root(&PathBuf::from(&path), &root)?;
-    let db_path = p.join("library.db");
-    if !db_path.exists() {
-        return Err("library.db not found".into());
-    }
-    let folder = p.clone();
-    let docs = tokio::task::spawn_blocking(move || -> Result<Vec<LibraryDoc>, String> {
-        let conn = open_read_only(&db_path).map_err(|e| e.to_string())?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT title, source, local_path, size_bytes, extract_error \
-                 FROM documents \
-                 WHERE local_path IS NOT NULL AND local_path != '' \
-                 ORDER BY title COLLATE NOCASE",
-            )
-            .map_err(|e| e.to_string())?;
-        // Canonicalize the folder once so each row's resolved path can be checked
-        // against it. A stored local_path can (for a legacy/manifest library) be
-        // absolute or contain traversal, and Path::join keeps an absolute arg
-        // verbatim — without this check such a path would be handed straight to
-        // open_path, escaping the library root.
-        let folder_canon = folder.canonicalize().unwrap_or_else(|_| folder.clone());
-        let raw_rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,         // title
-                    row.get::<_, String>(1)?,         // source
-                    row.get::<_, String>(2)?,         // local_path
-                    row.get::<_, Option<i64>>(3)?,    // size_bytes
-                    row.get::<_, Option<String>>(4)?, // extract_error
-                ))
-            })
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        let docs = raw_rows
-            .into_iter()
-            .filter_map(|(title, source, local_path, size_bytes, extract_error)| {
-                let joined = folder.join(&local_path);
-                // Only surface rows whose file still exists AND stays inside the
-                // library folder: canonicalize() fails for a missing file (so
-                // phantom rows for files deleted off disk are dropped — honoring
-                // this command's contract) and resolves symlinks/.. for the
-                // containment check (so an escaping local_path can never reach
-                // open_path).
-                let canon = joined.canonicalize().ok()?;
-                if !canon.starts_with(&folder_canon) {
-                    return None;
-                }
-                Some(LibraryDoc {
-                    title,
-                    source,
-                    path: joined.to_string_lossy().to_string(),
-                    size_bytes: size_bytes.map(|n| n.max(0) as u64),
-                    extract_error,
-                })
-            })
-            .collect::<Vec<_>>();
-        Ok(docs)
+    tokio::task::spawn_blocking(move || library::list_docs(&p))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Full-text search over extracted text. `path` = one library, or `None` for
+/// every library under the root.
+#[tauri::command]
+pub async fn search_library(
+    state: State<'_, AppState>,
+    path: Option<String>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<library::SearchHit>, String> {
+    let root = confinement_root(&state)?;
+    let limit = limit.unwrap_or(50).clamp(1, 200);
+    let one = match path {
+        Some(p) => Some(safe_within_root(&PathBuf::from(&p), &root)?),
+        None => None,
+    };
+    tokio::task::spawn_blocking(move || match one {
+        Some(p) => library::search(&p, &query, limit),
+        None => Ok(library::search_all(&root, &query, limit)),
     })
     .await
-    .map_err(|e| e.to_string())??;
-    Ok(docs)
+    .map_err(|e| e.to_string())?
+}
+
+/// Read a document's extracted Markdown for the in-app preview (bounded).
+#[tauri::command]
+pub async fn read_doc_markdown(state: State<'_, AppState>, path: String) -> Result<String, String> {
+    let root = confinement_root(&state)?;
+    let p = safe_within_root(&PathBuf::from(&path), &root)?;
+    if p.extension().and_then(|e| e.to_str()) != Some("md") {
+        return Err("Not a text file.".into());
+    }
+    tokio::task::spawn_blocking(move || {
+        let mut s = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+        const MAX: usize = 400_000;
+        if s.len() > MAX {
+            let mut end = MAX;
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            s.truncate(end);
+            s.push_str("\n\n[… preview truncated — open the file to read the rest]\n");
+        }
+        Ok(s)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Build a single context-budgeted Markdown corpus (best documents first)
+/// for pasting into any AI chat. `ids` limits it to selected documents.
+#[tauri::command]
+pub async fn copy_for_ai(
+    state: State<'_, AppState>,
+    folder: String,
+    ids: Option<Vec<i64>>,
+    budget_tokens: Option<usize>,
+) -> Result<String, String> {
+    let root = confinement_root(&state)?;
+    let p = safe_within_root(&PathBuf::from(&folder), &root)?;
+    let budget = budget_tokens.unwrap_or(150_000).clamp(2_000, 2_000_000);
+    tokio::task::spawn_blocking(move || {
+        let mut docs = library::list_docs(&p)?;
+        if let Some(ids) = ids {
+            docs.retain(|d| ids.contains(&d.id));
+        }
+        let conn = library::open_library_db(&p)?;
+        let query: String = conn
+            .query_row(
+                "SELECT query FROM runs ORDER BY created_at DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or_default();
+        Ok(library::build_corpus(&query, &docs, budget))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Debug, Serialize)]
+pub struct McpInfo {
+    /// Absolute path of this executable (the MCP server binary).
+    pub command: String,
+    pub args: Vec<String>,
+    /// Ready-to-paste JSON for an MCP client config.
+    pub config_json: String,
+    /// One-line install for Claude Code.
+    pub claude_code_command: String,
+    /// Claude Desktop config path for this OS, and whether it already lists us.
+    pub claude_desktop_config: Option<String>,
+    pub claude_desktop_installed: bool,
+}
+
+fn claude_desktop_config_path() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        dirs::home_dir()
+            .map(|h| h.join("Library/Application Support/Claude/claude_desktop_config.json"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        dirs::config_dir().map(|d| d.join("Claude").join("claude_desktop_config.json"))
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        dirs::config_dir().map(|d| d.join("Claude").join("claude_desktop_config.json"))
+    }
+}
+
+fn mcp_command() -> Result<String, String> {
+    std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| format!("Couldn't locate the app executable: {e}"))
+}
+
+#[tauri::command]
+pub fn mcp_info() -> Result<McpInfo, String> {
+    let command = mcp_command()?;
+    let args = vec![crate::mcp::MCP_ARG.to_string()];
+    let config = serde_json::json!({
+        "mcpServers": {"document-finder": {"command": command, "args": args}}
+    });
+    let cfg_path = claude_desktop_config_path();
+    let installed = cfg_path
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .map(|v| v.pointer("/mcpServers/document-finder").is_some())
+        .unwrap_or(false);
+    let quoted = if command.contains(' ') {
+        format!("\"{command}\"")
+    } else {
+        command.clone()
+    };
+    Ok(McpInfo {
+        claude_code_command: format!(
+            "claude mcp add document-finder -- {quoted} {}",
+            crate::mcp::MCP_ARG
+        ),
+        config_json: serde_json::to_string_pretty(&config).unwrap_or_default(),
+        command,
+        args,
+        claude_desktop_config: cfg_path.map(|p| p.to_string_lossy().to_string()),
+        claude_desktop_installed: installed,
+    })
+}
+
+/// Add (or update) the `document-finder` entry in Claude Desktop's MCP config,
+/// preserving everything else in the file. Only runs on an explicit click.
+#[tauri::command]
+pub fn install_mcp_claude_desktop() -> Result<String, String> {
+    let path =
+        claude_desktop_config_path().ok_or("Couldn't find Claude Desktop's config folder.")?;
+    let dir = path.parent().ok_or("Bad config path")?;
+    if !dir.is_dir() {
+        return Err(
+            "Claude Desktop doesn't seem to be installed (its settings folder is missing).".into(),
+        );
+    }
+    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).map_err(|_| {
+            "Claude Desktop's config file isn't valid JSON — fix or remove it first."
+        })?,
+        _ => serde_json::json!({}),
+    };
+    if !root.is_object() {
+        return Err("Claude Desktop's config file has an unexpected format.".into());
+    }
+    let servers = root
+        .as_object_mut()
+        .unwrap()
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::json!({}));
+    if !servers.is_object() {
+        return Err("Claude Desktop's `mcpServers` setting has an unexpected format.".into());
+    }
+    servers.as_object_mut().unwrap().insert(
+        "document-finder".into(),
+        serde_json::json!({"command": mcp_command()?, "args": [crate::mcp::MCP_ARG]}),
+    );
+    if path.exists() {
+        let _ = std::fs::copy(&path, path.with_extension("json.bak"));
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(
+        &tmp,
+        serde_json::to_string_pretty(&root).unwrap_or_default(),
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok("Added. Restart Claude Desktop to connect.".into())
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ExportArgs {
     pub folder: String,
     pub dest: String,
-    /// When true, also include extracted text (`_text/`). Default true so the
-    /// resulting ZIP works with AIs that prefer plain text.
-    #[serde(default = "default_true")]
-    pub include_text: bool,
-    /// When true, include original PDFs/EPUBs/HTML. Default true.
-    #[serde(default = "default_true")]
+    /// Include the original PDFs/EPUBs (bigger file). Default false — the
+    /// Markdown already carries the text.
+    #[serde(default)]
     pub include_originals: bool,
+    /// Also write `corpus.md` packed to this many tokens. Default 150k.
+    #[serde(default)]
+    pub budget_tokens: Option<usize>,
 }
 
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Debug, Serialize)]
-pub struct ExportResult {
-    pub dest: String,
-    pub files: usize,
-    pub size_bytes: u64,
-}
-
-/// Pack a library folder as a single ZIP that's easy to upload to AI tools
-/// (Claude Projects, ChatGPT, etc.). Skips the BM25 index and OS junk.
+/// Export a library as an AI-ready pack (README index, clean Markdown,
+/// chunks.jsonl, references.bib, corpus.md, optional originals). See
+/// `engine::library::write_ai_pack`.
 #[tauri::command]
 pub async fn export_library_zip(
     state: State<'_, AppState>,
     args: ExportArgs,
-) -> Result<ExportResult, String> {
+) -> Result<library::PackResult, String> {
     let root = confinement_root(&state)?;
     let src = safe_within_root(&PathBuf::from(&args.folder), &root)?;
     if !src.is_dir() {
         return Err(format!("not a folder: {}", args.folder));
     }
-    // The destination is legitimately OUTSIDE the library root (the user picks
-    // it via the native save dialog — Desktop, Downloads, etc.), so it can't be
-    // confined like the source. But it still arrives from the renderer, so don't
-    // let it fabricate arbitrary directory trees or clobber a non-file: require
-    // an absolute path whose parent folder already exists, and a plain-file (or
-    // absent) target. This removes the prior `create_dir_all` write primitive.
-    let dest_path = PathBuf::from(&args.dest);
-    if !dest_path.is_absolute() {
+    // The destination is outside the library (picked in the save dialog), so
+    // it can't be confined — but don't let it create directory trees or
+    // clobber a non-file.
+    let dest = PathBuf::from(&args.dest);
+    if !dest.is_absolute() {
         return Err("Export destination must be an absolute path.".into());
     }
-    match dest_path.parent() {
+    match dest.parent() {
         Some(parent) if parent.is_dir() => {}
         _ => {
             return Err(
@@ -745,132 +806,20 @@ pub async fn export_library_zip(
             )
         }
     }
-    if dest_path.exists() && !dest_path.is_file() {
+    if dest.exists() && !dest.is_file() {
         return Err("Export destination already exists and isn't a file.".into());
     }
-
-    // Zipping a real library (hundreds of MB to several GB of PDFs/EPUBs) is
-    // heavy, blocking I/O + deflate. Run it on the blocking pool — NOT inline —
-    // so it never freezes the main thread / UI event loop (a sync command runs on
-    // the main thread; even an async body would block a tokio worker). The
-    // State-dependent validation above already ran; from here on we only touch
-    // owned values, so they move cleanly into the blocking task.
-    //
-    // Write into a sibling temp file, then atomically rename to the final dest
-    // only after `finish()` succeeds, so a failed export never leaves a corrupt
-    // half-written .zip (or clobbers a prior good one). The temp lives in the
-    // SAME directory so the rename stays on one filesystem (atomic).
-    let tmp_path = dest_path.with_extension("zip.partial");
-    tauri::async_runtime::spawn_blocking(move || -> Result<ExportResult, String> {
-        let zip_once = || -> Result<usize, String> {
-            let file = std::fs::File::create(&tmp_path).map_err(|e| e.to_string())?;
-            let mut zip_writer = zip::ZipWriter::new(file);
-            let options: zip::write::FileOptions<()> = zip::write::FileOptions::default()
-                .compression_method(zip::CompressionMethod::Deflated)
-                .compression_level(Some(6));
-
-            let root_name = src
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "library".to_string());
-
-            let mut count = 0usize;
-            write_zip_recursive(
-                &mut zip_writer,
-                &src,
-                &PathBuf::from(&root_name),
-                &options,
-                &mut count,
-                &args,
-            )
-            .map_err(|e| e.to_string())?;
-            // `finish()` returns the inner File; drop it so all bytes are flushed
-            // to disk before we rename.
-            let f = zip_writer.finish().map_err(|e| e.to_string())?;
-            drop(f);
-            Ok(count)
-        };
-
-        let count = match zip_once() {
-            Ok(count) => count,
-            Err(e) => {
-                let _ = std::fs::remove_file(&tmp_path); // don't leave a broken partial
-                return Err(e);
-            }
-        };
-
-        std::fs::rename(&tmp_path, &dest_path).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp_path);
-            format!("could not finalize export: {e}")
-        })?;
-
-        let size_bytes = std::fs::metadata(&dest_path).map(|m| m.len()).unwrap_or(0);
-        Ok(ExportResult {
-            dest: dest_path.to_string_lossy().to_string(),
-            files: count,
-            size_bytes,
-        })
+    let budget = Some(
+        args.budget_tokens
+            .unwrap_or(150_000)
+            .clamp(2_000, 2_000_000),
+    );
+    let originals = args.include_originals;
+    tauri::async_runtime::spawn_blocking(move || {
+        library::write_ai_pack(&src, &dest, originals, budget)
     })
     .await
     .map_err(|e| format!("export task failed: {e}"))?
-}
-
-fn write_zip_recursive(
-    zw: &mut zip::ZipWriter<std::fs::File>,
-    src: &Path,
-    rel: &Path,
-    options: &zip::write::FileOptions<()>,
-    count: &mut usize,
-    args: &ExportArgs,
-) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let path = entry.path();
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy().to_string();
-
-        // Skip OS junk and the (now-removed) BM25 index dir if it exists from older runs.
-        if name_str == ".DS_Store" || name_str == "_index" || name_str.starts_with('.') {
-            continue;
-        }
-
-        // Never follow symlinks — prevents traversal out of the library folder.
-        let sym_meta = std::fs::symlink_metadata(&path)?;
-        if sym_meta.file_type().is_symlink() {
-            continue;
-        }
-
-        let new_rel = rel.join(&name);
-        if path.is_dir() {
-            // Skip _text dir if user opted out.
-            if name_str == "_text" && !args.include_text {
-                continue;
-            }
-            write_zip_recursive(zw, &path, &new_rel, options, count, args)?;
-        } else {
-            // Skip original docs if user opted out — but always include manifest.json.
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            let is_doc = matches!(ext.as_str(), "pdf" | "epub" | "html" | "htm");
-            if is_doc && !args.include_originals {
-                continue;
-            }
-
-            // ZIP entry names MUST use forward slashes (APPNOTE 4.4.17). On
-            // Windows `to_string_lossy` yields `dir\file`, which non-Windows
-            // unzippers treat as one filename with a literal backslash, flattening
-            // the archive's directory structure. Normalize to `/`.
-            let entry_name = new_rel.to_string_lossy().replace('\\', "/");
-            zw.start_file(&entry_name, *options)?;
-            let mut f = std::fs::File::open(&path)?;
-            std::io::copy(&mut f, zw)?;
-            *count += 1;
-        }
-    }
-    Ok(())
 }
 
 #[derive(Debug, Serialize)]
@@ -1103,204 +1052,6 @@ pub async fn open_path(path: String) -> Result<(), String> {
 
 // =============================================================================
 // AI Model Manager commands (E1)
-// =============================================================================
-
-/// Whether the embedding model (managed entirely by fastembed) is loaded
-/// in-process. The first semantic-rerank call triggers a download into
-/// fastembed's own cache; this command lets the UI surface that lifecycle
-/// without us shipping a duplicate registry entry that goes stale.
-#[tauri::command]
-pub fn is_embedding_loaded() -> bool {
-    #[cfg(feature = "ai-embeddings")]
-    {
-        crate::ai::embeddings::is_loaded()
-    }
-    #[cfg(not(feature = "ai-embeddings"))]
-    {
-        false
-    }
-}
-
-/// Whether the embedding model is already cached on disk (so it loads without a
-/// network fetch). Best-effort; lets Settings show a clear status separate from
-/// `is_embedding_loaded` (which reports in-memory readiness this session).
-#[tauri::command]
-pub fn embedding_downloaded(_app: AppHandle) -> bool {
-    #[cfg(feature = "ai-embeddings")]
-    {
-        crate::ai::embeddings::is_downloaded(&_app)
-    }
-    #[cfg(not(feature = "ai-embeddings"))]
-    {
-        false
-    }
-}
-
-/// Start a one-time background download + load of the embedding model so the
-/// user can warm it from Settings instead of waiting for the first semantic
-/// search. No-op if already loaded/warming; the UI learns it's ready via the
-/// `df:model_status` event.
-#[tauri::command]
-pub fn warm_embedding(_app: AppHandle) {
-    #[cfg(feature = "ai-embeddings")]
-    {
-        crate::ai::embeddings::warm_in_background(_app);
-    }
-}
-
-#[tauri::command]
-pub fn list_models(app: AppHandle, state: State<'_, AiState>) -> Result<Vec<ModelInfo>, String> {
-    // Wrap in catch_unwind so a panic anywhere in `from_entry` (mutex poison,
-    // path resolution, registry access) becomes a real error string the UI
-    // can show instead of a hung promise.
-    //
-    // AppHandle and State refs aren't UnwindSafe (they hold Arcs into mutex
-    // chains); AssertUnwindSafe is appropriate because if a panic does occur
-    // we're going to surface and bail, not continue using the borrowed state.
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| snapshot(&app, &state)));
-    match result {
-        Ok(list) => {
-            tracing::info!("list_models: returning {} entries", list.len());
-            Ok(list)
-        }
-        Err(payload) => {
-            let detail = payload
-                .downcast_ref::<&str>()
-                .map(|s| (*s).to_string())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "<non-string panic payload>".to_string());
-            tracing::error!("list_models panicked: {}", detail);
-            Err(format!("list_models panicked: {}", detail))
-        }
-    }
-}
-
-#[tauri::command]
-pub async fn download_model(
-    app: AppHandle,
-    state: State<'_, AiState>,
-    model_id: String,
-) -> Result<(), String> {
-    let entry =
-        registry::find(&model_id).ok_or_else(|| format!("unknown model id: {}", model_id))?;
-
-    let token = tokio_util::sync::CancellationToken::new();
-    // Atomically reserve the slot AND register the cancel token in one locked
-    // step. The old check-then-register left a TOCTOU window where two concurrent
-    // download_model calls for the same id could both pass `is_downloading` and
-    // race onto the same `.partial` file, corrupting it.
-    if !state.try_begin_download(&model_id, token.clone()) {
-        return Err(format!("model {} is already downloading", model_id));
-    }
-    state.set_status(
-        &model_id,
-        ModelStatus::Downloading {
-            downloaded: 0,
-            total: entry.approx_bytes,
-        },
-    );
-
-    // Use the dedicated no-timeout client; the shared make_client() has a
-    // 60s overall timeout that silently kills 2 GB downloads mid-stream.
-    let client = std::sync::Arc::new(make_model_download_client());
-    let app_for_task = app.clone();
-    let model_id_for_task = model_id.clone();
-
-    // Spawn so the command returns immediately; progress streams via events.
-    tokio::spawn(async move {
-        // RAII guard: if this task UNWINDS (a panic deep in the download path)
-        // before reaching a terminal status, flip the model out of "downloading"
-        // and emit a `failed` status event — otherwise the UI card would spin
-        // forever with no event to unstick it. Disarmed on normal completion,
-        // which records the real terminal status just below.
-        struct FailOnPanic {
-            app: AppHandle,
-            model_id: String,
-            armed: bool,
-        }
-        impl Drop for FailOnPanic {
-            fn drop(&mut self) {
-                if !self.armed {
-                    return;
-                }
-                use tauri::Emitter;
-                if let Some(state) = self.app.try_state::<AiState>() {
-                    state.clear_cancel(&self.model_id);
-                    state.set_status(
-                        &self.model_id,
-                        ModelStatus::Failed {
-                            msg: "download task crashed".to_string(),
-                        },
-                    );
-                }
-                let _ = self.app.emit(
-                    crate::events::EV_MODEL_STATUS,
-                    crate::events::ModelStatusPayload {
-                        model_id: self.model_id.clone(),
-                        status: "failed".to_string(),
-                        detail: Some("download task crashed".to_string()),
-                    },
-                );
-            }
-        }
-        let mut panic_guard = FailOnPanic {
-            app: app_for_task.clone(),
-            model_id: model_id_for_task.clone(),
-            armed: true,
-        };
-
-        let result = ai::downloader::download(app_for_task.clone(), client, entry, token).await;
-        panic_guard.armed = false; // reached a normal terminal state; record it below
-        if let Some(state) = app_for_task.try_state::<AiState>() {
-            state.clear_cancel(&model_id_for_task);
-            match &result {
-                Ok(_) => state.set_status(&model_id_for_task, ModelStatus::Ready),
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg == "cancelled" {
-                        state.set_status(&model_id_for_task, ModelStatus::Cancelled);
-                    } else {
-                        state.set_status(&model_id_for_task, ModelStatus::Failed { msg });
-                    }
-                }
-            }
-        }
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn cancel_model_download(state: State<'_, AiState>, model_id: String) -> Result<(), String> {
-    state.cancel_download(&model_id);
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn delete_model(
-    app: AppHandle,
-    state: State<'_, AiState>,
-    model_id: String,
-) -> Result<(), String> {
-    let entry =
-        registry::find(&model_id).ok_or_else(|| format!("unknown model id: {}", model_id))?;
-
-    // Cancel any in-flight download first.
-    state.cancel_download(&model_id);
-
-    let dir = ai::storage::model_dir(&app, entry).map_err(|e| e.to_string())?;
-    if dir.exists() {
-        let stage = force_remove_dir(&dir)
-            .await
-            .map_err(|e| format!("failed to delete {}: {}", dir.display(), e))?;
-        tracing::info!("delete_model: removed {} via {}", dir.display(), stage);
-    }
-    state.set_status(&model_id, ModelStatus::NotDownloaded);
-    Ok(())
-}
-
-// =============================================================================
-// ACL-proof directory removal
 // =============================================================================
 
 /// Recursively delete a directory, working around macOS Extended ACLs and
@@ -1564,24 +1315,6 @@ pub fn local_searxng_port() -> Option<u16> {
     crate::sources::local_searxng::local_port()
 }
 
-/// Drop loaded AI singletons so the next search re-initializes them from
-/// scratch. Called automatically by the frontend when an EV_ERROR event
-/// fires, so users can retry without restarting the app after an inference
-/// crash.
-#[tauri::command]
-pub async fn reset_ai_state() -> Result<(), String> {
-    // Offload the embedding reset: it kill+wait()s the worker child process, a
-    // blocking syscall that must not run on the async runtime thread.
-    #[cfg(feature = "ai-embeddings")]
-    {
-        let _ = tokio::task::spawn_blocking(crate::ai::embeddings::reset_embedding_model).await;
-    }
-    #[cfg(feature = "ai-llm")]
-    crate::ai::llm::reset_llm_model();
-    tracing::info!("AI state reset by user");
-    Ok(())
-}
-
 // =============================================================================
 // Library delete (F3)
 // =============================================================================
@@ -1648,7 +1381,7 @@ pub struct PurgeReport {
 ///
 /// SAFETY: this takes **no path from the caller** — every directory it deletes is
 /// derived server-side from the app identifier (`app_data_dir`, which holds the
-/// downloaded AI model weights + the fastembed cache + config), the run-log
+/// WebView storage, config, caches), the run-log
 /// location ([`runlog::log_path`]), and — only when `include_library` is set —
 /// the confined library root ([`confinement_root`], which already knows a custom
 /// root configured via `set_library_root`). So a compromised/buggy renderer can't
@@ -1672,7 +1405,8 @@ pub async fn purge_all_data(
 ) -> Result<PurgeReport, String> {
     let mut targets: Vec<PathBuf> = Vec::new();
 
-    // 1. App data dir (identifier-keyed): downloaded LLM weights, the fastembed
+    // 1. App data dir (identifier-keyed): WebView storage, legacy 0.2 AI model
+    //    weights (still cleaned up for upgraders), the
     //    BGE/ONNX cache, and any config nested under the same folder.
     match app.path().app_data_dir() {
         Ok(dir) => targets.push(dir),
@@ -1761,6 +1495,13 @@ pub async fn purge_all_data(
     // succeeds only if we emptied it, so a root that still holds unrelated user
     // files (or is itself a shared/parent folder) is left intact.
     if let Some(root) = library_root_to_clear {
+        for f in [
+            crate::engine::db::INDEX_FILE.to_string(),
+            format!("{}-wal", crate::engine::db::INDEX_FILE),
+            format!("{}-shm", crate::engine::db::INDEX_FILE),
+        ] {
+            let _ = std::fs::remove_file(root.join(f));
+        }
         if std::fs::remove_dir(&root).is_ok() {
             report.removed.push(root.display().to_string());
         }

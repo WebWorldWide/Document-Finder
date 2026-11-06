@@ -176,6 +176,7 @@ impl Source for ZenodoSource {
                         year,
                         abstract_: h.metadata.description,
                         identifier: h.metadata.doi,
+                        ..Default::default()
                     });
                 }
                 // Count emitted docs toward the limit (not raw hits) so records

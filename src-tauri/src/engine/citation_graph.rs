@@ -10,12 +10,10 @@
 //! likely to be a foundational reference than one that just happens to
 //! match your query terms in isolation.
 //!
-//! Off by default — opt-in via `RunRequest.use_citation_graph`. Adds 30+
-//! API calls and is rate-limited by Semantic Scholar; only enable for
-//! research-grade queries where the extra second matters.
+//! Always on, but bounded: it runs alongside downloads (never gating them),
+//! fetches at most 4 papers at a time, and gives up after a short budget —
+//! whatever finished in time re-orders the remaining download queue.
 
-use super::ranking::RankedDoc;
-use crate::sources::Document;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -62,13 +60,6 @@ struct PaperRef {
 struct ExternalIds {
     #[serde(default, rename = "DOI")]
     doi: Option<String>,
-}
-
-fn doi_from(doc: &Document) -> Option<String> {
-    doc.identifier
-        .as_deref()
-        .and_then(super::dedup::extract_doi)
-        .or_else(|| super::dedup::extract_doi(&doc.url))
 }
 
 /// Process-wide memoization of S2 fetches keyed by `(endpoint_kind, doi)`.
@@ -128,125 +119,85 @@ async fn fetch_dois(client: &reqwest::Client, template: &str, paper_doi: &str) -
     dois
 }
 
-/// Apply a citation-graph boost to the top K of `ranked` and return the
-/// re-sorted list. Candidates without DOIs are unaffected. Errors from the
-/// S2 API are silently absorbed — the worst case is no boost, not a
-/// pipeline failure.
-pub async fn enrich_with_citation_graph(
+/// Citation-graph connectivity boosts for the current top candidates.
+///
+/// `top` is `(primary_url, doi)` for up to [`TOP_K`] best candidates. For each
+/// we fetch Semantic Scholar references + citations (4 papers at a time, to
+/// stay inside the public rate limit) and count how many *other* top
+/// candidates it links to. Returns `url -> multiplier` (1.1 … 1.5). Bounded by
+/// `budget`; whatever finished in time is used.
+pub async fn citation_boosts(
     client: Arc<reqwest::Client>,
-    mut ranked: Vec<RankedDoc>,
-) -> Vec<RankedDoc> {
-    if ranked.is_empty() {
-        return ranked;
-    }
-
-    // Build a (top-K) DOI → index lookup so we can detect intra-set citations.
-    let top_indices: Vec<usize> = ranked
-        .iter()
+    top: Vec<(String, String)>,
+    budget: std::time::Duration,
+) -> HashMap<String, f32> {
+    use futures::StreamExt;
+    let top: Vec<(String, String)> = top
+        .into_iter()
         .take(TOP_K)
-        .enumerate()
-        .map(|(i, _)| i)
+        .map(|(u, d)| (u, d.to_lowercase()))
         .collect();
-    let mut doi_to_index: HashMap<String, usize> = HashMap::new();
-    for &i in &top_indices {
-        if let Some(d) = doi_from(&ranked[i].doc.doc) {
-            doi_to_index.insert(d.to_lowercase(), i);
-        }
+    let doi_to_url: HashMap<String, String> =
+        top.iter().map(|(u, d)| (d.clone(), u.clone())).collect();
+    if doi_to_url.len() < 2 {
+        return HashMap::new();
     }
-    if doi_to_index.is_empty() {
-        return ranked;
-    }
-
-    // Concurrently fetch references + citations for each top-K candidate
-    // that has a DOI. Within each task the two endpoint calls run in
-    // parallel via tokio::join so an N-task fanout becomes 2N concurrent
-    // HTTP requests instead of 2 serial requests × N tasks.
-    let mut tasks: tokio::task::JoinSet<(usize, Vec<String>)> = tokio::task::JoinSet::new();
-    for &i in &top_indices {
-        let Some(my_doi) = doi_from(&ranked[i].doc.doc) else {
-            continue;
-        };
-        let client_r = client.clone();
-        let client_c = client.clone();
-        let doi_r = my_doi.clone();
-        let doi_c = my_doi.clone();
-        tasks.spawn(async move {
-            let (mut refs, cites) = tokio::join!(
-                fetch_dois(&client_r, REFERENCES_URL, &doi_r),
-                fetch_dois(&client_c, CITATIONS_URL, &doi_c),
-            );
-            refs.extend(cites);
-            (i, refs)
-        });
-    }
-
-    // Tally how many top-K candidates each top-K candidate is connected to.
-    let mut intra_citations: HashMap<usize, usize> = HashMap::new();
-    while let Some(res) = tasks.join_next().await {
-        let Ok((source_idx, related)) = res else {
-            continue;
-        };
-        for d in related {
-            if let Some(&target_idx) = doi_to_index.get(&d) {
-                if target_idx != source_idx {
-                    *intra_citations.entry(target_idx).or_insert(0) += 1;
+    let mut intra: HashMap<String, usize> = HashMap::new();
+    let work = futures::stream::iter(top.clone())
+        .map(|(url, doi)| {
+            let client = client.clone();
+            async move {
+                let (mut refs, cites) = tokio::join!(
+                    fetch_dois(&client, REFERENCES_URL, &doi),
+                    fetch_dois(&client, CITATIONS_URL, &doi),
+                );
+                refs.extend(cites);
+                (url, refs)
+            }
+        })
+        .buffer_unordered(4);
+    tokio::pin!(work);
+    let deadline = tokio::time::sleep(budget);
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            _ = &mut deadline => break,
+            next = work.next() => {
+                let Some((src_url, related)) = next else { break };
+                for d in related {
+                    if let Some(target) = doi_to_url.get(&d.to_lowercase()) {
+                        if *target != src_url {
+                            *intra.entry(target.clone()).or_insert(0) += 1;
+                        }
+                    }
                 }
             }
         }
     }
-
-    // Apply the boost.
-    for (idx, count) in intra_citations {
-        let bounded = count.min(MAX_BOOST_CITATIONS);
-        let mult = 1.0 + PER_CITATION_BOOST * bounded as f32;
-        ranked[idx].score *= mult;
-        ranked[idx].authority *= mult;
-    }
-
-    // Re-sort because boosts changed scores.
-    ranked.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    ranked
+    intra
+        .into_iter()
+        .map(|(u, c)| {
+            (
+                u,
+                1.0 + PER_CITATION_BOOST * c.min(MAX_BOOST_CITATIONS) as f32,
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::dedup::MergedDoc;
 
-    fn ranked_doi(score: f32, doi: &str) -> RankedDoc {
-        RankedDoc {
-            doc: MergedDoc {
-                doc: Document {
-                    title: format!("Paper {}", doi),
-                    url: format!("https://example.com/{}", doi),
-                    source: "test".into(),
-                    authors: vec![],
-                    year: None,
-                    abstract_: None,
-                    identifier: Some(doi.to_string()),
-                },
-                source_ranks: vec![("test".into(), 1)],
-            },
-            tfidf: 1.0,
-            rrf: 0.01,
-            authority: 1.0,
-            score,
-            reject_reason: None,
-        }
+    #[tokio::test]
+    async fn fewer_than_two_dois_is_a_no_op() {
+        let client = Arc::new(reqwest::Client::new());
+        let out = citation_boosts(
+            client,
+            vec![("https://a".into(), "10.1/x".into())],
+            std::time::Duration::from_millis(10),
+        )
+        .await;
+        assert!(out.is_empty());
     }
-
-    #[test]
-    fn doi_from_identifier_field() {
-        let r = ranked_doi(1.0, "10.1038/nature12373");
-        assert_eq!(
-            doi_from(&r.doc.doc),
-            Some("10.1038/nature12373".to_string())
-        );
-    }
-
-    // Network-dependent tests skipped — exercised by integration / manual UAT.
 }

@@ -1,7 +1,7 @@
 <div align="center">
   <img src="src-tauri/icons/icon.png" alt="Document Finder" width="140" height="140" />
   <h1>Document Finder</h1>
-  <p><strong>Find open-access research across the web, download it in bulk, and bundle it into a tidy local library — ready to drop into any AI context window.</strong></p>
+  <p><strong>Describe a topic. Document Finder searches open-access libraries in parallel, downloads the best matches, and turns them into clean, cited text for your AI.</strong></p>
   <p>
     <a href="https://documentfinder.webworldwide.online/">Website</a> ·
     <a href="https://github.com/WebWorldWide/Document-Finder/releases">Download</a> ·
@@ -11,17 +11,19 @@
 
 ---
 
-Document Finder started as a way to **find and compress documents into context for AI and RAG**, and grew into a broader tool for discovering and downloading open-access research. It searches several sources in parallel, downloads the papers, extracts their text, and stores everything in per-query SQLite libraries you can export as a single `.zip`. Native desktop app — **Rust** backend, **Solid.js** frontend, **Tauri**.
+Document Finder is a native desktop app (Rust + Tauri, Solid.js) that turns a plain-language question into a local research library. It searches eight open-access scholarly sources plus the web at once, ranks and de-duplicates the results, downloads the best matches, and extracts clean Markdown you can search, cite, and hand to any AI — by copy-paste, as an export pack, or live over MCP. No accounts, no API keys, no AI model downloads, and nothing to tune.
 
 ## Features
 
-- **Unified discovery** across eight open-access scholarly sources plus built-in web search, with natural-language query expansion into sub-queries.
-- **Live download stream** — watch documents arrive in real time with throughput, ETA, file-type breakdown, and a per-source lane chart as the async Rust backend fetches, retries, and extracts text.
-- **Plain-language results** — every skipped or failed download explains itself in one sentence ("This source blocked the download — it may need a sign-in"), not an HTTP code.
-- **AI-ready exports** — bundle any library (PDFs, EPUBs, extracted text) into a `.zip` for a context window.
-- **Built-in web meta-search** — DuckDuckGo, Bing, Brave, Mojeek, Marginalia, and Startpage behind a per-engine circuit breaker, with an in-process SearXNG-compatible server and a public SearXNG pool as fallbacks. No Docker, no setup, no API keys.
-- **Optional on-device AI** — `bge-small` reranks results and an on-device `Qwen 2.5 1.5B` expands queries and filters borderline hits; both downloaded on first use, run fully offline.
-- **Editorial workstation UI** — three themes (Paper / Slate / Midnight), nine accent colors, compact/regular density, and a stacked-or-split download stream, with reduced-motion support. Defaults to Slate + Sky blue.
+- **Just works** — no depth, quality, or concurrency settings. The app decides how far to search (it keeps going while new results stay relevant) and how fast to download (a per-site speed limit that adapts itself and backs off when a server says "slow down").
+- **Fast** — downloads start within seconds, best match first, while searching continues. HTTP/2, a shared DNS cache, and reuse of anything already in your library.
+- **Finds the open copy** — every known open-access location for a paper is tried: publisher, repository, preprint, Europe PMC, bioRxiv, OSF, and Unpaywall for every DOI. Duplicate results from different sources are merged, so no information is lost.
+- **Model-free relevance** — BM25F ranking with concept coverage, cross-source agreement, citation counts, and a citation-graph boost, plus a second search pass that learns the field's own vocabulary from the best first results (pseudo-relevance feedback).
+- **Clean text** — PDFs are read with PDFium (Chrome's PDF engine). Running headers, page numbers, ligatures, and line-break hyphenation are removed; sections, page markers, and metadata are kept. EPUBs are read in true reading order, web pages are reduced to their main content, and scanned PDFs are flagged clearly.
+- **Your library, searchable** — full-text search (SQLite FTS5) across every library, with an inspector that shows metadata, abstract, citation, and a reading preview.
+- **For any AI** — *Copy for AI* (a citation-headed corpus sized for a context window), an *export pack* (`README.md` index, Markdown per document, `chunks.jsonl`, `references.bib`, `corpus.md`), and a built-in **MCP server** so Claude Desktop, Claude Code, or any MCP client can search and read your libraries directly.
+- **Plain-language results** — every failed download explains itself in one sentence.
+- **Quiet design** — Instrument Serif + Archivo, light / dark / system, keyboard-friendly, reduced-motion aware.
 
 ## Sources
 
@@ -41,36 +43,30 @@ _All open-access. No API keys._
 
 ## Installing a release
 
-The [release builds](https://github.com/WebWorldWide/Document-Finder/releases) are
-not notarized (the macOS build is ad-hoc signed), so each OS asks you to allow the
-app on first launch:
+Download from the [releases page](https://github.com/WebWorldWide/Document-Finder/releases/latest).
 
-- **macOS** (Apple Silicon) — right-click the app → **Open**, then confirm. If
-  macOS still says the app *"is damaged and can't be opened"*, clear the download
-  quarantine flag and reopen:
-  ```bash
-  xattr -dr com.apple.quarantine "/Applications/Document Finder.app"
-  ```
-- **Windows** — SmartScreen → **More info** → **Run anyway**.
-<!-- SYNC: this Linux caveat (glibc/Flatpak/distro examples + the WebKitGTK
-     blank-window workaround) is duplicated in site/index.html (the .dl-fine
-     block under the Linux download button) and
-     .github/workflows/release.yml (create-release job's notes.md heredoc).
-     Update all three together — there's no automated check for prose text. -->
-- **Linux** — the `.deb`/`.rpm`/`.AppImage` need glibc 2.39+ (built on Ubuntu
-  24.04), so on older distros (Ubuntu 22.04, Debian 12, RHEL 9, Mint 21) use the
-  **Flatpak**, which ships its own runtime and runs anywhere Flatpak does. If the
-  window opens blank (some older GPU drivers + system WebKitGTK), launch with
-  `WEBKIT_DISABLE_DMABUF_RENDERER=1` set (add `WEBKIT_DISABLE_COMPOSITING_MODE=1`
-  if it persists) — or enable **Settings → Safe rendering mode** and relaunch,
-  which sets the same workaround persistently.
+<!-- SYNC: these install notes are duplicated in site/index.html (.dl-fine) and
+     .github/workflows/release.yml (create-release notes.md). Update all three. -->
+- **macOS** (Apple Silicon, macOS 11+) — the `.dmg` is signed with a Developer ID and notarized by Apple, so it opens normally.
+- **Windows** — SmartScreen may ask once: **More info** → **Run anyway**.
+- **Linux** — `.deb`, `.rpm`, and `.AppImage` need glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36 or newer); the **Flatpak** runs anywhere. If the window opens blank (some older GPU drivers with the system WebKitGTK), enable **Settings → Diagnostics → Safe rendering mode** and relaunch, or start the app with `WEBKIT_DISABLE_DMABUF_RENDERER=1`.
+
+## Connect your AI (MCP)
+
+**Settings → Connect your AI → Add to Claude Desktop** adds Document Finder to Claude Desktop in one click. For Claude Code, copy the command shown there, which looks like:
+
+```bash
+claude mcp add document-finder -- "/Applications/Document Finder.app/Contents/MacOS/document-finder" --mcp
+```
+
+Any other MCP client can use the JSON config shown in the same panel. The server is read-only and only sees your library folder. It offers `list_libraries`, `search_library`, `list_documents`, `get_document`, and `get_passages`.
 
 ## Uninstalling
 
 Document Finder is easy to remove cleanly on any OS.
 
 1. **Erase its data (recommended, any OS).** In the app: **Settings → Danger
-   zone → Erase app data**. This deletes the downloaded AI models, caches, and
+   zone → Erase app data**. This deletes settings, caches, and
    run logs; tick the extra box to also delete your downloaded document library.
    This is the only step that knows a **custom** library folder, so do it first
    if you moved your library. Then quit the app.
@@ -96,7 +92,7 @@ scripts/uninstall.ps1         # Windows (PowerShell)
 
 | What | Windows | macOS | Linux |
 | --- | --- | --- | --- |
-| AI models + caches + config | `%APPDATA%\com.webworldwide.documentfinder` | `~/Library/Application Support/com.webworldwide.documentfinder` | `~/.local/share/com.webworldwide.documentfinder` |
+| Config + caches | `%APPDATA%\com.webworldwide.documentfinder` | `~/Library/Application Support/com.webworldwide.documentfinder` | `~/.local/share/com.webworldwide.documentfinder` |
 | Webview storage / caches | `%LOCALAPPDATA%\com.webworldwide.documentfinder` | `~/Library/{WebKit,Caches,Preferences}/com.webworldwide.documentfinder*` | `~/.config` + `~/.cache/com.webworldwide.documentfinder` |
 | Run log | `%LOCALAPPDATA%\Document Finder\Logs` | `~/Library/Logs/Document Finder` | `~/.local/state/document-finder` |
 | Document library (kept by default) | `Documents\Document Finder` | `~/Documents/Document Finder` | `~/Documents/Document Finder` |
@@ -105,20 +101,17 @@ scripts/uninstall.ps1         # Windows (PowerShell)
 
 ## Build and run
 
-Prerequisites: [Rust](https://rustup.rs/), [Node.js](https://nodejs.org/) 22+, and a C++ toolchain with **cmake** + **clang/LLVM** (for the bundled llama.cpp). On Windows, install [LLVM](https://github.com/llvm/llvm-project/releases) (or use Visual Studio Build Tools with the C++ and Clang components) so `libclang` is on your `PATH`.
+Prerequisites: [Rust](https://rustup.rs/) and [Node.js](https://nodejs.org/) 22+ (plus the WebKitGTK dev packages on Linux; see [`CLAUDE.md`](CLAUDE.md)). No C++ toolchain, cmake, or LLVM needed.
 
 ```bash
-./run.ps1         # Windows  (./run.sh on macOS/Linux — installs pnpm if needed)
+./run.sh          # macOS / Linux (installs pnpm if needed) — ./run.ps1 on Windows
+pnpm tauri dev    # hot-reload dev build
 pnpm tauri build  # native installers in src-tauri/target/release/bundle/
 ```
 
-The first build compiles llama.cpp + ONNX Runtime from source (10–25 min). For a fast compile-check without the AI features (note: `pnpm tauri build` does not forward `--no-default-features` to cargo, so call cargo directly):
+The Tauri commands download the matching PDFium library automatically (`pnpm fetch-pdfium`). Run it once yourself before plain `cargo` commands.
 
-```bash
-cargo build --manifest-path src-tauri/Cargo.toml --no-default-features --features=custom-protocol
-```
-
-To rebuild cleanly later — one command on any OS (Windows, macOS, Linux):
+For a clean rebuild on any OS:
 
 ```bash
 pnpm clean-build         # clean caches + release-fast build
@@ -129,14 +122,14 @@ pnpm clean-build:dev     # clean + hot-reload dev build
 
 Each search gets a folder under `~/Documents/Document Finder/library/`:
 
-```
+```text
 your-query-slug/
-├── library.db                ← SQLite metadata
-├── _text/                    ← extracted plain text
-└── paper-title-abc123.pdf    ← the downloaded files
+├── library.db                 ← SQLite: metadata, chunks, full-text index
+├── _text/paper-title-abc123.md ← clean Markdown with a metadata header
+└── paper-title-abc123.pdf     ← the original file
 ```
 
-`library.db` holds full metadata and is queryable with any SQLite client.
+`library.db` can be queried with any SQLite client. A small `.document-finder-index.db` in the library root lets later searches reuse files you already have.
 
 ## Contributing and license
 

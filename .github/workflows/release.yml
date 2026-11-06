@@ -70,14 +70,10 @@ jobs:
             printf '%s\n' \
               'Native installers for **macOS** (Apple Silicon `.dmg`), **Windows** (`.exe`, `.msi`), and **Linux** (Flatpak, `.deb`, `.rpm`, `.AppImage`).' \
               '' \
-              'The apps are **unsigned** (the macOS build is **ad-hoc signed**, which removes the "app is damaged" error). First launch:' \
+              'The **macOS** build is signed with a Developer ID and **notarized by Apple**, so it opens normally. (If the release was built without signing secrets it is ad-hoc signed instead — right-click → **Open** on first launch.)' \
               '' \
-              '- **macOS** — right-click the app → **Open**, then confirm. If macOS still refuses, clear the download quarantine:' \
-              '  ```' \
-              '  xattr -dr com.apple.quarantine "/Applications/Document Finder.app"' \
-              '  ```' \
-              '- **Windows** — SmartScreen → **More info** → **Run anyway**.' \
-              '- **Linux** — the `.deb`/`.rpm`/`.AppImage` need glibc 2.39+ (built on Ubuntu 24.04), so on older distros (Ubuntu 22.04, Debian 12, RHEL 9, Mint 21) use the **Flatpak**, which ships its own runtime and runs anywhere Flatpak does. If the window opens blank (some older GPU drivers + system WebKitGTK), launch with `WEBKIT_DISABLE_DMABUF_RENDERER=1` set (add `WEBKIT_DISABLE_COMPOSITING_MODE=1` if it persists) — or enable **Settings → Safe rendering mode** and relaunch, which sets the same workaround persistently.' \
+              '- **Windows** — SmartScreen may ask once: **More info** → **Run anyway**.' \
+              '- **Linux** — the `.deb`/`.rpm`/`.AppImage` need glibc 2.35+ (Ubuntu 22.04, Debian 12 or newer); the **Flatpak** runs anywhere. If the window opens blank (some older GPU drivers + system WebKitGTK), enable **Settings → Diagnostics → Safe rendering mode**, or launch with `WEBKIT_DISABLE_DMABUF_RENDERER=1`.' \
               > notes.md
             release_id=$(gh api -X POST "repos/$GH_REPO/releases" \
               -f tag_name="$GITHUB_REF_NAME" \
@@ -103,11 +99,11 @@ jobs:
           # runners queue unpredictably and were stalling the whole release
           # (and gating the Flatpak job). Apple Silicon is the default Mac target;
           # Intel users can run the arm64 build under Rosetta 2 if needed.
-          # ubuntu-24.04 (glibc 2.39) is required: the `ort` crate's prebuilt
-          # ONNX Runtime binary references glibc 2.38+ C23 symbols, so linking
-          # on 22.04's glibc 2.35 fails. The .deb/.AppImage need glibc 2.39+.
+          # Built on ubuntu-22.04 (glibc 2.35) so the .deb/.rpm/.AppImage run on
+          # Ubuntu 22.04+, Debian 12+, Mint 21+ — possible since 0.3 dropped the
+          # ONNX Runtime dependency that required glibc 2.38+.
           - label: Linux (x86_64)
-            os: ubuntu-24.04
+            os: ubuntu-22.04
             args: ""
             rust_target: ""
           - label: Windows (x86_64)
@@ -121,21 +117,18 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install Linux system deps
-        if: matrix.platform.os == 'ubuntu-24.04'
+        if: matrix.platform.os == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             libglib2.0-dev \
-            libgdk-pixbuf-2.0-dev \
             libsoup-3.0-dev \
             libjavascriptcoregtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf \
-            cmake \
-            clang
+            patchelf
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -165,28 +158,47 @@ jobs:
       # isn't needed.
       - run: pnpm install --frozen-lockfile --ignore-scripts
 
-      # The default feature set builds llama.cpp (ai-llm) + ONNX Runtime from
-      # source via llama-cpp-sys-2 / clang-sys, which need cmake + LLVM/libclang
-      # on PATH. Without this the Windows release leg fails to compile and the
-      # release ships no .exe/.msi (CI's fast lane installs the same toolchain).
-      - name: Install Windows build toolchain (cmake + LLVM for llama.cpp)
-        if: matrix.platform.os == 'windows-latest'
-        shell: pwsh
+      # macOS signing + notarization. With the Apple secrets configured
+      # (see CLAUDE.md → Release → macOS notarization) the .dmg/.app are signed
+      # with the Developer ID and notarized; without them we fall back to the
+      # ad-hoc identity so the build still works (forks, dry runs).
+      - name: Write App Store Connect API key
+        if: runner.os == 'macOS'
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
         run: |
-          choco install -y --no-progress cmake llvm
-          echo "C:\Program Files\CMake\bin" >> $env:GITHUB_PATH
-          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
+          if [ -n "$APPLE_API_PRIVATE_KEY" ]; then
+            printf '%s' "$APPLE_API_PRIVATE_KEY" > "$RUNNER_TEMP/AuthKey.p8"
+          fi
+
+      - name: Configure macOS signing
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_SIGNING_IDENTITY_SECRET" ]; then
+            echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY_SECRET" >> "$GITHUB_ENV"
+            echo "Signing with Developer ID and notarizing."
+          else
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            echo "::warning::Apple signing secrets not set — building ad-hoc signed (NOT notarized)."
+          fi
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Ad-hoc sign the macOS bundle (also pinned in tauri.conf.json). On
-          # Apple Silicon an unsigned, downloaded (quarantined) arm64 app fails
-          # Gatekeeper with the unrecoverable "is damaged" verdict; '-' is the
-          # ad-hoc pseudo-identity (no Apple Developer account needed). No-op on
-          # Windows/Linux legs.
-          APPLE_SIGNING_IDENTITY: "-"
+          # macOS: APPLE_SIGNING_IDENTITY comes from "Configure macOS signing".
+          # The certificate (base64 .p12) is imported into a temporary keychain
+          # by the Tauri CLI; notarization uses an App Store Connect API key.
+          # All empty (and ignored) on Windows/Linux and on unsigned builds.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           # Upload to the single pre-created draft by id — no tagName/releaseName
           # here, so the matrix legs can't race to create competing drafts.
@@ -210,11 +222,10 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             libglib2.0-dev \
-            libgdk-pixbuf-2.0-dev \
             libsoup-3.0-dev \
             libjavascriptcoregtk-4.1-dev \
             libappindicator3-dev librsvg2-dev patchelf \
-            cmake clang flatpak flatpak-builder \
+            flatpak flatpak-builder \
             desktop-file-utils appstream
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           # GNOME runtime (not the bare freedesktop one): only the GNOME runtime

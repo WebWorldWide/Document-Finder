@@ -156,6 +156,21 @@ fn author_year_fingerprint(doc: &Document) -> Option<String> {
     Some(format!("{}|{}|{}", last, year, title_part))
 }
 
+/// Cap on fallback URLs kept per document.
+const MAX_ALT_URLS: usize = 6;
+
+/// URL path ends in a document extension (or is an arXiv /pdf/ link), i.e.
+/// probably the file itself rather than a landing page.
+pub fn looks_like_direct_file(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    let path = lower.split(['?', '#']).next().unwrap_or("");
+    path.ends_with(".pdf")
+        || path.ends_with(".epub")
+        || path.contains("arxiv.org/pdf/")
+        || path.contains("/pdf/")
+        || path.ends_with("/pdf")
+}
+
 #[derive(Debug, Default)]
 pub struct Deduplicator {
     docs: Vec<MergedDoc>,
@@ -178,24 +193,85 @@ impl Deduplicator {
         Self::default()
     }
 
+    /// Merge a duplicate's metadata into the kept entry instead of discarding
+    /// it: its URLs become download fallbacks, and missing DOI / abstract /
+    /// authors / year / venue / license / citation count are filled in. A
+    /// direct-PDF URL is promoted to primary over a landing page.
+    fn absorb(&mut self, idx: usize, incoming: &Document, source_id: &str, rank: usize) {
+        let entry = &mut self.docs[idx];
+        entry.source_ranks.push((source_id.to_string(), rank));
+        let kept = &mut entry.doc;
+        for u in std::iter::once(&incoming.url).chain(incoming.alt_urls.iter()) {
+            if u.is_empty() || *u == kept.url || kept.alt_urls.contains(u) {
+                continue;
+            }
+            if looks_like_direct_file(u) && !looks_like_direct_file(&kept.url) {
+                let old = std::mem::replace(&mut kept.url, u.clone());
+                kept.alt_urls.insert(0, old);
+            } else {
+                kept.alt_urls.push(u.clone());
+            }
+        }
+        kept.alt_urls.truncate(MAX_ALT_URLS);
+        if kept.doi.is_none() {
+            kept.doi = incoming.best_doi();
+        }
+        let longer = match (&kept.abstract_, &incoming.abstract_) {
+            (None, Some(_)) => true,
+            (Some(a), Some(b)) => b.len() > a.len() + 40,
+            _ => false,
+        };
+        if longer {
+            kept.abstract_ = incoming.abstract_.clone();
+        }
+        if kept.authors.is_empty() && !incoming.authors.is_empty() {
+            kept.authors = incoming.authors.clone();
+        }
+        if kept.year.is_none() {
+            kept.year = incoming.year.clone();
+        }
+        if kept.venue.is_none() {
+            kept.venue = incoming.venue.clone();
+        }
+        if kept.license.is_none() {
+            kept.license = incoming.license.clone();
+        }
+        kept.cited_by = match (kept.cited_by, incoming.cited_by) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+        if (kept.title.trim().is_empty() || kept.title.eq_ignore_ascii_case("untitled"))
+            && !incoming.title.trim().is_empty()
+        {
+            kept.title = incoming.title.clone();
+        }
+    }
+
+    /// Current merged docs (cloned) — used for incremental ranking while
+    /// discovery is still running.
+    pub fn snapshot(&self) -> Vec<MergedDoc> {
+        self.docs.clone()
+    }
+
     /// Insert or merge a discovered document. The `rank` is the result's
     /// 1-indexed position within `source_id`'s result list, used for RRF.
     pub fn add(&mut self, doc: Document, source_id: &str, rank: usize) -> AddOutcome {
         // 1. URL exact match — fastest, also catches re-emissions of same source.
         if let Some(&idx) = self.by_url.get(&doc.url) {
-            self.docs[idx]
-                .source_ranks
-                .push((source_id.to_string(), rank));
+            self.absorb(idx, &doc, source_id, rank);
             return AddOutcome::Merged(idx);
         }
 
         // 2. DOI match — authoritative when present.
-        let doi = extract_doi(&doc.url).or_else(|| doc.identifier.as_deref().and_then(extract_doi));
+        let doi = doc
+            .doi
+            .as_deref()
+            .and_then(extract_doi)
+            .or_else(|| extract_doi(&doc.url))
+            .or_else(|| doc.identifier.as_deref().and_then(extract_doi));
         if let Some(ref d) = doi {
             if let Some(&idx) = self.by_doi.get(d) {
-                self.docs[idx]
-                    .source_ranks
-                    .push((source_id.to_string(), rank));
+                self.absorb(idx, &doc, source_id, rank);
                 self.by_url.insert(doc.url.clone(), idx);
                 return AddOutcome::Merged(idx);
             }
@@ -211,9 +287,7 @@ impl Deduplicator {
             if let Some(&idx) = self.by_title.get(&norm) {
                 let short = norm.split_whitespace().count() < SHORT_TITLE_TOKENS;
                 if !short || weak_corroborates(&doc, &self.docs[idx].doc) {
-                    self.docs[idx]
-                        .source_ranks
-                        .push((source_id.to_string(), rank));
+                    self.absorb(idx, &doc, source_id, rank);
                     self.by_url.insert(doc.url.clone(), idx);
                     if let Some(d) = &doi {
                         self.by_doi.insert(d.clone(), idx);
@@ -231,9 +305,7 @@ impl Deduplicator {
         if let Some(ref ay_key) = ay {
             if let Some(&idx) = self.by_author_year.get(ay_key) {
                 if titles_corroborate(&doc.title, &self.docs[idx].doc.title) {
-                    self.docs[idx]
-                        .source_ranks
-                        .push((source_id.to_string(), rank));
+                    self.absorb(idx, &doc, source_id, rank);
                     self.by_url.insert(doc.url.clone(), idx);
                     // Register the DOI too (like steps 3 and 5). A DOI is
                     // authoritative, so once ANY merge accepts a DOI-bearing doc
@@ -258,7 +330,14 @@ impl Deduplicator {
 
         // 5. Insert as new entry.
         let idx = self.docs.len();
+        let mut doc = doc;
+        if doc.doi.is_none() {
+            doc.doi = doi.clone();
+        }
         self.by_url.insert(doc.url.clone(), idx);
+        for u in &doc.alt_urls {
+            self.by_url.entry(u.clone()).or_insert(idx);
+        }
         if let Some(d) = doi {
             self.by_doi.insert(d, idx);
         }
@@ -306,6 +385,7 @@ mod tests {
             year: year.map(String::from),
             abstract_: None,
             identifier: None,
+            ..Default::default()
         }
     }
 

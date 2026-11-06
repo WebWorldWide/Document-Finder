@@ -243,6 +243,7 @@ fn builder_to_doc(entry: EntryBuilder) -> Option<Document> {
             Some(summary)
         },
         identifier: entry.id,
+        ..Default::default()
     })
 }
 

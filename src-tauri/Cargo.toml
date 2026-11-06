@@ -1,7 +1,7 @@
 [package]
 name = "document-finder"
-version = "0.2.0"
-description = "Find, download, and bundle open-access documents for AI conversational awareness"
+version = "0.3.0"
+description = "Find, download, and read open-access research for AI"
 authors = ["Web World Wide"]
 license = "AGPL-3.0-or-later"
 edition = "2021"
@@ -31,7 +31,10 @@ futures = "0.3"
 async-trait = "0.1"
 
 # HTTP
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip"] }
+# http2: multiplexed connections to the big repositories; brotli/zstd: smaller
+# API responses. rustls only — no OpenSSL.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip", "brotli", "zstd", "http2"] }
+bytes = "1"
 url = "2"
 # Local SearXNG-compatible HTTP server (in-process, no Docker).
 axum = "0.7"
@@ -42,8 +45,20 @@ serde_json = "1"
 quick-xml = { version = "0.36", features = ["serialize"] }
 
 # File formats
+# PDFium (BSD-3, Chrome's PDF engine) via pdfium-render (MIT/Apache-2.0): the
+# primary PDF text extractor. The native library is bundled per platform as a
+# Tauri resource (scripts/fetch-pdfium.mjs); pdf-extract stays as a pure-Rust
+# fallback when PDFium can't be loaded.
+pdfium-render = { version = "0.9", default-features = false, features = ["pdfium_latest", "thread_safe"] }
 pdf-extract = "0.7"
 zip = "2"
+# EPUB/HTML/text cleanup
+unicode-normalization = "0.1"
+whatlang = "0.16"
+chardetng = "0.1"
+encoding_rs = "0.8"
+scraper = "0.20"
+ego-tree = "0.6"
 
 # Concurrency primitives
 parking_lot = "0.12"
@@ -67,19 +82,8 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# AI: model download + verification (E1 foundation)
+# Content hashes for the cross-library reuse index.
 sha2 = "0.10"
-
-# AI: semantic embeddings (E2 — optional, default on via "ai-embeddings" feature)
-# rustls variants match our reqwest TLS stack — avoids pulling in openssl-sys.
-fastembed = { version = "5", default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls"], optional = true }
-
-# AI: local LLM (E3 — optional, default on via "ai-llm" feature). Builds
-# llama.cpp from source; needs cmake + clang on the build machine. On macOS
-# Metal GPU support is on by default.
-llama-cpp-2 = { version = "0.1", optional = true }
-# Re-exported by llama-cpp-2 for token piece decoding.
-encoding_rs = { version = "0.8", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
@@ -87,13 +91,8 @@ tempfile = "3"
 wiremock = "0.6"
 
 [features]
-default = ["custom-protocol", "ai-embeddings", "ai-llm"]
+default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-# Tier 2 — semantic reranking via local ONNX embedding model.
-# Disable for fast dev rebuilds: `cargo build --no-default-features --features=custom-protocol`
-ai-embeddings = ["dep:fastembed"]
-# Tier 3 — local LLM via llama.cpp. Heavy first-build (cmake + clang).
-ai-llm = ["dep:llama-cpp-2", "dep:encoding_rs"]
 
 [profile.dev]
 opt-level = 0

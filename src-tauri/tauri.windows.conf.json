@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "resources/pdfium/pdfium.dll": "pdfium/pdfium.dll",
+      "resources/pdfium/PDFIUM-LICENSE.txt": "pdfium/PDFIUM-LICENSE.txt"
+    }
+  }
+}

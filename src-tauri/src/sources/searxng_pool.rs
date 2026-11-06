@@ -289,6 +289,7 @@ async fn query_searxng(
             year: None,
             abstract_: r.content,
             identifier: None,
+            ..Default::default()
         })
         .collect())
 }

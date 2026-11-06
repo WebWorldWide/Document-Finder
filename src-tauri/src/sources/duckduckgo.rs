@@ -143,6 +143,7 @@ impl Source for DuckDuckGoSource {
                         year: None,
                         abstract_: None,
                         identifier: None,
+                        ..Default::default()
                     });
                     count += 1;
                 }

@@ -1,27 +1,24 @@
-pub mod ai;
 pub mod commands;
 pub mod engine;
 pub mod events;
+pub mod mcp;
 pub mod sources;
 pub mod util;
 
+/// The Tauri `identifier` from `tauri.conf.json`. Used to locate the app's
+/// config dir before (or without) an `AppHandle` — the safe-render marker and
+/// the library-root file the MCP server reads. Keep in sync with
+/// `tauri.conf.json` (checked by `tests/linux_identifiers_in_sync.rs`).
+pub const APP_IDENTIFIER: &str = "com.webworldwide.documentfinder";
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Embedding-worker subprocess mode: this same binary, re-invoked with the
-    // worker sentinel, runs ONNX/fastembed in isolation so a native ort abort
-    // can't take down the UI. Intercept BEFORE Tauri / tracing / panic-hook init
-    // so the child never spins up a window or the app runtime. `run_worker`
-    // diverges (`-> !`).
-    #[cfg(feature = "ai-embeddings")]
-    {
-        let args: Vec<String> = std::env::args().collect();
-        if args.get(1).map(String::as_str) == Some(crate::ai::embed_worker::WORKER_ARG) {
-            let cache_dir = args
-                .get(2)
-                .map(std::path::PathBuf::from)
-                .unwrap_or_default();
-            crate::ai::embed_worker::run_worker(cache_dir);
-        }
+    use tauri::Manager;
+    // MCP server mode: this same binary, launched by an AI app (Claude
+    // Desktop / Claude Code / any MCP client) with `--mcp`, serves the user's
+    // libraries over stdio. Intercept before any window/runtime starts.
+    if std::env::args().nth(1).as_deref() == Some(mcp::MCP_ARG) {
+        mcp::serve_stdio();
     }
 
     tracing_subscriber::fmt()
@@ -42,7 +39,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::AppState::default())
-        .manage(ai::AiState::default())
         .invoke_handler(tauri::generate_handler![
             commands::default_library_dir,
             commands::set_library_root,
@@ -52,27 +48,29 @@ pub fn run() {
             commands::list_libraries,
             commands::open_library,
             commands::list_library_docs,
+            commands::search_library,
+            commands::read_doc_markdown,
             commands::export_library_zip,
+            commands::copy_for_ai,
+            commands::mcp_info,
+            commands::install_mcp_claude_desktop,
             commands::reveal_in_finder,
             commands::open_path,
             commands::run_log_info,
             commands::run_log_tail,
-            commands::list_models,
-            commands::is_embedding_loaded,
-            commands::embedding_downloaded,
-            commands::warm_embedding,
-            commands::download_model,
-            commands::cancel_model_download,
-            commands::delete_model,
             commands::delete_library,
             commands::purge_all_data,
             commands::restart_app,
-            commands::reset_ai_state,
             commands::local_searxng_port,
             commands::get_safe_render_mode,
             commands::set_safe_render_mode,
         ])
         .setup(|app| {
+            // Bundled PDFium lives in the resource dir (see tauri.conf.json
+            // bundle.resources); tell the extractor where to look.
+            if let Ok(res) = app.path().resource_dir() {
+                engine::extract::set_pdfium_dirs(vec![res.join("pdfium"), res]);
+            }
             // Start the in-process SearXNG-compatible HTTP server on a
             // random localhost port. Once running, `SearxngPoolSource` and
             // any external code can hit `http://127.0.0.1:<port>/search`
@@ -104,8 +102,6 @@ pub fn run() {
 /// sync with `tauri.conf.json`'s `identifier` field (and with the other
 /// hardcoded copies cross-referenced by
 /// `src-tauri/tests/linux_identifiers_in_sync.rs`).
-#[cfg(target_os = "linux")]
-const APP_IDENTIFIER: &str = "com.webworldwide.documentfinder";
 
 /// Marker file path for the opt-in "safe rendering mode" (see
 /// `maybe_relaunch_in_safe_render_mode`). Lives under the same

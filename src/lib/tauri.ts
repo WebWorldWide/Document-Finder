@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { SourceId } from "./utils";
 
+/** A discovered document (mirror of `sources::Document`). */
 export interface Document {
   title: string;
   url: string;
@@ -9,55 +10,24 @@ export interface Document {
   year?: string;
   abstract?: string;
   identifier?: string;
+  doi?: string;
+  alt_urls?: string[];
+  cited_by?: number;
+  venue?: string;
+  license?: string;
 }
 
+/** What to search. How much and how fast is decided by the backend. */
 export interface RunRequest {
   query: string;
   sources: SourceId[];
   out_dir: string;
-  per_source?: number;
-  max_total?: number;
-  concurrency?: number;
-  extract?: boolean;
-  use_citation_graph?: boolean;
-  use_semantic_rerank?: boolean;
-  use_llm_expansion?: boolean;
-  use_llm_filter?: boolean;
-  llm_model_id?: string | null;
-  /** Reuse an identical already-downloaded file from a sibling library instead
-   *  of re-fetching it. Opt-in (default false). */
-  cross_run_reuse?: boolean;
 }
 
 export interface RetryRequest {
-  /** Existing library folder (must be inside the confined root). */
   folder: string;
-  /** Original query, recorded against the retry's run row. */
   query: string;
-  /** The documents to re-download (the failed ones from the previous run). */
   docs: Document[];
-  concurrency?: number;
-  extract?: boolean;
-}
-
-export type ModelKind = "embedding" | "llm";
-
-export interface ModelInfo {
-  id: string;
-  kind: ModelKind;
-  display_name: string;
-  description: string;
-  is_default: boolean;
-  license: string;
-  approx_bytes: number;
-  on_disk_bytes: number;
-  status:
-    | { kind: "not_downloaded" }
-    | { kind: "downloading"; downloaded: number; total: number }
-    | { kind: "verifying" }
-    | { kind: "ready" }
-    | { kind: "failed"; msg: string }
-    | { kind: "cancelled" };
 }
 
 export interface LibraryInfo {
@@ -68,19 +38,61 @@ export interface LibraryInfo {
   size_bytes: number;
 }
 
+/** A saved document with full metadata (mirror of `library::DocInfo`). */
 export interface LibraryDoc {
+  id: number;
   title: string;
+  url: string;
   source: string;
-  /** Absolute on-disk path, ready for openPath. */
+  sources: string[];
+  authors: string[];
+  year?: string | null;
+  abstract?: string | null;
+  doi?: string | null;
+  venue?: string | null;
+  license?: string | null;
+  cited_by?: number | null;
+  score?: number | null;
+  /** Absolute path of the original file. */
   path: string;
-  size_bytes?: number;
-  extract_error?: string;
+  /** Absolute path of the extracted Markdown. */
+  md_path?: string | null;
+  size_bytes?: number | null;
+  extract_error?: string | null;
+  pages?: number | null;
+  lang?: string | null;
+  words?: number | null;
+  tokens?: number | null;
+  retrieved_at?: string | null;
+}
+
+export interface SearchHit {
+  library: string;
+  library_query: string;
+  doc_id: number;
+  chunk_id: number;
+  title: string;
+  heading?: string | null;
+  page_start?: number | null;
+  page_end?: number | null;
+  /** Passage with `[` `]` around matched terms. */
+  snippet: string;
+  rank: number;
 }
 
 export interface ExportResult {
   dest: string;
   files: number;
   size_bytes: number;
+}
+
+export interface McpInfo {
+  command: string;
+  args: string[];
+  config_json: string;
+  claude_code_command: string;
+  claude_desktop_config?: string | null;
+  claude_desktop_installed: boolean;
 }
 
 export interface LogInfo {
@@ -96,49 +108,45 @@ export interface PurgeReport {
 
 export const api = {
   defaultLibraryDir: () => invoke<{ library_root: string }>("default_library_dir"),
-  /** Persist + validate the library root so open/export/delete confine to it. */
   setLibraryRoot: (path: string) => invoke<string>("set_library_root", { path }),
   startRun: (req: RunRequest) => invoke<void>("start_run", { req }),
-  /** Re-download a fixed set of documents into an existing library folder. */
   retryRun: (req: RetryRequest) => invoke<void>("retry_run", { req }),
   cancelRun: () => invoke<void>("cancel_run"),
   listLibraries: (root: string) => invoke<LibraryInfo[]>("list_libraries", { root }),
   openLibrary: (path: string) => invoke<LibraryInfo>("open_library", { path }),
   listLibraryDocs: (path: string) => invoke<LibraryDoc[]>("list_library_docs", { path }),
+  searchLibrary: (query: string, path?: string | null, limit?: number) =>
+    invoke<SearchHit[]>("search_library", { query, path: path ?? null, limit: limit ?? null }),
+  readDocMarkdown: (path: string) => invoke<string>("read_doc_markdown", { path }),
   exportLibraryZip: (
     folder: string,
     dest: string,
-    opts: { include_text?: boolean; include_originals?: boolean } = {},
+    opts: { include_originals?: boolean; budget_tokens?: number } = {},
   ) =>
     invoke<ExportResult>("export_library_zip", {
       args: {
         folder,
         dest,
-        include_text: opts.include_text ?? true,
-        include_originals: opts.include_originals ?? true,
+        include_originals: opts.include_originals ?? false,
+        budget_tokens: opts.budget_tokens ?? null,
       },
     }),
+  copyForAi: (folder: string, ids?: number[] | null, budgetTokens?: number) =>
+    invoke<string>("copy_for_ai", {
+      folder,
+      ids: ids ?? null,
+      budgetTokens: budgetTokens ?? null,
+    }),
+  mcpInfo: () => invoke<McpInfo>("mcp_info"),
+  installMcpClaudeDesktop: () => invoke<string>("install_mcp_claude_desktop"),
   revealInFinder: (path: string) => invoke<void>("reveal_in_finder", { path }),
   openPath: (path: string) => invoke<void>("open_path", { path }),
   runLogInfo: () => invoke<LogInfo>("run_log_info"),
-  runLogTail: (max?: number) => invoke<unknown[]>("run_log_tail", max != null ? { max } : {}),
-  listModels: () => invoke<ModelInfo[]>("list_models"),
-  isEmbeddingLoaded: () => invoke<boolean>("is_embedding_loaded"),
-  embeddingDownloaded: () => invoke<boolean>("embedding_downloaded"),
-  warmEmbedding: () => invoke<void>("warm_embedding"),
-  downloadModel: (modelId: string) => invoke<void>("download_model", { modelId }),
-  cancelModelDownload: (modelId: string) => invoke<void>("cancel_model_download", { modelId }),
-  deleteModel: (modelId: string) => invoke<void>("delete_model", { modelId }),
   deleteLibrary: (path: string) => invoke<void>("delete_library", { path }),
-  /** Clean uninstall: erase app data (models, caches, logs); optionally the library too. */
   purgeAllData: (includeLibrary: boolean) =>
     invoke<PurgeReport>("purge_all_data", { includeLibrary }),
-  /** Cleanly restart the whole app process (used to finish a full data wipe). */
   restartApp: () => invoke<void>("restart_app"),
-  resetAiState: () => invoke<void>("reset_ai_state"),
-  /** Linux only (always false elsewhere): whether the WEBKIT_DISABLE_DMABUF_RENDERER
-   *  workaround for the WebKitGTK blank-window issue is enabled for the *next* launch. */
+  /** Linux only (always false elsewhere): WebKitGTK safe rendering for the next launch. */
   getSafeRenderMode: () => invoke<boolean>("get_safe_render_mode"),
-  /** Toggle safe rendering mode. Takes effect after restart, not the current session. */
   setSafeRenderMode: (enabled: boolean) => invoke<void>("set_safe_render_mode", { enabled }),
 };

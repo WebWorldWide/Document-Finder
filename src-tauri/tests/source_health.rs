@@ -121,7 +121,16 @@ async fn downloadable_sources_actually_download() {
         let mut saved = false;
         let mut last_err = String::new();
         for doc in docs.iter().take(4) {
-            match download(doc, dir.path(), &dl_client, &cancel, |_| {}).await {
+            match download(
+                doc,
+                dir.path(),
+                &dl_client,
+                &document_finder_lib::engine::hostlimit::HostLimiter::new(),
+                &cancel,
+                |_| {},
+            )
+            .await
+            {
                 DownloadOutcome::Saved(_) | DownloadOutcome::Cached(_) => {
                     saved = true;
                     break;

@@ -1,978 +1,324 @@
-import { createSignal, createEffect, onMount, onCleanup, Show, Switch, Match, For } from "solid-js";
-import {
-  FolderOpen,
-  FileText,
-  Download,
-  Loader2,
-  CheckCircle2,
-  Sparkles,
-  RefreshCw,
-  AlertCircle,
-  Trash2,
-} from "lucide-solid";
-import { ask, open } from "@tauri-apps/plugin-dialog";
-import { api, type LogInfo } from "@/lib/tauri";
-import {
-  settings,
-  setSettings,
-  saveSettings,
-  setLibraryRoot,
-  setDownloadIntensity,
-  currentIntensity,
-  INTENSITY_ORDER,
-  INTENSITY_PRESETS,
-  type Quality,
-} from "@/stores/settings";
-import { modelsStore } from "@/stores/models";
-import { uiStore } from "@/stores/ui";
-import { runStore } from "@/stores/run";
-import ModelDownloadCard from "./ModelDownloadCard";
-import MetaSearchHealthBar from "./MetaSearchHealthBar";
-import ThemePicker from "./ThemePicker";
-import Logo from "./Logo";
+import { For, Show, createResource, createSignal, onMount } from "solid-js";
+import { Check, ClipboardCopy, FolderOpen, Plug } from "lucide-solid";
+import { open } from "@tauri-apps/plugin-dialog";
+import { getVersion } from "@tauri-apps/api/app";
+import Logo from "@/components/Logo";
+import Note from "@/components/Note";
+import { api } from "@/lib/tauri";
 import { formatBytes } from "@/lib/utils";
+import { runStore } from "@/stores/run";
+import { settings, syncLibraryRoot } from "@/stores/settings";
+import { setThemePref, themePref, type ThemePref } from "@/stores/theme";
+import { uiStore } from "@/stores/ui";
 
-// Matches FindTab.tsx's IS_MAC convention — there's no @tauri-apps/plugin-os
-// dependency, so OS is sniffed from the webview's own navigator.
-const IS_LINUX =
+const isLinux =
   typeof navigator !== "undefined" && /Linux/.test(navigator.platform || navigator.userAgent || "");
 
+async function copy(text: string, what: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    uiStore.showToast(`${what} copied`);
+  } catch {
+    uiStore.showToast("Couldn’t access the clipboard");
+  }
+}
+
+function Setting(props: { title: string; desc: string; children: unknown }) {
+  return (
+    <section class="df-setting">
+      <div>
+        <h3>{props.title}</h3>
+        <p>{props.desc}</p>
+      </div>
+      <div class="df-setting-body">{props.children as never}</div>
+    </section>
+  );
+}
+
+function ConnectAi() {
+  const [info, { refetch }] = createResource(() => api.mcpInfo().catch(() => null));
+  const [busy, setBusy] = createSignal(false);
+  const install = async () => {
+    setBusy(true);
+    try {
+      const msg = await api.installMcpClaudeDesktop();
+      uiStore.showToast(msg);
+      void refetch();
+    } catch (e) {
+      uiStore.showToast(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Setting
+      title="Connect your AI"
+      desc="Let Claude or any app that supports the Model Context Protocol (MCP) search and read your libraries directly. Nothing to download — your AI does the thinking, Document Finder supplies clean, cited sources."
+    >
+      <Show when={info()} fallback={<p class="df-muted">Loading…</p>}>
+        {(i) => (
+          <>
+            <div class="df-row">
+              <Show
+                when={!i().claude_desktop_installed}
+                fallback={
+                  <span class="df-row" style={{ color: "var(--ok)" }}>
+                    <Check size={15} aria-hidden="true" /> Connected to Claude Desktop — restart
+                    Claude if you just added it.
+                  </span>
+                }
+              >
+                <button
+                  class="df-btn df-btn-primary"
+                  disabled={busy()}
+                  onClick={() => void install()}
+                >
+                  <Plug size={15} aria-hidden="true" /> Add to Claude Desktop
+                </button>
+              </Show>
+            </div>
+            <div>
+              <div class="df-label" style={{ "margin-bottom": "6px" }}>
+                Claude Code
+              </div>
+              <div class="df-row" style={{ "flex-wrap": "nowrap" }}>
+                <div class="df-code" style={{ flex: 1 }}>
+                  {i().claude_code_command}
+                </div>
+                <button
+                  class="df-btn df-btn-icon"
+                  aria-label="Copy Claude Code command"
+                  onClick={() => void copy(i().claude_code_command, "Command")}
+                >
+                  <ClipboardCopy size={15} />
+                </button>
+              </div>
+            </div>
+            <details class="df-details">
+              <summary>Other MCP apps (JSON config)</summary>
+              <div class="df-details-body">
+                <div class="df-code">{i().config_json}</div>
+                <div class="df-row" style={{ "margin-top": "8px" }}>
+                  <button class="df-btn" onClick={() => void copy(i().config_json, "Config")}>
+                    <ClipboardCopy size={14} aria-hidden="true" /> Copy JSON
+                  </button>
+                </div>
+              </div>
+            </details>
+          </>
+        )}
+      </Show>
+    </Setting>
+  );
+}
+
 export default function SettingsView() {
-  const [logInfo, setLogInfo] = createSignal<LogInfo | null>(null);
-  const [warming, setWarming] = createSignal(false);
-  const [libRootError, setLibRootError] = createSignal<string | null>(null);
-  // Local draft for the library-folder field. Typing must NOT write the global
-  // settings.libraryRoot per keystroke: the always-mounted Sidebar reacts to it
-  // and would fire list_libraries against every half-typed path (returning [] and
-  // flickering the Recent list + Library badge to empty). We commit only on
-  // change/blur (or the picker). Kept in sync when the committed root changes
-  // (async default on first launch, or a successful commit).
-  const [libRootDraft, setLibRootDraft] = createSignal(settings.libraryRoot);
-  createEffect(() => setLibRootDraft(settings.libraryRoot));
-  const commitLibRoot = (path: string) =>
-    setLibraryRoot(path)
-      .then(() => setLibRootError(null))
-      .catch((err) => setLibRootError(String(err)));
-  const browseLibRoot = async () => {
+  const [rootError, setRootError] = createSignal<string | null>(null);
+  const [version] = createResource(() => getVersion().catch(() => ""));
+  const [log] = createResource(() => api.runLogInfo().catch(() => null));
+  const [safeRender, setSafeRender] = createSignal(false);
+  const [purgeLibrary, setPurgeLibrary] = createSignal(false);
+  const [purgeMsg, setPurgeMsg] = createSignal<string | null>(null);
+  const [purgeOk, setPurgeOk] = createSignal(false);
+
+  onMount(async () => {
+    if (isLinux) setSafeRender(await api.getSafeRenderMode().catch(() => false));
+  });
+
+  const browse = async () => {
     try {
       const picked = await open({
         directory: true,
         defaultPath: settings.libraryRoot || undefined,
       });
-      if (typeof picked === "string") commitLibRoot(picked);
-    } catch (err) {
-      setLibRootError(String(err));
-    }
-  };
-  const [purging, setPurging] = createSignal(false);
-  const [purgeMsg, setPurgeMsg] = createSignal<string | null>(null);
-  const [purgeLibrary, setPurgeLibrary] = createSignal(false);
-  // True after a successful wipe — gates the "Restart now" button that finishes
-  // the reset (drops in-memory model singletons + re-reads cleared settings).
-  const [purgeOk, setPurgeOk] = createSignal(false);
-  const [restarting, setRestarting] = createSignal(false);
-  const [safeRenderMode, setSafeRenderModeSignal] = createSignal(false);
-  const toggleSafeRenderMode = async (enabled: boolean) => {
-    setSafeRenderModeSignal(enabled); // optimistic; matches the checkbox pattern below
-    try {
-      await api.setSafeRenderMode(enabled);
-    } catch (err) {
-      setSafeRenderModeSignal(!enabled);
-      uiStore.announce(`Couldn't update safe rendering mode: ${String(err)}`);
-    }
-  };
-
-  // If the LLM is removed (or never installed) while "Thorough" is the selected
-  // quality, downgrade to "Balanced" — otherwise the Thorough tab renders both
-  // active AND disabled (a dead highlighted control), and qualityToFlags() would
-  // still launch runs promising an LLM pipeline that can't run.
-  //
-  // Gate on the model list having actually loaded (the registry is never empty,
-  // so models.length>0 means list_models resolved). Without this, the effect
-  // fires during the initial empty/loading window — or permanently if
-  // list_models errors — and silently overwrites a valid Thorough preference for
-  // a user who DOES have the LLM installed.
-  createEffect(() => {
-    if (
-      modelsStore.state.models.length > 0 &&
-      settings.quality === "thorough" &&
-      !modelsStore.llmReady
-    ) {
-      setSettings("quality", "balanced");
-      saveSettings();
-    }
-  });
-  // Tracked so the readiness poll is cleared if the user leaves Settings while a
-  // model download is still warming (otherwise the interval leaks).
-  let pollTimer: ReturnType<typeof setInterval> | undefined;
-  // Set on unmount: guards the `setInterval` created AFTER the warm `await`
-  // below. Without it, leaving Settings mid-download runs onCleanup (clearing
-  // nothing), then the await resolves and starts a fresh interval that leaks
-  // forever because onCleanup has already fired.
-  let disposed = false;
-  onCleanup(() => {
-    disposed = true;
-    if (pollTimer) clearInterval(pollTimer);
-  });
-
-  async function handleWarmEmbedding() {
-    if (warming()) return;
-    setWarming(true);
-    try {
-      await modelsStore.warmEmbedding();
-    } catch (e) {
-      console.error("warm embedding failed:", e);
-      setWarming(false);
-      return;
-    }
-    // The component may have unmounted during the await above; don't start a
-    // poll that onCleanup will never get to clear.
-    if (disposed) return;
-    // warm runs in the background; poll readiness so the row updates live, and
-    // clear the spinner once THIS attempt reaches a terminal state. Stop only on
-    // "loaded" or "failed" (or after ~45s) — NOT on "downloaded", which the
-    // on-disk scan reports immediately when weights are cached, before the
-    // worker has even tried to load: stopping there caused a brief
-    // "trying → ready → failed" flicker when ort then aborted on macOS.
-    let tries = 0;
-    if (pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(() => {
-      tries += 1;
-      // Poll ONLY embedding readiness — NOT full refresh() — so the model cards
-      // don't remount every 1.5s during a warm. embeddingState is also driven
-      // out-of-band by the df:model_status listener.
-      modelsStore.refreshEmbeddingStatus();
-      const st = modelsStore.embeddingState;
-      // Keep the spinner until the worker reaches a terminal state (loaded/failed,
-      // which the df:model_status listener flips out-of-band) — capped at ~300s to
-      // match the backend WARM_TIMEOUT. The old 30-tick (~45s) cap cleared the
-      // spinner mid-download on slow connections, so a first-run warm looked
-      // "stuck/failed" and then silently became ready a minute later.
-      if (st === "loaded" || st === "failed" || tries >= 200) {
-        if (pollTimer) clearInterval(pollTimer);
-        pollTimer = undefined;
-        setWarming(false);
-        // Announce the outcome for screen-reader users — the status icon/caption
-        // swap below is silent on its own (matches the export/download announces
-        // in FindTab/LibraryView).
-        uiStore.announce(
-          st === "loaded"
-            ? "Embedding model ready."
-            : st === "failed"
-              ? "Embedding model failed to load. Semantic rerank is unavailable."
-              : "Embedding model is still loading in the background.",
-        );
+      if (typeof picked === "string") {
+        await syncLibraryRoot(picked);
+        setRootError(null);
+        uiStore.showToast("Library folder changed");
       }
-    }, 1500);
-  }
+    } catch (e) {
+      setRootError(String(e));
+    }
+  };
 
-  async function handlePurge() {
-    setPurgeMsg(null);
-    // Snapshot the choice (the checkbox is disabled during the purge, so it can't
-    // change) and reuse it for the confirm message, the command, and the state
-    // reconciliation below.
-    const includeLibrary = purgeLibrary();
-    const msg = includeLibrary
-      ? "Delete ALL Document Finder data including your downloaded document library? This permanently erases models, caches, logs, and every downloaded document and database. This cannot be undone."
-      : "Delete Document Finder's app data (AI models, caches, run logs)? Your document library will be kept. This cannot be undone.";
-    const ok = await ask(msg, { title: "Erase Document Finder data", kind: "warning" });
+  const purge = async () => {
+    const all = purgeLibrary();
+    const ok = await uiStore.confirm({
+      title: all ? "Erase everything?" : "Erase app data?",
+      body: all
+        ? "This deletes Document Finder’s settings, caches and logs AND every downloaded library. It can’t be undone."
+        : "This deletes Document Finder’s settings, caches and logs. Your downloaded libraries are kept.",
+      confirmLabel: all ? "Erase everything" : "Erase app data",
+      danger: true,
+    });
     if (!ok) return;
-    setPurging(true);
-    setPurgeOk(false);
     try {
-      const report = await api.purgeAllData(includeLibrary);
-      // localStorage is the only place settings/theme persist — wipe it too so
-      // preferences don't outlive a full erase.
+      const r = await api.purgeAllData(all);
       try {
         localStorage.clear();
       } catch {
         /* ignore */
       }
-      // When the library itself was erased, reconcile the shared in-memory state
-      // so the sidebar count/Recent list, the Discover header stats, and the run
-      // card immediately match the "Erased" message — they're otherwise stale
-      // (pointing at just-deleted paths) until the Library tab re-lists from disk.
-      // Only on the include-library branch: keeping the library leaves the counts
-      // correct, and clearing them would be wrong.
-      if (includeLibrary) {
+      if (all) {
         uiStore.setKnownLibraries([]);
-        uiStore.setActiveLibrary(null);
         runStore.reset();
       }
-      // The AI model weights + embedding cache live in app_data_dir, which the
-      // purge deletes on BOTH branches — so re-list models/embedding from disk,
-      // otherwise the AI cards keep showing "Ready · N MB on disk" with a Delete
-      // button for files that were just erased (a contradiction right under the
-      // "Erased everything" message; we're still on the Settings view so its
-      // onMount refresh never re-runs).
-      void modelsStore.refresh();
-      const removed = report?.removed?.length ?? 0;
-      const failed = report?.failed?.length ?? 0;
-      const msg =
-        failed === 0
-          ? `Erased ${removed} location${removed === 1 ? "" : "s"}. Restart to finish the reset.`
-          : `Erased ${removed}, but ${failed} could not be removed — close the app and retry, or run the uninstall script.`;
-      // Offer the one-click restart only on a clean wipe; a partial failure still
-      // wants the manual close/retry path.
+      const failed = r.failed.length;
       setPurgeOk(failed === 0);
-      setPurgeMsg(msg);
-      // Announce the outcome of the app's most destructive action for screen-reader
-      // users — the visible <p> is not in a live region (matches the other announces).
-      uiStore.announce(msg);
+      setPurgeMsg(
+        failed === 0
+          ? `Erased ${r.removed.length} location${r.removed.length === 1 ? "" : "s"}. Restart to finish.`
+          : `Erased ${r.removed.length}, but ${failed} couldn’t be removed — quit the app and try again.`,
+      );
     } catch (e) {
-      const msg = `Could not erase data: ${String(e)}`;
-      setPurgeMsg(msg);
-      uiStore.announce(msg);
-    } finally {
-      setPurging(false);
+      setPurgeMsg(`Couldn’t erase data: ${String(e)}`);
     }
-  }
-
-  onMount(async () => {
-    setLogInfo(await api.runLogInfo().catch(() => null));
-    void modelsStore.refresh();
-    void modelsStore.ensureSubscribed();
-    if (IS_LINUX) {
-      setSafeRenderModeSignal(await api.getSafeRenderMode().catch(() => false));
-    }
-  });
-
-  // Upper bounds matching each field's input max=, enforced here because the
-  // HTML max attribute only constrains the steppers — a TYPED value (e.g. 500
-  // parallel downloads) would otherwise sail past it and be persisted/launched.
-  const NUM_MAX: Record<"perSource" | "maxTotal" | "concurrency", number> = {
-    perSource: 500,
-    maxTotal: 10000,
-    concurrency: 32,
-  };
-  function numInput(field: "perSource" | "maxTotal" | "concurrency") {
-    return (e: InputEvent & { currentTarget: HTMLInputElement }) => {
-      const v = parseInt(e.currentTarget.value, 10);
-      if (!isNaN(v) && v > 0) {
-        const clamped = Math.min(v, NUM_MAX[field]);
-        setSettings(field, clamped);
-        // Snap the visible input back if we clamped a typed over-max value.
-        if (clamped !== v) e.currentTarget.value = String(clamped);
-        saveSettings();
-      }
-    };
-  }
-  // On blur, revert an empty / 0 / negative field to the committed value, so the
-  // control never sits visually blank-or-0 while the store (and the next search)
-  // still uses the old number. Done on blur, not input, so clearing-to-retype
-  // isn't fought mid-keystroke.
-  function numBlur(field: "perSource" | "maxTotal" | "concurrency") {
-    return (e: FocusEvent & { currentTarget: HTMLInputElement }) => {
-      const v = parseInt(e.currentTarget.value, 10);
-      if (isNaN(v) || v <= 0) e.currentTarget.value = String(settings[field]);
-    };
-  }
-
-  // Reactive: the preset matching the current raw numbers (null = "Custom").
-  const activeIntensity = () => currentIntensity();
-  // Slider thumb position; defaults to "balanced" when the numbers are custom.
-  const sliderIndex = () => {
-    const c = activeIntensity();
-    return c ? INTENSITY_ORDER.indexOf(c) : INTENSITY_ORDER.indexOf("balanced");
   };
 
   return (
-    <div class="df-canvas">
-      <div class="df-canvas-head">
+    <div class="df-page">
+      <header class="df-page-head">
         <div>
-          <div class="df-eyebrow">Settings</div>
-          <h1 class="df-canvas-title">Settings</h1>
+          <div class="df-label">Settings</div>
+          <h1 class="df-title" style={{ "font-size": "44px" }}>
+            Preferences
+          </h1>
         </div>
-      </div>
+      </header>
 
-      <div class="df-canvas-body">
-        <div class="df-settings-wrap">
-          {/* Themes */}
-          <section class="df-section">
-            <h2>Themes</h2>
-            <p class="hint">
-              Pick a base theme, an accent color, the UI density, and how the live download stream
-              is laid out.
-            </p>
-            <ThemePicker />
-          </section>
+      <Setting title="Appearance" desc="Follow your system, or pick light or dark.">
+        <div class="df-seg" role="group" aria-label="Appearance">
+          <For
+            each={
+              [
+                ["system", "System"],
+                ["light", "Light"],
+                ["dark", "Dark"],
+              ] as [ThemePref, string][]
+            }
+          >
+            {([id, label]) => (
+              <button aria-pressed={themePref() === id} onClick={() => setThemePref(id)}>
+                {label}
+              </button>
+            )}
+          </For>
+        </div>
+      </Setting>
 
-          {/* Library folder */}
-          <section class="df-section">
-            <h2>Library folder</h2>
-            <p class="hint">
-              Each search creates its own collection folder here, with a SQLite index and the
-              extracted text.
-            </p>
-            <div class="df-field">
-              <label for="lib-root">Folder path</label>
-              <div style={{ display: "flex", gap: "6px", "align-items": "stretch" }}>
-                <input
-                  id="lib-root"
-                  class="mono"
-                  type="text"
-                  style={{ flex: 1, "min-width": 0 }}
-                  value={libRootDraft()}
-                  onInput={(e) => setLibRootDraft(e.currentTarget.value)}
-                  onChange={(e) => commitLibRoot(e.currentTarget.value)}
-                />
+      <Setting
+        title="Library folder"
+        desc="Where searches are saved. Each search gets its own folder with the original files, clean Markdown, and a searchable index."
+      >
+        <div class="df-code">{settings.libraryRoot || "—"}</div>
+        <div class="df-row">
+          <button class="df-btn" onClick={() => void browse()} disabled={runStore.live}>
+            Change…
+          </button>
+          <button
+            class="df-btn df-btn-quiet"
+            onClick={() => settings.libraryRoot && void api.revealInFinder(settings.libraryRoot)}
+          >
+            <FolderOpen size={14} aria-hidden="true" /> Show
+          </button>
+        </div>
+        <Show when={rootError()}>
+          <Note tone="bad">{rootError()}</Note>
+        </Show>
+      </Setting>
+
+      <ConnectAi />
+
+      <Setting
+        title="Diagnostics"
+        desc="A private log of each search (sources, downloads, errors). Useful when reporting a problem."
+      >
+        <Show when={log()} fallback={<p class="df-muted">No log yet.</p>}>
+          {(l) => (
+            <>
+              <div class="df-code">{l().path}</div>
+              <div class="df-row">
+                <span class="df-muted num">
+                  {l().exists ? formatBytes(l().size_bytes) : "empty"}
+                </span>
                 <button
-                  type="button"
-                  class="df-btn ghost sm"
-                  style={{ flex: "none", gap: "5px" }}
-                  onClick={browseLibRoot}
+                  class="df-btn df-btn-quiet"
+                  onClick={() => void api.revealInFinder(l().path)}
                 >
-                  <FolderOpen size={13} /> Browse…
+                  <FolderOpen size={14} aria-hidden="true" /> Show in folder
                 </button>
               </div>
-              <Show when={libRootError()}>
-                <span class="help" style={{ color: "var(--bad-ink)" }}>
-                  {libRootError()}
-                </span>
-              </Show>
-            </div>
-          </section>
-
-          {/* Download depth */}
-          <section class="df-section">
-            <h2>Download depth</h2>
-            <p class="hint">
-              How much to pull and how aggressively. Most people can leave this on Balanced — drag
-              toward Exhaustive for more results (slower, and heavier on the sources).
-            </p>
-
+            </>
+          )}
+        </Show>
+        <Show when={isLinux}>
+          <label class="df-check">
             <input
-              type="range"
-              min="0"
-              max={INTENSITY_ORDER.length - 1}
-              step="1"
-              value={sliderIndex()}
-              aria-label="Download depth"
-              aria-valuetext={
-                activeIntensity() ? INTENSITY_PRESETS[activeIntensity()!].label : "Custom"
-              }
-              style={{
-                width: "100%",
-                "accent-color": "var(--accent)",
-                cursor: "pointer",
-                // Dim when the numbers were hand-tuned in Advanced ("Custom"),
-                // signalling the thumb position is only an approximation.
-                opacity: activeIntensity() ? 1 : 0.5,
+              type="checkbox"
+              checked={safeRender()}
+              onChange={async (e) => {
+                const on = e.currentTarget.checked;
+                setSafeRender(on);
+                await api.setSafeRenderMode(on).catch(() => setSafeRender(!on));
               }}
-              onInput={(e) => setDownloadIntensity(INTENSITY_ORDER[+e.currentTarget.value])}
             />
-            <div
-              style={{
-                display: "flex",
-                "justify-content": "space-between",
-                "margin-top": "2px",
-              }}
-            >
-              <For each={INTENSITY_ORDER}>
-                {(level) => (
-                  <button
-                    type="button"
-                    onClick={() => setDownloadIntensity(level)}
-                    aria-pressed={activeIntensity() === level}
-                    style={{
-                      "font-size": "10px",
-                      padding: "2px 2px",
-                      border: "none",
-                      background: "transparent",
-                      cursor: "pointer",
-                      color: activeIntensity() === level ? "var(--accent-ink)" : "var(--ink-3)",
-                      "font-weight": activeIntensity() === level ? 600 : 400,
-                    }}
-                  >
-                    {INTENSITY_PRESETS[level].label}
-                  </button>
-                )}
-              </For>
-            </div>
-
-            <p style={{ "font-size": "11.5px", color: "var(--ink-3)", margin: "10px 0 0" }}>
-              <Show
-                when={activeIntensity()}
-                fallback={
-                  <>
-                    <strong>Custom.</strong> Hand-tuned in Advanced below.
-                  </>
-                }
-              >
-                {(lvl) => (
-                  <>
-                    <strong>{INTENSITY_PRESETS[lvl()].label}.</strong>{" "}
-                    {INTENSITY_PRESETS[lvl()].blurb}
-                  </>
-                )}
-              </Show>{" "}
-              <span style={{ "font-family": "var(--font-mono)", color: "var(--ink-3)" }}>
-                ≈ {settings.perSource}/source · {settings.maxTotal} max · {settings.concurrency}{" "}
-                parallel
+            <span>
+              Safe rendering mode
+              <span class="df-muted" style={{ display: "block", "font-size": "12px" }}>
+                Fixes a blank window on some Linux graphics drivers. Applies after restart.
               </span>
-            </p>
+            </span>
+          </label>
+        </Show>
+      </Setting>
 
-            <details style={{ "margin-top": "12px" }}>
-              <summary
-                style={{
-                  cursor: "pointer",
-                  "font-size": "11px",
-                  "font-weight": 500,
-                  color: "var(--ink-3)",
-                  padding: "4px 2px",
-                }}
-              >
-                Advanced — exact numbers
-              </summary>
-              <div class="df-field-row" style={{ "margin-top": "10px" }}>
-                <div class="df-field">
-                  <label for="depth-persource">Per source</label>
-                  <input
-                    id="depth-persource"
-                    type="number"
-                    min="1"
-                    value={settings.perSource}
-                    onInput={numInput("perSource")}
-                    onBlur={numBlur("perSource")}
-                  />
-                  <span class="help">Docs per source, per sub-query</span>
-                </div>
-                <div class="df-field">
-                  <label for="depth-maxtotal">Max total</label>
-                  <input
-                    id="depth-maxtotal"
-                    type="number"
-                    min="1"
-                    value={settings.maxTotal}
-                    onInput={numInput("maxTotal")}
-                    onBlur={numBlur("maxTotal")}
-                  />
-                  <span class="help">Hard cap across all sources</span>
-                </div>
-                <div class="df-field">
-                  <label for="depth-concurrency">Parallel downloads</label>
-                  <input
-                    id="depth-concurrency"
-                    type="number"
-                    min="1"
-                    max="32"
-                    value={settings.concurrency}
-                    onInput={numInput("concurrency")}
-                    onBlur={numBlur("concurrency")}
-                  />
-                  <span class="help">Higher is faster, more rate limits</span>
-                </div>
-              </div>
-            </details>
-          </section>
-
-          {/* Search quality */}
-          <section class="df-section">
-            <h2>Search quality</h2>
-            <p class="hint">
-              How hard the app works to rank results. The keyword baseline (TF-IDF · RRF ·
-              authority) always runs.
-            </p>
-            <div
-              style={{
-                display: "flex",
-                gap: "4px",
-                padding: "4px",
-                background: "var(--card-2)",
-                border: "0.5px solid var(--line)",
-                "border-radius": "var(--r-2)",
-                "margin-bottom": "12px",
-              }}
-            >
-              <QualityTab
-                q="fast"
-                label="Fast"
-                caption="Broad search · instant"
-                active={settings.quality === "fast"}
-              />
-              <QualityTab
-                q="balanced"
-                label="Balanced"
-                caption={
-                  modelsStore.embeddingState === "failed"
-                    ? "rerank unavailable — retry above"
-                    : !modelsStore.embeddingReady
-                      ? "downloads model on first search"
-                      : modelsStore.llmReady
-                        ? "+ rerank & broad sub-queries"
-                        : "+ semantic rerank · ~5s"
-                }
-                active={settings.quality === "balanced"}
-              />
-              <QualityTab
-                q="thorough"
-                label="Thorough"
-                caption={modelsStore.llmReady ? "+ widest expand & filter" : "needs LLM model"}
-                active={settings.quality === "thorough"}
-                disabled={!modelsStore.llmReady}
-              />
-            </div>
-            <p
-              style={{
-                "font-size": "11.5px",
-                color: "var(--ink-3)",
-                "line-height": 1.5,
-                margin: "0 0 12px",
-              }}
-            >
-              {settings.quality === "fast" &&
-                "Casts a wide net with no AI models needed: every search automatically fans out into several related sub-queries across all sources, then ranks by keyword relevance. Returns immediately."}
-              {settings.quality === "balanced" &&
-                (modelsStore.embeddingState === "failed"
-                  ? "Everything in Fast's broad sub-query fan-out. Semantic reranking is currently unavailable — the embedding model failed to load (retry it under AI models below), so results fall back to keyword ranking. When the local LLM is installed, it still widens the fan-out with AI-generated sub-queries."
-                  : "Everything in Fast's broad sub-query fan-out, plus semantic reranking via the embedding model — top results are re-scored by query meaning, not just keyword overlap. When the local LLM is installed, it widens the fan-out even further with AI-generated sub-queries (no slowdown — it runs alongside discovery).")}
-              {settings.quality === "thorough" &&
-                "Full AI pipeline: the LLM fans your search into the widest set of sub-queries, then semantic reranking, then an LLM pass that judges borderline results. Broadest and most precise; several seconds slower."}
-            </p>
-            <RankingToggle
-              checked={settings.useCitationGraph}
-              onToggle={(v) => {
-                setSettings("useCitationGraph", v);
-                saveSettings();
-              }}
-              label="Citation-graph reasoning"
-              detail="Cross-references Semantic Scholar to boost papers cited by other top results. Slow."
-            />
-            <RankingToggle
-              checked={settings.crossRunReuse}
-              onToggle={(v) => {
-                setSettings("crossRunReuse", v);
-                saveSettings();
-              }}
-              label="Reuse files across libraries"
-              detail="If an identical document was already downloaded in another library, copy it in instead of re-fetching it — saves bandwidth across overlapping searches. Off by default so a remote update is never masked by a stale local copy."
-            />
-          </section>
-
-          {/* AI Models */}
-          <section class="df-section">
-            <h2 style={{ display: "flex", "align-items": "center", gap: "6px" }}>
-              <Sparkles size={14} style={{ color: "var(--accent)" }} /> AI models
-            </h2>
-            <p class="hint">
-              Local models power semantic reranking and LLM query expansion + filtering.
-              <Show when={modelsStore.totalDiskBytes > 0}>
-                {" "}
-                {formatBytes(modelsStore.totalDiskBytes)} on disk.
-              </Show>
-            </p>
-
-            <div
-              style={{
-                display: "flex",
-                "align-items": "center",
-                gap: "8px",
-                padding: "9px 12px",
-                background: "var(--card-2)",
-                "border-radius": "var(--r-2)",
-                "font-size": "11.5px",
-                "margin-bottom": "12px",
-              }}
-            >
-              <Switch>
-                {/* A warm in flight takes precedence over the on-disk state, so a
-                    "Try again" on cached-but-failed weights shows a spinner —
-                    not an instant false-positive "downloaded" caption. */}
-                <Match when={modelsStore.embeddingWarming}>
-                  <Loader2 size={12} class="spin" />
-                  <span style={{ "font-weight": 500 }}>Embedding model</span>
-                  <span style={{ color: "var(--ink-3)" }}>· loading…</span>
-                </Match>
-                <Match when={modelsStore.embeddingState === "loaded"}>
-                  <CheckCircle2 size={12} style={{ color: "var(--ok)" }} />
-                  <span style={{ "font-weight": 500 }}>Embedding model</span>
-                  <span style={{ color: "var(--ink-3)" }}>· ready</span>
-                </Match>
-                <Match when={modelsStore.embeddingState === "downloaded"}>
-                  <CheckCircle2 size={12} style={{ color: "var(--ok)" }} />
-                  <span style={{ "font-weight": 500 }}>Embedding model</span>
-                  <span style={{ color: "var(--ink-3)" }}>
-                    · downloaded · loads on first semantic search
-                  </span>
-                </Match>
-                <Match when={modelsStore.embeddingState === "absent"}>
-                  <span
-                    style={{
-                      width: "9px",
-                      height: "9px",
-                      "border-radius": "50%",
-                      border: "1.5px solid var(--ink-4)",
-                      "flex-shrink": 0,
-                    }}
-                  />
-                  <span style={{ "font-weight": 500 }}>Embedding model</span>
-                  <span style={{ color: "var(--ink-3)" }}>
-                    · not downloaded · ~66 MB, fetched automatically on first semantic search
-                  </span>
-                  <span style={{ flex: 1 }} />
-                  <button
-                    class="df-btn sm"
-                    disabled={warming()}
-                    onClick={() => void handleWarmEmbedding()}
-                  >
-                    <Show when={warming()} fallback={<Download size={12} />}>
-                      <Loader2 size={12} class="spin" />
-                    </Show>
-                    {warming() ? "Downloading…" : "Download now"}
-                  </button>
-                </Match>
-                <Match when={modelsStore.embeddingState === "failed"}>
-                  <AlertCircle size={12} style={{ color: "var(--bad-ink)" }} />
-                  <span style={{ "font-weight": 500 }}>Embedding model</span>
-                  <span style={{ color: "var(--bad-ink)" }}>
-                    · couldn't load — semantic rerank unavailable (see logs)
-                  </span>
-                  <span style={{ flex: 1 }} />
-                  <button
-                    class="df-btn sm"
-                    disabled={warming()}
-                    onClick={() => void handleWarmEmbedding()}
-                  >
-                    <Show when={warming()} fallback={<RefreshCw size={12} />}>
-                      <Loader2 size={12} class="spin" />
-                    </Show>
-                    {warming() ? "Retrying…" : "Try again"}
-                  </button>
-                </Match>
-              </Switch>
-            </div>
-
-            <Show when={modelsStore.state.error}>
-              <div
-                style={{
-                  display: "flex",
-                  gap: "8px",
-                  padding: "10px 12px",
-                  "border-radius": "var(--r-2)",
-                  color: "var(--bad-ink)",
-                  background: "var(--bad-soft)",
-                  "font-size": "12px",
-                }}
-              >
-                <AlertCircle size={14} style={{ "margin-top": "1px", "flex-shrink": 0 }} />
-                <div style={{ flex: 1 }}>
-                  <p style={{ "font-weight": 600, margin: 0 }}>
-                    Couldn&rsquo;t load the model list
-                  </p>
-                  <p style={{ margin: "2px 0 8px", opacity: 0.9, "word-break": "break-word" }}>
-                    {modelsStore.state.error}
-                  </p>
-                  <button class="df-btn sm" onClick={() => void modelsStore.refresh()}>
-                    <RefreshCw size={11} /> Retry
-                  </button>
-                </div>
-              </div>
-            </Show>
-
-            <Show
-              when={
-                !modelsStore.state.error &&
-                modelsStore.state.loading &&
-                modelsStore.state.models.length === 0
-              }
-            >
-              <div
-                style={{
-                  display: "flex",
-                  gap: "8px",
-                  "align-items": "center",
-                  color: "var(--ink-3)",
-                  "font-size": "11.5px",
-                }}
-              >
-                <Loader2 size={12} class="spin" /> Loading…
-              </div>
-            </Show>
-
-            <Show when={modelsStore.state.models.length > 0}>
-              <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
-                <For each={modelsStore.state.models}>
-                  {(model) => <ModelDownloadCard model={model} />}
-                </For>
-              </div>
-            </Show>
-          </section>
-
-          {/* Web search */}
-          <section class="df-section">
-            <h2>Web search</h2>
-            <p class="hint">Six engines queried in parallel, then merged and deduped — no setup.</p>
-            <div
-              style={{
-                display: "flex",
-                "align-items": "flex-start",
-                gap: "8px",
-                padding: "10px 12px",
-                background: "var(--card-2)",
-                "border-radius": "var(--r-2)",
-                "font-size": "12px",
-                "margin-bottom": "12px",
-              }}
-            >
-              <CheckCircle2
-                size={14}
-                style={{ color: "var(--ok)", "margin-top": "1px", "flex-shrink": 0 }}
-              />
-              <span>
-                <strong>Ready.</strong> DuckDuckGo · Brave · Bing · Mojeek · Marginalia · Startpage,
-                with a built-in SearXNG fallback.
-              </span>
-            </div>
-            <MetaSearchHealthBar />
-          </section>
-
-          {/* Run log */}
-          <section class="df-section">
-            <h2>Run log</h2>
-            <p class="hint">
-              Every query, source error, and download outcome is logged here. Share this file if you
-              report a problem.
-            </p>
-            <Show when={logInfo()} fallback={<p class="hint">Unavailable.</p>}>
-              {(info) => (
-                <div style={{ display: "flex", "flex-direction": "column", gap: "10px" }}>
-                  <code
-                    title={info().path}
-                    style={{
-                      display: "block",
-                      overflow: "hidden",
-                      "text-overflow": "ellipsis",
-                      "white-space": "nowrap",
-                      background: "var(--canvas)",
-                      border: "0.5px solid var(--line-2)",
-                      "border-radius": "var(--r-2)",
-                      padding: "9px 12px",
-                      "font-family": "var(--font-mono)",
-                      "font-size": "11px",
-                      color: "var(--ink-2)",
-                    }}
-                  >
-                    {info().path}
-                  </code>
-                  <p class="hint" style={{ margin: 0 }}>
-                    {info().exists ? formatBytes(info().size_bytes) : "Not yet written"}
-                  </p>
-                  <div style={{ display: "flex", gap: "8px" }}>
-                    <button
-                      class="df-btn sm"
-                      onClick={() =>
-                        api
-                          .revealInFinder(info().path)
-                          .catch((e) => uiStore.announce(`Couldn't open the folder: ${String(e)}`))
-                      }
-                      disabled={!info().exists}
-                    >
-                      <FolderOpen size={12} /> Show in folder
-                    </button>
-                    <button
-                      class="df-btn sm ghost"
-                      onClick={async () => setLogInfo(await api.runLogInfo().catch(() => null))}
-                    >
-                      <FileText size={12} /> Refresh
-                    </button>
-                  </div>
-                </div>
-              )}
-            </Show>
-          </section>
-
-          {/* Linux-only: WebKitGTK blank-window-on-launch workaround */}
-          <Show when={IS_LINUX}>
-            <section class="df-section">
-              <h2>Safe rendering mode</h2>
-              <p class="hint">
-                On some older GPU drivers, the window can open blank on launch. Enabling this
-                disables GPU-accelerated DMABUF rendering, which avoids it. Applies after restart,
-                not the current session.
-              </p>
-              <label
-                style={{
-                  display: "flex",
-                  "align-items": "flex-start",
-                  gap: "8px",
-                  "font-size": "12px",
-                  margin: "10px 0",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={safeRenderMode()}
-                  onChange={(e) => void toggleSafeRenderMode(e.currentTarget.checked)}
-                  style={{ "margin-top": "2px" }}
-                />
-                <span style={{ flex: 1 }}>Enable safe rendering mode (restart to apply)</span>
-              </label>
-            </section>
-          </Show>
-
-          {/* Danger zone — clean uninstall */}
-          <section class="df-section">
-            <h2
-              style={{
-                color: "var(--bad-ink)",
-                display: "flex",
-                "align-items": "center",
-                gap: "6px",
-              }}
-            >
-              <AlertCircle size={16} /> Danger zone
-            </h2>
-            <p class="hint">
-              Permanently delete Document Finder's downloaded AI models, caches, and run logs — for
-              a clean uninstall. Your document library is kept unless you tick the box below.
-            </p>
-            <label
-              style={{
-                display: "flex",
-                "align-items": "flex-start",
-                gap: "8px",
-                "font-size": "12px",
-                margin: "10px 0",
-                color: "var(--bad-ink)",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={purgeLibrary()}
-                onChange={(e) => setPurgeLibrary(e.currentTarget.checked)}
-                style={{ "margin-top": "2px" }}
-              />
-              <span style={{ flex: 1 }}>
-                Also delete my document library (downloaded PDFs/EPUBs and search databases). This
-                cannot be undone.
-              </span>
-            </label>
-            <button
-              class="df-btn sm"
-              disabled={purging()}
-              onClick={() => void handlePurge()}
-              style={{ background: "var(--bad-soft)", color: "var(--bad-ink)" }}
-            >
-              <Show when={purging()} fallback={<Trash2 size={12} />}>
-                <Loader2 size={12} class="animate-spin" />
-              </Show>
-              Erase app data
-            </button>
-            <Show when={purgeMsg()}>
-              <p class="hint" style={{ "margin-top": "8px" }}>
-                {purgeMsg()}
-              </p>
-            </Show>
-            <Show when={purgeOk()}>
-              <button
-                class="df-btn sm"
-                style={{ "margin-top": "8px" }}
-                disabled={restarting()}
-                onClick={() => {
-                  setRestarting(true);
-                  // Restarting drops the now-stale in-memory model singletons and
-                  // re-reads the cleared settings, completing the reset cleanly.
-                  api.restartApp().catch(() => setRestarting(false));
-                }}
-              >
-                {restarting() ? "Restarting…" : "Restart now"}
-              </button>
-            </Show>
-          </section>
-
-          {/* About */}
-          <section
-            class="df-section"
-            style={{ display: "flex", "align-items": "center", gap: "14px" }}
-          >
-            <Logo size={44} style={{ "border-radius": "10px", "flex-shrink": 0 }} />
-            <div style={{ flex: 1 }}>
-              <h2 style={{ margin: "0 0 2px" }}>Document Finder</h2>
-              <p
-                style={{
-                  "font-size": "12px",
-                  color: "var(--ink-3)",
-                  margin: 0,
-                  "font-family": "var(--font-mono)",
-                }}
-              >
-                Tauri 2 · Rust · Solid.js · SQLite.
-              </p>
-            </div>
-          </section>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RankingToggle(props: {
-  checked: boolean;
-  onToggle: (v: boolean) => void;
-  label: string;
-  detail: string;
-  disabled?: boolean;
-}) {
-  return (
-    <label
-      style={{ display: "flex", "align-items": "flex-start", gap: "8px", "font-size": "12px" }}
-      classList={{ "opacity-50": !!props.disabled }}
-    >
-      <input
-        type="checkbox"
-        checked={props.checked && !props.disabled}
-        disabled={!!props.disabled}
-        onChange={(e) => props.onToggle(e.currentTarget.checked)}
-        style={{ "margin-top": "2px" }}
-      />
-      <span style={{ flex: 1 }}>
-        <span style={{ "font-weight": 500 }}>{props.label}</span>{" "}
-        <span style={{ "font-size": "11px", color: "var(--ink-3)" }}>· {props.detail}</span>
-      </span>
-    </label>
-  );
-}
-
-function QualityTab(props: {
-  q: Quality;
-  label: string;
-  caption: string;
-  active: boolean;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      onClick={() => {
-        if (props.disabled) return;
-        setSettings("quality", props.q);
-        saveSettings();
-      }}
-      disabled={props.disabled}
-      aria-pressed={props.active}
-      aria-disabled={props.disabled}
-      class="pill-toggle"
-      classList={{ "is-active": props.active }}
-      style={{
-        flex: 1,
-        padding: "8px 12px",
-        "text-align": "center",
-        ...(props.disabled ? { opacity: 0.8, cursor: "not-allowed" } : {}),
-      }}
-    >
-      <div style={{ "font-size": "12px", "font-weight": 600, "line-height": 1.2 }}>
-        {props.label}
-      </div>
-      <div
-        style={{
-          "margin-top": "2px",
-          "font-size": "10px",
-          "line-height": 1.2,
-          color: props.active ? "var(--accent-fg)" : "var(--ink-3)",
-          opacity: props.active ? 0.85 : 1,
-        }}
+      <Setting
+        title="Erase data"
+        desc="Remove everything Document Finder stores on this computer — for a clean uninstall."
       >
-        {props.caption}
-      </div>
-    </button>
+        <label class="df-check">
+          <input
+            type="checkbox"
+            checked={purgeLibrary()}
+            onChange={(e) => setPurgeLibrary(e.currentTarget.checked)}
+          />
+          <span>Also delete my downloaded libraries</span>
+        </label>
+        <div class="df-row">
+          <button
+            class="df-btn df-btn-danger"
+            onClick={() => void purge()}
+            disabled={runStore.live}
+          >
+            {purgeLibrary() ? "Erase everything" : "Erase app data"}
+          </button>
+          <Show when={purgeOk()}>
+            <button class="df-btn" onClick={() => void api.restartApp()}>
+              Restart now
+            </button>
+          </Show>
+        </div>
+        <Show when={purgeMsg()}>
+          <p class="df-muted" role="status">
+            {purgeMsg()}
+          </p>
+        </Show>
+      </Setting>
+
+      <section class="df-setting" style={{ "border-bottom": 0 }}>
+        <div class="df-row" style={{ gap: "12px" }}>
+          <Logo size={36} />
+          <div>
+            <div class="df-brand-name">Document Finder</div>
+            <div class="df-muted num" style={{ "font-size": "12px", "margin-top": "4px" }}>
+              Version {version() || "—"} · AGPL-3.0
+            </div>
+          </div>
+        </div>
+        <p class="df-muted" style={{ "align-self": "center" }}>
+          Open-access sources only. Searches and documents stay on your computer.
+        </p>
+      </section>
+    </div>
   );
 }

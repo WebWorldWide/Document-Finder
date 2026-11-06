@@ -127,6 +127,7 @@ impl Source for BingHtmlSource {
                         year: None,
                         abstract_: None,
                         identifier: None,
+                        ..Default::default()
                     });
                     count += 1;
                 }

@@ -1,141 +1,106 @@
-import { Show, For, createEffect } from "solid-js";
-import { Compass, Library as LibraryIcon, Settings as SettingsIcon } from "lucide-solid";
+import { For, Show, createEffect, on } from "solid-js";
+import { Library, Search, Settings } from "lucide-solid";
 import Logo from "@/components/Logo";
-import { uiStore } from "@/stores/ui";
-import { settings } from "@/stores/settings";
-import { runStore } from "@/stores/run";
 import { api } from "@/lib/tauri";
-import { compareLibraryRecency, formatBytes } from "@/lib/utils";
+import { compareLibraryRecency, formatRelativeTime, libraryTimestamp } from "@/lib/utils";
+import { runStore } from "@/stores/run";
+import { settings } from "@/stores/settings";
+import { uiStore, type View } from "@/stores/ui";
 
-const navItems = [
-  { id: "find" as const, label: "Discover", icon: Compass },
-  { id: "library" as const, label: "Library", icon: LibraryIcon },
-  { id: "settings" as const, label: "Settings", icon: SettingsIcon },
+const NAV: { id: View; label: string; icon: typeof Search }[] = [
+  { id: "discover", label: "Discover", icon: Search },
+  { id: "library", label: "Library", icon: Library },
+  { id: "settings", label: "Settings", icon: Settings },
 ];
 
-export default function Sidebar() {
-  // Lazy-prime the library list so the count + Recent section show real data on
-  // first paint if libraries already exist on disk. A createEffect (not onMount)
-  // so it re-fires when settings.libraryRoot arrives ASYNCHRONOUSLY — on a fresh
-  // launch the root starts "" and is filled in once defaultLibraryDir() resolves.
-  // Guarded by a one-shot-per-root latch (NOT knownLibraries.length): an empty
-  // result writes a fresh [] reference which would re-trigger an effect that read
-  // .length, busy-looping list_libraries IPC forever on a library-less install.
-  let primedRoot = "";
-  createEffect(() => {
-    const root = settings.libraryRoot;
-    if (root && root !== primedRoot) {
-      primedRoot = root;
-      api
-        .listLibraries(root)
-        .then((libs) => uiStore.setKnownLibraries(libs))
-        .catch(() => {
-          primedRoot = ""; // allow a retry if the fetch failed
-        });
-    }
-  });
+export async function refreshLibraries() {
+  if (!settings.libraryRoot) return;
+  try {
+    const libs = await api.listLibraries(settings.libraryRoot);
+    uiStore.setKnownLibraries(libs);
+  } catch (e) {
+    console.error("listLibraries failed", e);
+  }
+}
 
-  const focusMain = () =>
-    requestAnimationFrame(() => (document.getElementById("main-content") as HTMLElement)?.focus());
+export default function Sidebar() {
+  createEffect(
+    on(
+      () => settings.libraryRoot,
+      () => void refreshLibraries(),
+    ),
+  );
+  // A finished run adds/updates a library.
+  createEffect(
+    on(
+      () => runStore.state.status,
+      (s) => {
+        if (s === "done" || s === "cancelled") void refreshLibraries();
+      },
+    ),
+  );
 
   const recent = () =>
-    [...uiStore.knownLibraries].sort((a, b) => compareLibraryRecency(a.name, b.name)).slice(0, 5);
+    [...uiStore.knownLibraries].sort((a, b) => compareLibraryRecency(a.name, b.name)).slice(0, 6);
+
+  const go = (v: View) => {
+    uiStore.setView(v);
+    queueMicrotask(() => document.getElementById("main-content")?.focus());
+  };
 
   return (
-    <nav class="df-sidebar" aria-label="Primary">
+    <nav class="df-side" aria-label="Main">
       <div class="df-brand">
-        <Logo size={28} class="df-brand-logo" />
-        <span class="df-brand-name">Document Finder</span>
+        <Logo size={26} />
+        <span class="df-brand-name df-side-text">Document Finder</span>
       </div>
 
       <div class="df-nav">
-        <For each={navItems}>
+        <For each={NAV}>
           {(item) => (
             <button
               class="df-nav-item"
               aria-current={uiStore.view === item.id ? "page" : undefined}
-              onClick={() => {
-                // Re-entering the Library tab clears any drilled-in detail so the
-                // list shows — otherwise clicking "Library" while a detail is open
-                // is a dead click (the view is already "library").
-                if (item.id === "library") uiStore.setActiveLibrary(null);
-                uiStore.setView(item.id);
-                focusMain();
-              }}
+              aria-label={item.label}
+              title={item.label}
+              onClick={() => go(item.id)}
             >
-              <item.icon size={15} />
-              {item.label}
-              <Show when={item.id === "find" && runStore.state.running}>
-                <span
-                  class="df-nav-count"
-                  style={{
-                    // Text-grade accent so the small label clears AA on light
-                    // themes (and stays calibrated in midnight); the dot keeps
-                    // full accent.
-                    color: "var(--accent-ink)",
-                    display: "flex",
-                    "align-items": "center",
-                    gap: "4px",
-                  }}
-                >
-                  <span class="df-pulse" style={{ width: "6px", height: "6px" }} /> live
-                </span>
+              <item.icon size={16} stroke-width={1.75} aria-hidden="true" />
+              <span class="df-side-text">{item.label}</span>
+              <Show when={item.id === "discover" && runStore.live}>
+                <span class="df-live-dot" aria-label="Search running" />
               </Show>
-              <Show when={item.id === "library" && uiStore.lifetimeStats.count > 0}>
-                <span class="df-nav-count">{uiStore.lifetimeStats.count}</span>
+              <Show when={item.id === "library" && uiStore.knownLibraries.length > 0}>
+                <span class="df-nav-badge num df-side-text">{uiStore.knownLibraries.length}</span>
               </Show>
             </button>
           )}
         </For>
       </div>
 
-      <Show when={recent().length > 0}>
-        <div class="df-side-section">
-          Recent
-          <button
-            class="df-btn ghost sm"
-            style={{ padding: "2px 6px", "margin-right": "-6px" }}
-            onClick={() => {
-              uiStore.setActiveLibrary(null);
-              uiStore.setView("library");
-              focusMain();
-            }}
-            title="See all libraries"
-          >
-            all
-          </button>
-        </div>
+      <Show when={recent().length > 0 && uiStore.view !== "library"}>
         <div class="df-recent">
+          <div class="df-label">Recent</div>
           <For each={recent()}>
-            {(lib) => (
-              <button
-                classList={{
-                  "df-recent-item": true,
-                  active: uiStore.activeLibrary?.path === lib.path,
-                }}
-                onClick={() => {
-                  uiStore.setActiveLibrary(lib);
-                  uiStore.setView("library");
-                  focusMain();
-                }}
-              >
-                <span class="df-recent-title">{lib.query || lib.name}</span>
-                <span class="df-recent-meta">
-                  {lib.n_docs} docs · {formatBytes(lib.size_bytes)}
-                </span>
-              </button>
-            )}
+            {(lib) => {
+              const ts = libraryTimestamp(lib.name);
+              return (
+                <button class="df-recent-item" onClick={() => uiStore.showLibrary(lib.path)}>
+                  <b>{lib.query}</b>
+                  <span class="num">
+                    {lib.n_docs} docs
+                    {ts ? ` · ${formatRelativeTime(ts)}` : ""}
+                  </span>
+                </button>
+              );
+            }}
           </For>
         </div>
       </Show>
 
-      {/* Surface backend status only when something is actually wrong. A
-          permanent "Backend ready" line is just noise in the normal case — the
-          app working is the signal — so the footer appears only if the live-update
-          listeners failed to register (which also blocks search until a restart). */}
       <Show when={!uiStore.listenersReady}>
-        <div class="df-side-footer">
-          <span class="df-status-dot warn" /> Live updates unavailable — restart
+        <div class="df-side-foot" role="status">
+          Live updates are unavailable — restart the app.
         </div>
       </Show>
     </nav>

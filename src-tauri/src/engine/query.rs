@@ -87,6 +87,11 @@ static WORD_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[\p{L}\p{N}][\p{L}\p{N}\p{M}'-]+").unwrap());
 static SPLIT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)[,;]|\s+and\s+|\s+&\s+").unwrap());
 
+/// True for the query-filler stopwords (shared with ranking's feedback miner).
+pub fn is_stopword(w: &str) -> bool {
+    STOPWORDS.contains(w)
+}
+
 /// Strip filler words from a natural-language query.
 pub fn parse_query(q: &str) -> Vec<String> {
     let lower = q.to_lowercase();

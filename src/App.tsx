@@ -1,28 +1,19 @@
-import { Switch, Match, onMount } from "solid-js";
+import { Match, Switch } from "solid-js";
 import Sidebar from "@/components/Sidebar";
-import FindTab from "@/components/FindTab";
+import Discover from "@/components/Discover";
 import LibraryView from "@/components/LibraryView";
 import SettingsView from "@/components/SettingsView";
-import WelcomeDialog from "@/components/WelcomeDialog";
+import Overlays from "@/components/Overlays";
 import { uiStore } from "@/stores/ui";
-import { modelsStore } from "@/stores/models";
 
 export default function App() {
-  // Kick off the models registry load at app start so the AI Models card in
-  // Settings doesn't get stuck on "Loading…" if neither SettingsView nor
-  // WelcomeDialog has mounted yet.
-  onMount(() => {
-    void modelsStore.refresh();
-    void modelsStore.ensureSubscribed();
-  });
-
   return (
-    <div class="df-body">
+    <div class="df-shell">
       <Sidebar />
       <main id="main-content" tabindex="-1" class="df-main">
         <Switch>
-          <Match when={uiStore.view === "find"}>
-            <FindTab />
+          <Match when={uiStore.view === "discover"}>
+            <Discover />
           </Match>
           <Match when={uiStore.view === "library"}>
             <LibraryView />
@@ -32,22 +23,8 @@ export default function App() {
           </Match>
         </Switch>
       </main>
-      <WelcomeDialog />
-      {/* Always-mounted SR announcer — components push transient confirmations
-          (e.g. "Exported to …") here via uiStore.announce() so they're reliably
-          read, unlike a polite live region mounted together with its text. */}
-      <div
-        role="status"
-        aria-live="polite"
-        style={{
-          position: "absolute",
-          width: "1px",
-          height: "1px",
-          overflow: "hidden",
-          clip: "rect(0 0 0 0)",
-          "white-space": "nowrap",
-        }}
-      >
+      <Overlays />
+      <div role="status" aria-live="polite" class="sr-only">
         {uiStore.announcement}
       </div>
     </div>

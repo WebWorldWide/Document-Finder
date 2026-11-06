@@ -250,6 +250,7 @@ impl Source for InternetArchiveSource {
                                 year,
                                 abstract_: desc,
                                 identifier: Some(ident),
+                                ..Default::default()
                             })
                         }
                     })

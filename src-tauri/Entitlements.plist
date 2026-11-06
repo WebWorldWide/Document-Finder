@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Hardened runtime (required for notarization). The app loads the bundled
+       PDFium library from Contents/Frameworks at runtime via dlopen; allow it
+       explicitly so it also works for ad-hoc signed builds, whose (empty)
+       Team ID would otherwise fail library validation. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <!-- Outgoing network access for searches and downloads. -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+</dict>
+</plist>

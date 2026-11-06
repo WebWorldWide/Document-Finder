@@ -17,7 +17,7 @@ sdk: org.gnome.Sdk
 command: document-finder
 
 finish-args:
-  - --share=network # fetches papers + (optional) model downloads
+  - --share=network # searches + downloads open-access papers
   - --share=ipc
   - --socket=wayland
   - --socket=fallback-x11

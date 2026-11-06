@@ -2,7 +2,7 @@
 // Cross-platform clean (re)build for Document Finder — Windows, macOS, Linux.
 //
 //   pnpm clean-build        # clean app crate + caches, release-fast build
-//   pnpm clean-build:full   # also nuke native deps (llama.cpp/ONNX); 15-25 min
+//   pnpm clean-build:full   # also rebuild every dependency from scratch
 //   pnpm clean-build:dev    # debug build + hot reload (tauri dev)
 //
 // One command on every OS. Node is the entry point (not a pnpm shell script)
@@ -83,8 +83,8 @@ console.log(`==> Document Finder clean rebuild${full ? " (full)" : ""}${dev ? " 
 //    locked binary instead of dying on it.
 killApp();
 
-// 1. Clean the Rust build. Default keeps the slow llama.cpp/ONNX native builds
-//    cached (finishes in minutes); --full nukes everything (15-25 min cold).
+// 1. Clean the Rust build. Default keeps dependencies cached; --full nukes
+//    the whole target dir.
 sh(
   full
     ? "cargo clean --manifest-path src-tauri/Cargo.toml"
