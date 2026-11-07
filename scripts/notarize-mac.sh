@@ -52,9 +52,12 @@ else
 fi
 
 export APPLE_SIGNING_IDENTITY="$IDENTITY"
-ARGS=(build --bundles app,dmg)
-[ "$CARGO_PROFILE" != "release" ] && ARGS+=(-- --profile "$CARGO_PROFILE")
-node node_modules/@tauri-apps/cli/tauri.js "${ARGS[@]}"
+# SKIP_BUILD=1 notarizes the existing signed bundle instead of rebuilding.
+if [ "${SKIP_BUILD:-0}" != "1" ]; then
+  ARGS=(build --bundles app,dmg)
+  [ "$CARGO_PROFILE" != "release" ] && ARGS+=(-- --profile "$CARGO_PROFILE")
+  node node_modules/@tauri-apps/cli/tauri.js "${ARGS[@]}"
+fi
 
 BUNDLE="src-tauri/target/$CARGO_PROFILE/bundle"
 APP="$BUNDLE/macos/Document Finder.app"
