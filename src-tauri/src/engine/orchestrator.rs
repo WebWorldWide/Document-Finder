@@ -39,7 +39,8 @@ use super::extract::{extract, front_matter, Extracted};
 use super::hostlimit::HostLimiter;
 use super::query::{expand_query_broad, parse_query, safe_folder};
 use super::ranking::{
-    expansion_terms, feedback_subqueries, rank_candidates, QueryModel, RankedDoc,
+    concepts_for, expansion_terms, feedback_subqueries, metadata_on_topic, rank_candidates,
+    spell_corrections, stems, text_on_topic, Concept, QueryModel, RankedDoc,
 };
 use super::runlog;
 use crate::events::*;
@@ -191,6 +192,9 @@ struct RunState {
     attempts: AtomicUsize,
     /// Run budget exhausted: start no new downloads.
     stop_new: AtomicBool,
+    /// The concepts the user asked about (phrases + synonyms), derived from
+    /// the pool; what the full-text topicality check looks for.
+    concepts: Mutex<Vec<Concept>>,
     /// sha256 → title of files saved this run (duplicate-content guard).
     hashes: Mutex<HashMap<String, String>>,
 }
@@ -216,6 +220,7 @@ impl RunState {
             in_flight: AtomicUsize::new(0),
             attempts: AtomicUsize::new(0),
             stop_new: AtomicBool::new(false),
+            concepts: Mutex::new(Vec::new()),
             hashes: Mutex::new(HashMap::new()),
         }
     }
@@ -231,10 +236,26 @@ impl RunState {
             .enumerate()
             .map(|(i, m)| (m.doc.url.clone(), i))
             .collect();
-        rank_candidates(&q, snapshot, &boosts)
+        let ranked: Vec<(usize, RankedDoc)> = rank_candidates(&q, snapshot, &boosts)
             .into_iter()
             .filter_map(|r| idx_of.get(&r.doc.doc.url).map(|&i| (i, r)))
-            .collect()
+            .collect();
+        // The concepts the kept results are about (drives the full-text check).
+        let pool: Vec<Vec<String>> = ranked
+            .iter()
+            .map(|(_, r)| {
+                stems(&format!(
+                    "{} {}",
+                    r.doc.doc.title,
+                    r.doc.doc.abstract_.as_deref().unwrap_or("")
+                ))
+            })
+            .collect();
+        let concepts = concepts_for(&q, &pool);
+        if !concepts.is_empty() {
+            *self.concepts.lock() = concepts;
+        }
+        ranked
     }
 }
 
@@ -893,6 +914,18 @@ async fn process(ctx: &WorkerCtx, job: Queued) {
                 .unwrap_or_else(|e| Err(anyhow::anyhow!("text extraction crashed: {e}")));
             match res {
                 Ok(ex) => {
+                    // Second relevance gate, on the document's real text: a
+                    // paper whose body doesn't discuss the search is dropped
+                    // (and its slot goes to the next-best match).
+                    let concepts = ctx.state.concepts.lock().clone();
+                    let on_topic = text_on_topic(&ex.markdown, &concepts);
+                    if !on_topic {
+                        tracing::info!("off-topic after reading, dropped: {}", doc.title);
+                        if !cached {
+                            let _ = tokio::fs::remove_file(&path).await;
+                        }
+                        return skip(ctx, &doc, "off-topic");
+                    }
                     let md_path = ctx.text_dir.join(format!("{slug}.md"));
                     let body = render_markdown(&doc, &job.sources, &ex);
                     if tokio::fs::write(&md_path, body).await.is_ok() {
@@ -903,7 +936,19 @@ async fn process(ctx: &WorkerCtx, job: Queued) {
                     }
                     extracted = Some(ex);
                 }
-                Err(e) => extract_error = Some(e.to_string()),
+                Err(e) => {
+                    // No readable text: keep it only if its title/abstract
+                    // clearly name the whole topic.
+                    let concepts = ctx.state.concepts.lock().clone();
+                    let meta = format!("{} {}", doc.title, doc.abstract_.as_deref().unwrap_or(""));
+                    if !metadata_on_topic(&meta, &concepts) {
+                        if !cached {
+                            let _ = tokio::fs::remove_file(&path).await;
+                        }
+                        return skip(ctx, &doc, "no readable text");
+                    }
+                    extract_error = Some(e.to_string());
+                }
             }
         }
     }
@@ -1168,7 +1213,7 @@ pub async fn run_pipeline(
         req.sources.clone()
     };
 
-    let keywords = parse_query(&req.query);
+    let mut keywords = parse_query(&req.query);
     let qmodel = QueryModel::from_keywords(if keywords.is_empty() {
         std::slice::from_ref(&req.query)
     } else {
@@ -1240,6 +1285,22 @@ pub async fn run_pipeline(
 
     // ---- Feedback: citation graph + wave 2 (only if needed) ----
     if !cancel.is_cancelled() {
+        // Spelling: fix typos using the results' own vocabulary, then search
+        // again with the corrected query.
+        let pool = state.dedup.lock().snapshot();
+        let fixes = spell_corrections(&keywords, &pool);
+
+        let mut corrected_query: Option<String> = None;
+        if !fixes.is_empty() {
+            tracing::info!("spelling corrections: {fixes:?}");
+            for k in keywords.iter_mut() {
+                if let Some((_, to)) = fixes.iter().find(|(from, _)| from == k) {
+                    *k = to.clone();
+                }
+            }
+            *state.query.lock() = QueryModel::from_keywords(&keywords);
+            corrected_query = Some(keywords.join(" "));
+        }
         let ranked = state.rank_now();
         let kept = ranked
             .iter()
@@ -1266,11 +1327,18 @@ pub async fn run_pipeline(
         let ranked_only: Vec<RankedDoc> = ranked.into_iter().map(|(_, r)| r).collect();
         let q = state.query.lock().clone();
         let expansion = expansion_terms(&ranked_only, &q, 12, 8);
-        let wave2 = if kept < ENOUGH_KEPT {
+        let mut wave2 = if kept < ENOUGH_KEPT {
             feedback_subqueries(&keywords, &expansion)
         } else {
             Vec::new()
         };
+        if let Some(cq) = &corrected_query {
+            // The corrected query (and its relaxations) goes first.
+            let mut fixed = expand_query_broad(cq);
+            fixed.truncate(4);
+            fixed.extend(wave2);
+            wave2 = fixed;
+        }
         if !expansion.is_empty() {
             let mut qm = state.query.lock();
             *qm = qm.clone().with_expansion(&expansion);

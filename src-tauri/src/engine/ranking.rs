@@ -36,9 +36,9 @@ const B_TITLE: f32 = 0.5;
 const B_ABSTRACT: f32 = 0.75;
 const B_VENUE: f32 = 0.3;
 
-/// A docs relevance must be at least this fraction of the best doc's to be
-/// downloaded.
-const RELATIVE_FLOOR: f32 = 0.10;
+/// A doc's relevance must be at least this fraction of the typical strong
+/// match (median of the top 20 kept) to be downloaded.
+const RELATIVE_FLOOR: f32 = 0.3;
 
 /// Lowercase alphanumeric tokens of >= 2 chars.
 pub fn tokenize(text: &str) -> Vec<String> {
@@ -46,6 +46,342 @@ pub fn tokenize(text: &str) -> Vec<String> {
         .filter(|t| t.chars().count() >= 2)
         .map(str::to_lowercase)
         .collect()
+}
+
+/// Generic research words: they shape a query ("treatment outcomes",
+/// "effects of …") but can never be what makes a document relevant. A
+/// document must match the query's *content* words; these only add score.
+/// Stored stemmed.
+static GENERIC_TERMS: Lazy<HashSet<String>> = Lazy::new(|| {
+    [
+        "treatment",
+        "outcome",
+        "effect",
+        "impact",
+        "role",
+        "study",
+        "analysis",
+        "review",
+        "method",
+        "methodology",
+        "model",
+        "modeling",
+        "modelling",
+        "approach",
+        "system",
+        "use",
+        "using",
+        "application",
+        "development",
+        "evaluation",
+        "performance",
+        "management",
+        "risk",
+        "factor",
+        "research",
+        "overview",
+        "introduction",
+        "theory",
+        "practice",
+        "case",
+        "trend",
+        "future",
+        "challenge",
+        "new",
+        "recent",
+        "current",
+        "modern",
+        "based",
+        "data",
+        "information",
+        "process",
+        "design",
+        "problem",
+        "issue",
+        "survey",
+        "guide",
+        "basic",
+        "comparison",
+        "relationship",
+        "influence",
+        "association",
+        "history",
+        "benefit",
+        "cause",
+        "type",
+        "level",
+        "change",
+        "evidence",
+        "assessment",
+        "strategy",
+        "policy",
+        "result",
+        "finding",
+        "health",
+        "care",
+        "patient",
+        "people",
+        "human",
+        "effectiveness",
+        "efficacy",
+        "prevention",
+        "intervention",
+        "technique",
+        "technology",
+        "tool",
+        "framework",
+        "aspect",
+        "perspective",
+        "example",
+        "importance",
+        "role",
+    ]
+    .iter()
+    .map(|w| stem(w))
+    .collect()
+});
+
+/// True for generic research words (see [`GENERIC_TERMS`]); input is a stem.
+pub fn is_generic(stemmed: &str) -> bool {
+    GENERIC_TERMS.contains(stemmed)
+}
+
+/// Split query terms into the content words a document must match and the
+/// generic modifiers that only add score. If every term is generic
+/// ("data analysis"), all of them count as content.
+pub fn content_terms(terms: &[String]) -> Vec<String> {
+    let content: Vec<String> = terms.iter().filter(|t| !is_generic(t)).cloned().collect();
+    if content.is_empty() {
+        terms.to_vec()
+    } else {
+        content
+    }
+}
+
+/// Model-free synonym table for common research vocabulary. Each group is a
+/// set of interchangeable phrasings; matching any one satisfies a concept
+/// that uses another. Entries are surface text (stemmed when loaded).
+const SYNONYM_GROUPS: &[&[&str]] = &[
+    &[
+        "heart attack",
+        "myocardial infarction",
+        "acute coronary syndrome",
+    ],
+    &[
+        "teenager",
+        "adolescent",
+        "adolescence",
+        "teen",
+        "youth",
+        "high school student",
+    ],
+    &[
+        "child",
+        "children",
+        "kid",
+        "pediatric",
+        "paediatric",
+        "childhood",
+    ],
+    &[
+        "elderly",
+        "older adult",
+        "older people",
+        "aged",
+        "geriatric",
+        "senior",
+    ],
+    &["woman", "women", "female"],
+    &["man", "men", "male"],
+    &[
+        "cancer",
+        "tumor",
+        "tumour",
+        "oncology",
+        "carcinoma",
+        "neoplasm",
+        "malignancy",
+    ],
+    &["car", "vehicle", "automobile"],
+    &["electric car", "electric vehicle", "ev"],
+    &["ai", "artificial intelligence"],
+    &["economy", "economic", "economics"],
+    &["climate change", "global warming"],
+    &["covid", "coronavirus", "sars cov"],
+    &["stroke", "cerebrovascular"],
+    &["diabetes", "diabetic"],
+    &["obesity", "obese", "overweight"],
+    &["depression", "depressive"],
+    &["anxiety", "anxious"],
+    &["usa", "united states", "america"],
+    &["uk", "united kingdom", "britain", "british"],
+    &["solar panel", "photovoltaic", "solar cell", "solar module"],
+    &["mouse", "mice", "murine"],
+    &["tooth", "teeth", "dental"],
+    &["kidney", "renal"],
+    &["liver", "hepatic"],
+    &["lung", "pulmonary"],
+    &["brain", "cerebral", "neural"],
+    &["medicine", "medical", "clinical"],
+    &["drug", "medication", "pharmaceutical"],
+    &["school", "education", "educational"],
+    &["student", "pupil", "learner"],
+    &["memory", "memorization", "recall"],
+    &["sleep", "sleeping"],
+    &["exercise", "physical activity", "training"],
+    &["diet", "dietary", "nutrition"],
+    &["water", "aquatic"],
+    &["ocean", "marine", "sea"],
+    &["plant", "botanical", "vegetation"],
+    &["city", "urban"],
+    &["farm", "agriculture", "agricultural"],
+];
+
+static SYNONYMS: Lazy<HashMap<String, Vec<Vec<String>>>> = Lazy::new(|| {
+    let mut m: HashMap<String, Vec<Vec<String>>> = HashMap::new();
+    for group in SYNONYM_GROUPS {
+        let forms: Vec<Vec<String>> = group.iter().map(|g| stems(g)).collect();
+        for f in &forms {
+            let key = f.join(" ");
+            let entry = m.entry(key).or_default();
+            for g in &forms {
+                if g != f && !entry.contains(g) {
+                    entry.push(g.clone());
+                }
+            }
+        }
+    }
+    m
+});
+
+/// One thing the user asked about: a single word or a phrase ("heart
+/// attack"), plus equivalent phrasings from the synonym table.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Concept {
+    pub label: String,
+    /// Every accepted phrasing (the user's own first), as stem sequences.
+    pub forms: Vec<Vec<String>>,
+}
+
+impl Concept {
+    fn new(terms: Vec<String>) -> Self {
+        let label = terms.join(" ");
+        let mut forms = vec![terms];
+        if let Some(alts) = SYNONYMS.get(&label) {
+            forms.extend(alts.iter().cloned());
+        }
+        Self { label, forms }
+    }
+
+    /// Occurrences of any phrasing in a stem sequence.
+    pub fn count_in(&self, toks: &[String]) -> usize {
+        self.forms
+            .iter()
+            .map(|f| {
+                if f.len() == 1 {
+                    toks.iter().filter(|t| **t == f[0]).count()
+                } else {
+                    toks.windows(f.len()).filter(|w| *w == f.as_slice()).count()
+                }
+            })
+            .sum()
+    }
+}
+
+/// Concepts the user is asking about, derived from the query's content words
+/// and the candidate pool. Two adjacent query words are treated as one
+/// phrase when the pool mostly uses them side by side ("heart attack",
+/// "Roman empire"); a phrase with a known synonym ("myocardial infarction")
+/// accepts that too. `pool` is each candidate's title+abstract stems.
+pub fn concepts_for(query: &QueryModel, pool: &[Vec<String>]) -> Vec<Concept> {
+    let present = |t: &str| pool.iter().any(|toks| toks.iter().any(|x| x == t));
+    let has_synonym = |t: &str| SYNONYMS.contains_key(t);
+    // Content words, in query order, that the pool uses (or that have a
+    // synonym the pool might use instead).
+    let ordered: Vec<String> = {
+        let mut seen = HashSet::new();
+        query
+            .original
+            .iter()
+            .filter(|t| seen.insert((*t).clone()))
+            .cloned()
+            .collect()
+    };
+    let content: Vec<String> = content_terms(&ordered)
+        .into_iter()
+        .filter(|t| present(t) || has_synonym(t))
+        .collect();
+    let mut out: Vec<Concept> = Vec::new();
+    let mut i = 0;
+    while i < content.len() {
+        if i + 1 < content.len() {
+            let (a, b) = (&content[i], &content[i + 1]);
+            let pair = format!("{a} {b}");
+            let (mut both, mut adjacent) = (0usize, 0usize);
+            for toks in pool {
+                let has_a = toks.iter().any(|x| x == a);
+                let has_b = toks.iter().any(|x| x == b);
+                if has_a && has_b {
+                    both += 1;
+                    if toks.windows(2).any(|w| w[0] == *a && w[1] == *b) {
+                        adjacent += 1;
+                    }
+                }
+            }
+            let is_phrase = SYNONYMS.contains_key(&pair) || (both >= 3 && adjacent * 2 >= both);
+            if is_phrase {
+                out.push(Concept::new(vec![a.clone(), b.clone()]));
+                i += 2;
+                continue;
+            }
+        }
+        out.push(Concept::new(vec![content[i].clone()]));
+        i += 1;
+    }
+    out
+}
+
+/// Concepts a title + abstract must cover to be downloaded: all of them,
+/// or all but one once there are three or more (abstracts are short and
+/// paraphrase). The full-text check after download is stricter.
+fn required(n: usize) -> usize {
+    if n >= 3 {
+        n - 1
+    } else {
+        n
+    }
+}
+
+/// Mentions of the topic per 10,000 words a document must reach: a paper
+/// *about* the topic keeps returning to it; one that cites it in passing
+/// doesn't.
+const MIN_DENSITY_PER_10K: usize = 5;
+
+/// Full-text topicality check for a downloaded document — the final gate.
+/// Every concept must appear, most of them repeatedly, with at least three
+/// mentions per concept overall — dense enough that the topic is what the
+/// document is about, not something it cites in passing.
+pub fn text_on_topic(text: &str, concepts: &[Concept]) -> bool {
+    if concepts.is_empty() {
+        return true;
+    }
+    // Bound the work on long books (~65k words).
+    let sample: String = text.chars().take(400_000).collect();
+    let toks = stems(&sample);
+    let counts: Vec<usize> = concepts.iter().map(|c| c.count_in(&toks)).collect();
+    let total: usize = counts.iter().sum();
+    let words = toks.len().max(1);
+    let repeated = counts.iter().filter(|c| **c >= 2).count();
+    counts.iter().all(|c| *c >= 1)
+        && repeated >= required(concepts.len())
+        && total >= 3 * concepts.len()
+        && total * 10_000 >= MIN_DENSITY_PER_10K * words
+}
+
+/// Title+abstract check for documents with no readable text: every concept.
+pub fn metadata_on_topic(text: &str, concepts: &[Concept]) -> bool {
+    let toks = stems(text);
+    concepts.iter().all(|c| c.count_in(&toks) > 0)
 }
 
 /// Tiny suffix-stripping stemmer (an "S-stemmer" plus a few common
@@ -76,7 +412,7 @@ pub fn stem(tok: &str) -> String {
     t.to_string()
 }
 
-fn stems(text: &str) -> Vec<String> {
+pub fn stems(text: &str) -> Vec<String> {
     tokenize(text).iter().map(|t| stem(t)).collect()
 }
 
@@ -132,6 +468,11 @@ impl QueryModel {
 
     pub fn is_empty(&self) -> bool {
         self.original.is_empty()
+    }
+
+    /// The user's own (stemmed) query terms.
+    pub fn original_terms(&self) -> &[String] {
+        &self.original
     }
 
     fn weighted_terms(&self) -> impl Iterator<Item = (&str, f32, bool)> {
@@ -215,12 +556,19 @@ pub fn rank_candidates(
     // term no candidate contains is almost always a misspelling or a word the
     // literature doesn't use ("machien lerning"); requiring it would reject
     // every result.
-    let n_orig = query
+    let active: Vec<&str> = query
         .original
         .iter()
-        .filter(|t| df.get(t.as_str()).copied().unwrap_or(0.0) > 0.0)
-        .count()
-        .max(1) as f32;
+        .map(String::as_str)
+        .filter(|t| df.get(t).copied().unwrap_or(0.0) > 0.0)
+        .collect();
+    let n_orig = active.len().max(1) as f32;
+    let pool_toks: Vec<Vec<String>> = fields
+        .iter()
+        .map(|f| f.title.iter().chain(&f.abstract_).cloned().collect())
+        .collect();
+    let concepts = concepts_for(query, &pool_toks);
+    let need = required(concepts.len());
     let mut ranked: Vec<RankedDoc> = candidates
         .into_iter()
         .zip(fields)
@@ -280,10 +628,25 @@ pub fn rank_candidates(
             let graph = boosts.get(&merged.doc.url).copied().unwrap_or(1.0);
             let score = relevance * agreement * authority * cites * graph;
 
-            let reject_reason = if matched_orig == 0.0 && matched_exp == 0.0 {
-                Some("Doesn't mention any of your search terms".to_string())
-            } else if n_orig >= 3.0 && coverage < 0.34 {
+            // Relevance gate: the title/abstract must cover the concepts the
+            // user asked about (phrases kept together, synonyms accepted;
+            // generic words like "treatment" or "effects" don't count).
+            // Feedback terms help ranking but never make a document relevant.
+            let toks: Vec<String> = f.title.iter().chain(&f.abstract_).cloned().collect();
+            let covered = concepts.iter().filter(|c| c.count_in(&toks) > 0).count();
+            // A title that doesn't name the topic at all means the abstract
+            // must keep returning to it — otherwise the topic is incidental
+            // (a statistics paper that uses heart-attack data as an example).
+            let title_hits: usize = concepts.iter().map(|c| c.count_in(&f.title)).sum();
+            let abstract_hits: usize = concepts.iter().map(|c| c.count_in(&f.abstract_)).sum();
+            let incidental =
+                !concepts.is_empty() && title_hits == 0 && abstract_hits < 2 * concepts.len();
+            let reject_reason = if matched_orig == 0.0 || (!concepts.is_empty() && covered == 0) {
+                Some("Doesn't mention your search terms".to_string())
+            } else if covered < need {
                 Some("Only matches one part of your search".to_string())
+            } else if incidental {
+                Some("Only mentions your topic in passing".to_string())
             } else {
                 None
             };
@@ -299,14 +662,19 @@ pub fn rank_candidates(
         })
         .collect();
 
-    let top = ranked
+    // Floor relative to a *typical* strong match (median of the top 20), so
+    // one outlier can't reject everything and a weak pool can't keep junk.
+    let mut top_rel: Vec<f32> = ranked
         .iter()
         .filter(|r| r.reject_reason.is_none())
         .map(|r| r.relevance)
-        .fold(0.0f32, f32::max);
-    if top > 0.0 {
+        .collect();
+    top_rel.sort_by(|a, b| b.total_cmp(a));
+    top_rel.truncate(20);
+    let reference = top_rel.get(top_rel.len() / 2).copied().unwrap_or(0.0);
+    if reference > 0.0 {
         for r in &mut ranked {
-            if r.reject_reason.is_none() && r.relevance < top * RELATIVE_FLOOR {
+            if r.reject_reason.is_none() && r.relevance < reference * RELATIVE_FLOOR {
                 r.reject_reason = Some("Much weaker match than the best results".to_string());
             }
         }
@@ -320,6 +688,88 @@ pub fn rank_candidates(
             .then(b.rrf.total_cmp(&a.rrf))
     });
     ranked
+}
+
+/// Optimal-string-alignment distance (Levenshtein + adjacent transposition),
+/// bailing out early once it exceeds `max`.
+fn osa_distance(a: &str, b: &str, max: usize) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.len().abs_diff(b.len()) > max {
+        return max + 1;
+    }
+    let (n, m) = (a.len(), b.len());
+    let mut d = vec![vec![0usize; m + 1]; n + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+    for i in 1..=n {
+        let mut row_min = usize::MAX;
+        for j in 1..=m {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            let mut v = (d[i - 1][j] + 1)
+                .min(d[i][j - 1] + 1)
+                .min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                v = v.min(d[i - 2][j - 2] + 1);
+            }
+            d[i][j] = v;
+            row_min = row_min.min(v);
+        }
+        if row_min > max {
+            return max + 1;
+        }
+    }
+    d[n][m]
+}
+
+/// Model-free spelling correction: a query word that is rare or absent in
+/// the results, with a close (edit distance 1–2) word that is common in
+/// them, is almost certainly a typo for it ("machien" → "machine").
+/// Returns `(typo, correction)` pairs.
+pub fn spell_corrections(keywords: &[String], pool: &[MergedDoc]) -> Vec<(String, String)> {
+    let mut vocab: HashMap<String, usize> = HashMap::new();
+    for m in pool {
+        let text = format!(
+            "{} {}",
+            m.doc.title,
+            m.doc.abstract_.as_deref().unwrap_or("")
+        );
+        let uniq: HashSet<String> = tokenize(&text).into_iter().collect();
+        for t in uniq {
+            if t.chars().count() >= 3 && t.chars().all(char::is_alphabetic) {
+                *vocab.entry(t).or_insert(0) += 1;
+            }
+        }
+    }
+    let n = pool.len().max(1);
+    let mut out = Vec::new();
+    for k in keywords {
+        let k = k.to_lowercase();
+        if k.chars().count() < 4 || !k.chars().all(char::is_alphabetic) {
+            continue;
+        }
+        let k_df = vocab.get(&k).copied().unwrap_or(0);
+        if k_df * 5 >= n {
+            continue; // a fifth of the results use it: not a typo
+        }
+        let max_d = if k.chars().count() <= 5 { 1 } else { 2 };
+        let best = vocab
+            .iter()
+            .filter(|(w, c)| **c >= 3.max(k_df * 4) && **w != k)
+            .filter_map(|(w, c)| {
+                let d = osa_distance(&k, w, max_d);
+                (d <= max_d).then_some((w, *c, d))
+            })
+            .max_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2)));
+        if let Some((w, _, _)) = best {
+            out.push((k.clone(), w.clone()));
+        }
+    }
+    out
 }
 
 static FEEDBACK_STOP: Lazy<HashSet<&'static str>> = Lazy::new(|| {
@@ -765,6 +1215,223 @@ mod tests {
         );
         assert!(ranked[0].reject_reason.is_none());
         assert!(ranked[1].reject_reason.is_some());
+    }
+
+    #[test]
+    fn two_word_queries_need_both_words() {
+        let cands = vec![
+            merged("Heart attack outcomes in older adults", None, "openalex", 1),
+            merged("Detecting cyber attack traffic", None, "arxiv", 1),
+            merged("Heart rate variability", None, "arxiv", 2),
+        ];
+        let ranked = rank_candidates(&q(&["heart", "attack"]), cands, &HashMap::new());
+        let kept: Vec<&str> = ranked
+            .iter()
+            .filter(|r| r.reject_reason.is_none())
+            .map(|r| r.doc.doc.title.as_str())
+            .collect();
+        assert_eq!(kept, vec!["Heart attack outcomes in older adults"]);
+    }
+
+    #[test]
+    fn expansion_terms_alone_never_make_a_doc_relevant() {
+        let qm = q(&["heart", "attack"]).with_expansion(&[("myocardial".into(), 0.5)]);
+        let cands = vec![
+            merged("Heart attack registry", None, "openalex", 1),
+            merged("Myocardial tissue engineering", None, "openalex", 2),
+        ];
+        let ranked = rank_candidates(&qm, cands, &HashMap::new());
+        assert!(ranked
+            .iter()
+            .find(|r| r.doc.doc.title.starts_with("Myocardial"))
+            .unwrap()
+            .reject_reason
+            .is_some());
+    }
+
+    #[test]
+    fn spelling_is_corrected_from_the_results() {
+        let docs: Vec<MergedDoc> = (0..6)
+            .map(|i| {
+                merged(
+                    &format!("Machine learning interpretability study {i}"),
+                    Some("interpretable machine learning models"),
+                    "openalex",
+                    i + 1,
+                )
+            })
+            .collect();
+        let fixes = spell_corrections(
+            &[
+                "machien".into(),
+                "lerning".into(),
+                "interpretability".into(),
+            ],
+            &docs,
+        );
+        assert!(
+            fixes.contains(&("machien".into(), "machine".into())),
+            "{fixes:?}"
+        );
+        assert!(
+            fixes.contains(&("lerning".into(), "learning".into())),
+            "{fixes:?}"
+        );
+        assert!(!fixes.iter().any(|(a, _)| a == "interpretability"));
+    }
+
+    #[test]
+    fn generic_words_never_make_a_doc_relevant() {
+        let cands = vec![
+            merged(
+                "Heart attack treatment outcomes in older adults",
+                None,
+                "openalex",
+                1,
+            ),
+            merged(
+                "Treatment outcomes of insulin pens in diabetes",
+                None,
+                "openalex",
+                2,
+            ),
+            merged("Heart attack registry", None, "openalex", 3),
+        ];
+        let ranked = rank_candidates(
+            &q(&["heart", "attack", "treatment", "outcomes"]),
+            cands,
+            &HashMap::new(),
+        );
+        let kept: Vec<&str> = ranked
+            .iter()
+            .filter(|r| r.reject_reason.is_none())
+            .map(|r| r.doc.doc.title.as_str())
+            .collect();
+        assert!(kept.contains(&"Heart attack treatment outcomes in older adults"));
+        assert!(kept.contains(&"Heart attack registry"));
+        assert!(!kept.iter().any(|t| t.contains("insulin")), "{kept:?}");
+    }
+
+    #[test]
+    fn listing_allows_one_missing_concept_full_text_does_not() {
+        let qm =
+            q(&["sleep", "memory", "teenagers"]).with_expansion(&[("adolescents".into(), 0.5)]);
+        let cands = vec![
+            merged(
+                "Sleep and memory consolidation in adolescents",
+                None,
+                "openalex",
+                1,
+            ),
+            merged("Sleep and memory in mice", None, "openalex", 2),
+            merged("Teenagers and sleep", None, "openalex", 3),
+            merged("Memory and sleep in teenagers", None, "openalex", 5),
+            merged("Sleep memory teenagers", None, "openalex", 4),
+        ];
+        let ranked = rank_candidates(&qm, cands, &HashMap::new());
+        let kept: Vec<&str> = ranked
+            .iter()
+            .filter(|r| r.reject_reason.is_none())
+            .map(|r| r.doc.doc.title.as_str())
+            .collect();
+        assert!(kept.contains(&"Sleep and memory consolidation in adolescents"));
+        assert!(kept.contains(&"Sleep memory teenagers"));
+        // The listing check lets "mice" through (2 of 3 concepts); the
+        // full-text check is what rejects it.
+        let pool: Vec<Vec<String>> = ["sleep memory teenager", "sleep memory adolescent"]
+            .iter()
+            .map(|t| stems(t))
+            .collect();
+        let c = concepts_for(&qm, &pool);
+        assert_eq!(c.len(), 3, "{c:?}");
+        let mice =
+            "Sleep and memory in mice. Mice sleep; memory in mice improves after sleep.".repeat(5);
+        assert!(!text_on_topic(&mice, &c));
+        let teens = "Sleep and memory in adolescents. Teenagers who sleep more show better memory."
+            .repeat(5);
+        assert!(text_on_topic(&teens, &c));
+    }
+
+    #[test]
+    fn full_text_topicality() {
+        let qm = q(&["heart", "attack"]);
+        let pool = vec![
+            stems("heart attack outcomes"),
+            stems("after a heart attack"),
+            stems("heart attack registry"),
+        ];
+        let c = concepts_for(&qm, &pool);
+        assert_eq!(c.len(), 1, "heart attack is one phrase: {c:?}");
+        assert!(text_on_topic(
+            "Heart attack care. After a heart attack, patients… heart attack recurrence.",
+            &c
+        ));
+        assert!(text_on_topic(
+            "Acute myocardial infarction: outcomes after myocardial infarction and recurrent myocardial infarction.",
+            &c
+        ));
+        assert!(!text_on_topic(
+            "A cyber attack on the heart of the grid. The attack vector and attack surface. The heart.",
+            &c
+        ));
+        // Mentioned in passing inside a long unrelated paper: not on topic.
+        let passing = format!(
+            "{} We use heart attack data once. A heart attack example. {}",
+            "Brownian motion hitting times are studied. ".repeat(400),
+            "More stochastic calculus. ".repeat(400)
+        );
+        assert!(!text_on_topic(&passing, &c));
+        assert!(metadata_on_topic("Heart attack in women", &c));
+        assert!(!metadata_on_topic("Heart health", &c));
+    }
+
+    #[test]
+    fn phrases_are_detected_from_the_pool_not_assumed() {
+        let qm = q(&["roman", "empire", "economy"]);
+        let pool = vec![
+            stems("the economy of the roman empire"),
+            stems("roman empire trade"),
+            stems("roman empire coins and the economy"),
+            stems("late roman empire"),
+        ];
+        let labels: Vec<String> = concepts_for(&qm, &pool)
+            .into_iter()
+            .map(|c| c.label)
+            .collect();
+        assert_eq!(labels, vec!["roman empire", "economy"]);
+    }
+
+    #[test]
+    fn incidental_mentions_are_rejected() {
+        let cands = vec![
+            merged(
+                "Parameter inference for perturbed Brownian motion",
+                Some("We estimate hitting times and illustrate the method on heart attack data."),
+                "arxiv",
+                1,
+            ),
+            merged(
+                "Outcomes after heart attack",
+                Some("A registry study."),
+                "openalex",
+                1,
+            ),
+            merged(
+                "Recovery in the first year",
+                Some("Patients recovering from a heart attack; heart attack recurrence and heart attack care."),
+                "openalex",
+                2,
+            ),
+        ];
+        let ranked = rank_candidates(&q(&["heart", "attack"]), cands, &HashMap::new());
+        let kept: Vec<&str> = ranked
+            .iter()
+            .filter(|r| r.reject_reason.is_none())
+            .map(|r| r.doc.doc.title.as_str())
+            .collect();
+        assert!(kept.contains(&"Outcomes after heart attack"));
+        assert!(kept.contains(&"Recovery in the first year"));
+        assert!(!kept.iter().any(|t| t.contains("Brownian")), "{kept:?}");
     }
 
     #[test]

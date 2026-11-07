@@ -51,6 +51,7 @@ struct Stats {
     with_text: usize,
     bytes: u64,
     reasons: HashMap<String, usize>,
+    titles: Vec<String>,
     done: bool,
 }
 
@@ -63,6 +64,7 @@ impl Sink for Rec {
             "df:found" => s.found = p["total"].as_u64().unwrap_or(0) as usize,
             "df:download_done" => {
                 s.saved += 1;
+                s.titles.push(p["title"].as_str().unwrap_or("").to_string());
                 if s.first_saved.is_none() {
                     s.first_saved = s.t0.map(|t| t.elapsed());
                 }
@@ -81,6 +83,13 @@ impl Sink for Rec {
                     .collect::<String>();
                 *s.reasons.entry(r).or_insert(0) += 1;
             }
+            "df:candidate" => {
+                let key = match p["reject_reason"].as_str() {
+                    Some(r) => format!("(rejected) {r}"),
+                    None => "(kept)".into(),
+                };
+                *s.reasons.entry(key).or_insert(0) += 1;
+            }
             "df:download_skipped" => {
                 *s.reasons.entry("(skipped quietly)".into()).or_insert(0) += 1;
             }
@@ -92,6 +101,13 @@ impl Sink for Rec {
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let queries: Vec<String> = if args.is_empty() {
         SUITE.iter().map(|s| s.to_string()).collect()
@@ -132,9 +148,13 @@ async fn main() {
             s.bytes as f64 / 1e6,
             t0.elapsed().as_secs_f32()
         );
+        if let Ok(dir) = std::env::var("BENCH_TITLES") {
+            let f = format!("{dir}/{}.txt", q.replace(' ', "_"));
+            let _ = std::fs::write(&f, s.titles.join("\n"));
+        }
         let mut reasons: Vec<_> = s.reasons.iter().collect();
         reasons.sort_by(|a, b| b.1.cmp(a.1));
-        for (r, n) in reasons.iter().take(4) {
+        for (r, n) in reasons.iter().take(8) {
             eprintln!("    {n:>3} × {r}");
         }
     }

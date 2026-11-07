@@ -63,8 +63,16 @@ built-in MCP server (`src-tauri/src/mcp.rs`).
     feedback wave 2 + bounded citation graph → single SQLite writer thread.
     Budgets are internal constants (`MAX_CANDIDATES`, `MAX_DOWNLOADS`, …); there
     is no user-facing depth.
-  - `ranking` — BM25F + concept coverage + phrase bonus + RRF agreement +
-    authority + citations; `expansion_terms` / `feedback_subqueries` (RM3).
+  - `ranking` — BM25F + RRF agreement + authority + citations for *order*;
+    relevance is a separate gate built on **concepts** (`concepts_for`):
+    content words (generic ones like "treatment" excluded), adjacent pairs
+    merged into phrases when the pool uses them side by side, plus the
+    `SYNONYM_GROUPS` table. Listing gate: title/abstract cover all concepts
+    (all but one for 3+), and a title that names none needs repeated abstract
+    mentions. Full-text gate after extraction (`text_on_topic`): every concept
+    present, most repeated, ≥5 mentions/10k words. `spell_corrections` fixes
+    typos from the pool vocabulary; `expansion_terms` / `feedback_subqueries`
+    (RM3) only add ranking signal, never relevance.
   - `dedup` — lossless merge (URLs become fallbacks; DOI/abstract/metadata
     filled in).
   - `downloader` — route chain (all URLs → Unpaywall OA locations), landing
