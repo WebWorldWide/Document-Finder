@@ -92,7 +92,7 @@ jobs:
       matrix:
         platform:
           - label: macOS (Apple Silicon)
-            os: macos-14
+            os: macos-15
             args: --target aarch64-apple-darwin
             rust_target: aarch64-apple-darwin
           # NOTE: no Intel (x86_64-apple-darwin) leg — GitHub's macos-13 Intel
