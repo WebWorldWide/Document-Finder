@@ -829,7 +829,7 @@ pub fn install_mcp_claude_desktop() -> Result<String, String> {
     )
     .map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-    Ok("Added. Restart Claude Desktop to connect.".into())
+    Ok("Added — restart Claude Desktop.".into())
 }
 
 #[derive(Debug, Deserialize)]

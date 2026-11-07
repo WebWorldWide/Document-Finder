@@ -96,7 +96,7 @@ export async function copyLibraryForAi(folder: string, ids?: number[]) {
     const text = await api.copyForAi(folder, ids ?? null, 150_000);
     await navigator.clipboard.writeText(text);
     const tokens = Math.round(text.length / 4 / 1000);
-    uiStore.showToast(`Copied ~${tokens}k tokens — paste into any AI chat`);
+    uiStore.showToast(`Copied (~${tokens}k tokens)`);
   } catch (e) {
     uiStore.showToast(`Couldn't copy: ${String(e)}`);
   }
@@ -114,7 +114,7 @@ function SourcePicker() {
           </For>
         </span>
         <span>
-          Searching <b class="num">{selected().length}</b> of {PICKABLE.length} open-access sources
+          <b class="num">{selected().length}</b> of {PICKABLE.length} sources
         </span>
         <button class="df-link-btn" aria-expanded={open()} onClick={() => setOpen(!open())}>
           {open() ? "Done" : "Choose"}
@@ -175,7 +175,7 @@ function QueryBox() {
       <textarea
         id="df-q"
         rows={2}
-        placeholder="Describe a topic in plain language — e.g. “effects of sleep on memory in teenagers”"
+        placeholder="e.g. effects of sleep on memory in teenagers"
         value={query()}
         onInput={(e) => setQuery(e.currentTarget.value)}
         onKeyDown={(e) => {
@@ -189,9 +189,7 @@ function QueryBox() {
       />
       <div class="df-query-bar">
         <span class="df-muted">
-          {settings.selectedSources.length === 0
-            ? "Choose at least one source below."
-            : "Press Enter to search. We’ll find, download and read the best open-access matches."}
+          {settings.selectedSources.length === 0 ? "Choose a source below." : ""}
         </span>
         <button class="df-btn df-btn-primary df-btn-lg" type="submit" disabled={!canRun()}>
           Find documents <ArrowRight size={16} aria-hidden="true" />
@@ -222,18 +220,17 @@ function statusLine(): string {
   const elapsed = (s.endedAt || Date.now()) - s.startedAt;
   switch (s.status) {
     case "running":
-      if (s.retry) return `Retrying ${s.planned} documents…`;
-      if (s.done === 0 && s.inFlight.length === 0)
-        return `Searching ${settings.selectedSources.length} sources…`;
-      return `Saved ${s.done} of ${Math.max(s.planned, s.done)} so far`;
+      if (s.retry) return `Retrying ${s.planned}…`;
+      if (s.done === 0 && s.inFlight.length === 0) return "Searching…";
+      return `${s.done} of ${Math.max(s.planned, s.done)} saved`;
     case "stopping":
-      return "Stopping — finishing the files already in progress…";
+      return "Stopping…";
     case "done":
-      return `Finished in ${formatDuration(elapsed)} — ${s.done} documents saved and ready to read.`;
+      return `${s.done} documents · ${formatDuration(elapsed)}`;
     case "cancelled":
-      return `Stopped — ${s.done} documents saved.`;
+      return `Stopped · ${s.done} documents`;
     case "error":
-      return "The search couldn’t run.";
+      return "";
     default:
       return "";
   }
@@ -318,8 +315,8 @@ function RunView() {
           figure={`${s.found}`}
           sub={
             s.retry
-              ? "skipped (retry)"
-              : `candidates from ${Object.keys(s.sources).length || settings.selectedSources.length} sources`
+              ? "retry"
+              : `from ${Object.keys(s.sources).length || settings.selectedSources.length} sources`
           }
         />
         <Stage
@@ -332,7 +329,7 @@ function RunView() {
           id="read"
           name="Read"
           figure={`${s.saved.filter((d) => d.textPath).length}`}
-          sub="turned into clean, searchable text"
+          sub="as text"
         />
       </div>
       <div
@@ -390,15 +387,10 @@ function RunView() {
         <Note tone="bad">{s.error || "Something went wrong."}</Note>
       </Show>
       <Show when={ended() && s.done === 0 && s.found === 0}>
-        <Note tone="warn">
-          Nothing matched. Try fewer or more general words, or check your internet connection.
-        </Note>
+        <Note tone="warn">Nothing found. Try broader words.</Note>
       </Show>
       <Show when={ended() && s.done === 0 && s.found > 0}>
-        <Note tone="warn">
-          We found {s.found} candidates but none could be downloaded as open access. Try a broader
-          search or add the Web source.
-        </Note>
+        <Note tone="warn">Nothing freely downloadable. Try broader words.</Note>
       </Show>
 
       <Show when={s.inFlight.length > 0}>
@@ -501,12 +493,8 @@ function RunView() {
           <details class="df-details">
             <summary>
               <ChevronRight size={14} aria-hidden="true" />
-              {s.offTopic} off-topic results skipped
+              {s.offTopic} off-topic skipped
             </summary>
-            <div class="df-details-body df-muted">
-              These matched too little of your search to be worth downloading. Make your search more
-              specific to tighten results, or more general to widen them.
-            </div>
           </details>
         </Show>
         <details class="df-details">
@@ -541,8 +529,7 @@ function RunView() {
               <Show when={s.failures.length > 0}>
                 <dt>Replaced</dt>
                 <dd>
-                  {s.failures.length} results weren’t freely downloadable and were swapped for the
-                  next-best matches.
+                  {s.failures.length} unavailable, swapped for the next best.
                   <For each={failureGroups().slice(0, 3)}>
                     {([reason, n]) => (
                       <div class="df-muted">
@@ -594,14 +581,9 @@ export default function Discover() {
         when={hasRun()}
         fallback={
           <div class="df-hero">
-            <div class="df-label">Discover</div>
-            <h1 class="df-display" style={{ "margin-top": "14px" }}>
+            <h1 class="df-display" style={{ "margin-bottom": "var(--sp-6)" }}>
               What are you <em>researching?</em>
             </h1>
-            <p class="df-hero-sub df-read">
-              Ask in plain language. Document Finder searches open-access libraries in parallel,
-              downloads the best matches, and turns them into clean text your AI can read.
-            </p>
             <QueryBox />
             <div class="df-examples">
               <span class="df-label">Try</span>

@@ -23,12 +23,12 @@ async function copy(text: string, what: string) {
   }
 }
 
-function Setting(props: { title: string; desc: string; children: unknown }) {
+function Setting(props: { title: string; desc?: string; children: unknown }) {
   return (
     <section class="df-setting">
       <div>
         <h3>{props.title}</h3>
-        <p>{props.desc}</p>
+        {props.desc ? <p>{props.desc}</p> : null}
       </div>
       <div class="df-setting-body">{props.children as never}</div>
     </section>
@@ -51,10 +51,7 @@ function ConnectAi() {
     }
   };
   return (
-    <Setting
-      title="Connect your AI"
-      desc="Let Claude or any app that supports the Model Context Protocol (MCP) search and read your libraries directly. Nothing to download — your AI does the thinking, Document Finder supplies clean, cited sources."
-    >
+    <Setting title="Connect your AI" desc="Let Claude and other MCP apps read your libraries.">
       <Show when={info()} fallback={<p class="df-muted">Loading…</p>}>
         {(i) => (
           <>
@@ -63,8 +60,7 @@ function ConnectAi() {
                 when={!i().claude_desktop_installed}
                 fallback={
                   <span class="df-row" style={{ color: "var(--ok)" }}>
-                    <Check size={15} aria-hidden="true" /> Connected to Claude Desktop — restart
-                    Claude if you just added it.
+                    <Check size={15} aria-hidden="true" /> Connected to Claude Desktop
                   </span>
                 }
               >
@@ -146,8 +142,8 @@ export default function SettingsView() {
     const ok = await uiStore.confirm({
       title: all ? "Erase everything?" : "Erase app data?",
       body: all
-        ? "This deletes Document Finder’s settings, caches and logs AND every downloaded library. It can’t be undone."
-        : "This deletes Document Finder’s settings, caches and logs. Your downloaded libraries are kept.",
+        ? "Settings, caches, logs and every library. This can’t be undone."
+        : "Settings, caches and logs. Libraries are kept.",
       confirmLabel: all ? "Erase everything" : "Erase app data",
       danger: true,
     });
@@ -179,14 +175,13 @@ export default function SettingsView() {
     <div class="df-page">
       <header class="df-page-head">
         <div>
-          <div class="df-label">Settings</div>
           <h1 class="df-title" style={{ "font-size": "44px" }}>
-            Preferences
+            Settings
           </h1>
         </div>
       </header>
 
-      <Setting title="Appearance" desc="Follow your system, or pick light or dark.">
+      <Setting title="Appearance">
         <div class="df-seg" role="group" aria-label="Appearance">
           <For
             each={
@@ -206,10 +201,7 @@ export default function SettingsView() {
         </div>
       </Setting>
 
-      <Setting
-        title="Library folder"
-        desc="Where searches are saved. Each search gets its own folder with the original files, clean Markdown, and a searchable index."
-      >
+      <Setting title="Library folder" desc="Where searches are saved.">
         <div class="df-code">{settings.libraryRoot || "—"}</div>
         <div class="df-row">
           <button class="df-btn" onClick={() => void browse()} disabled={runStore.live}>
@@ -234,10 +226,7 @@ export default function SettingsView() {
 
       <ConnectAi />
 
-      <Setting
-        title="Diagnostics"
-        desc="A private log of each search (sources, downloads, errors). Useful when reporting a problem."
-      >
+      <Setting title="Diagnostics" desc="For bug reports.">
         <Show when={log()} fallback={<p class="df-muted">No log yet.</p>}>
           {(l) => (
             <>
@@ -249,11 +238,7 @@ export default function SettingsView() {
                 <button
                   class="df-btn df-btn-quiet"
                   onClick={() =>
-                    void api
-                      .revealInFinder(l().path)
-                      .catch(() =>
-                        uiStore.showToast("The log file doesn’t exist yet — run a search first."),
-                      )
+                    void api.revealInFinder(l().path).catch(() => uiStore.showToast("No log yet."))
                   }
                 >
                   <FolderOpen size={14} aria-hidden="true" /> Show in folder
@@ -276,17 +261,14 @@ export default function SettingsView() {
             <span>
               Safe rendering mode
               <span class="df-muted" style={{ display: "block", "font-size": "12px" }}>
-                Fixes a blank window on some Linux graphics drivers. Applies after restart.
+                For blank windows. Needs a restart.
               </span>
             </span>
           </label>
         </Show>
       </Setting>
 
-      <Setting
-        title="Erase data"
-        desc="Remove everything Document Finder stores on this computer — for a clean uninstall."
-      >
+      <Setting title="Erase data" desc="For a clean uninstall.">
         <label class="df-check">
           <input
             type="checkbox"
@@ -326,9 +308,6 @@ export default function SettingsView() {
             </div>
           </div>
         </div>
-        <p class="df-muted" style={{ "align-self": "center" }}>
-          Open-access sources only. Searches and documents stay on your computer.
-        </p>
       </section>
     </div>
   );

@@ -7,7 +7,7 @@ import { SOURCE_LABELS } from "./utils";
  * strings now; this is a belt-and-suspenders layer so the UI always reads well.
  */
 export function humanizeDownloadError(raw: string | undefined | null): string {
-  if (!raw) return "The download didn't complete.";
+  if (!raw) return "Didn’t download";
   const r = raw.toLowerCase();
   // The offline pre-check writes a deliberately friendly, offline-specific
   // message; pass it through verbatim instead of collapsing it into the generic
@@ -18,25 +18,21 @@ export function humanizeDownloadError(raw: string | undefined | null): string {
   // any stray 3-digit number — otherwise a message like "only 500 bytes — likely
   // an error page" gets misread as a 5xx server problem.
   const code = raw.match(/\bHTTP\s*(\d{3})\b/i)?.[1];
-  if (code === "400")
-    return "The download link was rejected by the server — it may have expired or need a login. Skipped.";
-  if (code === "401" || code === "403")
-    return "This source blocked the download — it may require a subscription or sign-in.";
-  if (code === "404" || code === "410") return "The document is no longer available at this link.";
-  if (code === "429") return "The source was busy and rate-limited us — we backed off and retried.";
-  if (code && code.startsWith("5")) return "The source's server had a temporary problem.";
+  if (code === "400") return "Link rejected";
+  if (code === "401" || code === "403") return "Needs a subscription";
+  if (code === "404" || code === "410") return "No longer available";
+  if (code === "429") return "Source busy";
+  if (code && code.startsWith("5")) return "Server error";
   if (r.includes("landing page") || r.includes("text/html") || r.includes("not a document"))
-    return "This link opened a web page, not a downloadable file — skipped.";
-  if (r.includes("too large")) return "The file was larger than the download size limit.";
-  if (r.includes("too small") || r.includes("empty response"))
-    return "The server returned an empty or tiny response — likely an error page.";
+    return "No file at link";
+  if (r.includes("too large")) return "Too large";
+  if (r.includes("too small") || r.includes("empty response")) return "Empty response";
   if (r.includes("valid pdf") || r.includes("valid epub") || r.includes("signature"))
-    return "The downloaded file was corrupted or wasn't really a document.";
-  if (r.includes("no readable text") || r.includes("text is empty"))
-    return "Downloaded, but no readable text could be pulled out (it may be a scanned image).";
-  if (r.includes("timed out") || r.includes("timeout")) return "The download timed out.";
+    return "Not a document";
+  if (r.includes("no readable text") || r.includes("text is empty")) return "No readable text";
+  if (r.includes("timed out") || r.includes("timeout")) return "Timed out";
   if (r.includes("network") || r.includes("dns") || r.includes("connect") || r.includes("reach"))
-    return "Couldn't reach the server — check your internet connection.";
+    return "Couldn’t connect";
   if (r.includes("cancel")) return "Cancelled.";
   return raw;
 }
@@ -46,17 +42,17 @@ export function humanizeSourceKind(kind: string, source?: string): string {
   const name = source ? (SOURCE_LABELS[source] ?? source) : "This source";
   switch (kind) {
     case "rate_limit":
-      return `${name} is rate-limiting us right now — we'll back off and keep going.`;
+      return `${name}: busy`;
     case "forbidden":
-      return `${name} blocked the request (it may need a sign-in or be region-locked).`;
+      return `${name}: blocked`;
     case "server_error":
-      return `${name} had a temporary server error.`;
+      return `${name}: server error`;
     case "timeout":
-      return `${name} took too long to respond.`;
+      return `${name}: timed out`;
     case "parse_error":
-      return `Couldn't read ${name}'s response.`;
+      return `${name}: unreadable`;
     default:
-      return `${name} reported a problem.`;
+      return `${name}: error`;
   }
 }
 

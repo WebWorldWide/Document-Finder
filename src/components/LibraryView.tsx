@@ -383,7 +383,7 @@ function LibraryDetail(props: { lib: LibraryInfo; onDeleted: () => void }) {
             <input
               class="df-input"
               type="search"
-              placeholder="Search titles, authors and full text…"
+              placeholder="Search"
               aria-label="Search this library"
               value={filter()}
               onInput={(e) => setFilter(e.currentTarget.value)}
@@ -526,7 +526,6 @@ export default function LibraryView() {
             <h1 class="df-title" style={{ "font-size": "44px" }}>
               Your library is <em>empty</em>
             </h1>
-            <p>Every search becomes a library of clean, searchable documents.</p>
             <button
               class="df-btn df-btn-primary df-btn-lg"
               onClick={() => uiStore.setView("discover")}
@@ -547,7 +546,7 @@ export default function LibraryView() {
             <input
               class="df-input"
               type="search"
-              placeholder="Search every library…"
+              placeholder="Search all"
               aria-label="Search the full text of every library"
               value={globalQ()}
               onInput={(e) => setGlobalQ(e.currentTarget.value)}
@@ -607,7 +606,7 @@ export default function LibraryView() {
           keyed
           fallback={
             <div class="df-page">
-              <p class="df-muted">That library is no longer available.</p>
+              <p class="df-muted">Library not found.</p>
             </div>
           }
         >
