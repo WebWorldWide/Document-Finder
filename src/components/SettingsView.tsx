@@ -217,7 +217,12 @@ export default function SettingsView() {
           </button>
           <button
             class="df-btn df-btn-quiet"
-            onClick={() => settings.libraryRoot && void api.revealInFinder(settings.libraryRoot)}
+            onClick={() =>
+              settings.libraryRoot &&
+              void api
+                .revealInFinder(settings.libraryRoot)
+                .catch((e) => uiStore.showToast(String(e)))
+            }
           >
             <FolderOpen size={14} aria-hidden="true" /> Show
           </button>
@@ -243,7 +248,13 @@ export default function SettingsView() {
                 </span>
                 <button
                   class="df-btn df-btn-quiet"
-                  onClick={() => void api.revealInFinder(l().path)}
+                  onClick={() =>
+                    void api
+                      .revealInFinder(l().path)
+                      .catch(() =>
+                        uiStore.showToast("The log file doesn’t exist yet — run a search first."),
+                      )
+                  }
                 >
                   <FolderOpen size={14} aria-hidden="true" /> Show in folder
                 </button>

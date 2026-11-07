@@ -71,6 +71,54 @@ static STOPWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "so",
         "up",
         "am",
+        // Question and auxiliary words from natural-language questions ("how
+        // does X affect Y?"): never a topic, and as search terms they only
+        // narrow the sources' results.
+        "does",
+        "did",
+        "was",
+        "were",
+        "has",
+        "have",
+        "had",
+        "been",
+        "being",
+        "could",
+        "would",
+        "should",
+        "will",
+        "shall",
+        "may",
+        "might",
+        "must",
+        "what",
+        "why",
+        "when",
+        "where",
+        "who",
+        "whom",
+        "whose",
+        "there",
+        "their",
+        "they",
+        "them",
+        "its",
+        "our",
+        "your",
+        "from",
+        "into",
+        "than",
+        "then",
+        "also",
+        "very",
+        "more",
+        "most",
+        "between",
+        "over",
+        "under",
+        "via",
+        "using",
+        "use",
     ]
     .into_iter()
     .collect()
@@ -277,6 +325,15 @@ pub fn safe_folder(query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn question_words_are_not_keywords() {
+        assert_eq!(
+            parse_query("how does microplastic pollution affect ocean fish"),
+            vec!["microplastic", "pollution", "affect", "ocean", "fish"]
+        );
+        assert_eq!(parse_query("what is CRISPR"), vec!["crispr"]);
+    }
 
     #[test]
     fn expand_canonical() {

@@ -34,6 +34,13 @@ import { uiStore } from "@/stores/ui";
 
 type Sort = "best" | "title" | "year";
 
+const openFile = (path: string) =>
+  void api.openPath(path).catch((e) => uiStore.showToast(`Couldn’t open the file: ${String(e)}`));
+const reveal = (path: string) =>
+  void api
+    .revealInFinder(path)
+    .catch((e) => uiStore.showToast(`Couldn’t show the folder: ${String(e)}`));
+
 function citation(d: LibraryDoc): string {
   const a = d.authors.slice(0, 3).join(", ") + (d.authors.length > 3 ? " et al." : "");
   return [
@@ -114,12 +121,16 @@ function Preview(props: { markdown: string }) {
 function Inspector(props: { doc: LibraryDoc; folder: string; onClose: () => void }) {
   const [md] = createResource(
     () => props.doc.md_path ?? null,
-    (p) => (p ? api.readDocMarkdown(p) : Promise.resolve("")),
+    (p) => (p ? api.readDocMarkdown(p).catch(() => "") : Promise.resolve("")),
   );
   const d = () => props.doc;
   const copyCitation = async () => {
-    await navigator.clipboard.writeText(citation(d()));
-    uiStore.showToast("Citation copied");
+    try {
+      await navigator.clipboard.writeText(citation(d()));
+      uiStore.showToast("Citation copied");
+    } catch {
+      uiStore.showToast("Couldn’t access the clipboard");
+    }
   };
   return (
     <aside class="df-inspector" aria-label="Document details">
@@ -177,7 +188,7 @@ function Inspector(props: { doc: LibraryDoc; folder: string; onClose: () => void
         </Show>
       </dl>
       <div class="df-inspector-actions">
-        <button class="df-btn df-btn-primary" onClick={() => void api.openPath(d().path)}>
+        <button class="df-btn df-btn-primary" onClick={() => openFile(d().path)}>
           <FileText size={14} aria-hidden="true" /> Open
         </button>
         <button class="df-btn" onClick={() => void copyLibraryForAi(props.folder, [d().id])}>
@@ -197,7 +208,7 @@ function Inspector(props: { doc: LibraryDoc; folder: string; onClose: () => void
           class="df-btn df-btn-quiet df-btn-icon"
           aria-label="Show in folder"
           title="Show in folder"
-          onClick={() => void api.revealInFinder(d().path)}
+          onClick={() => reveal(d().path)}
         >
           <FolderOpen size={15} />
         </button>
@@ -223,6 +234,8 @@ function LibraryDetail(props: { lib: LibraryInfo; onDeleted: () => void }) {
     () => props.lib.path,
     (p) => api.listLibraryDocs(p),
   );
+  /** Doc list, never throwing (a failed read shows the error message). */
+  const docList = (): LibraryDoc[] => (docs.error ? [] : (docs.latest ?? []));
   const [filter, setFilter] = createSignal("");
   const [sort, setSort] = createSignal<Sort>("best");
   const [selected, setSelected] = createSignal<number | null>(null);
@@ -241,9 +254,11 @@ function LibraryDetail(props: { lib: LibraryInfo; onDeleted: () => void }) {
   );
 
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let seq = 0;
   createEffect(
     on(filter, (q) => {
       clearTimeout(timer);
+      const mine = ++seq;
       if (q.trim().length < 2) {
         setHits([]);
         return;
@@ -251,8 +266,8 @@ function LibraryDetail(props: { lib: LibraryInfo; onDeleted: () => void }) {
       timer = setTimeout(() => {
         api
           .searchLibrary(q, props.lib.path, 30)
-          .then(setHits)
-          .catch(() => setHits([]));
+          .then((h) => mine === seq && setHits(h))
+          .catch(() => mine === seq && setHits([]));
       }, 220);
     }),
   );
@@ -260,7 +275,7 @@ function LibraryDetail(props: { lib: LibraryInfo; onDeleted: () => void }) {
 
   const visible = createMemo(() => {
     const q = filter().trim().toLowerCase();
-    let list = (docs() ?? []).filter(
+    let list = docList().filter(
       (d) =>
         !q ||
         d.title.toLowerCase().includes(q) ||
@@ -271,7 +286,7 @@ function LibraryDetail(props: { lib: LibraryInfo; onDeleted: () => void }) {
       list = [...list].sort((a, b) => (b.year ?? "").localeCompare(a.year ?? ""));
     return list;
   });
-  const selectedDoc = () => (docs() ?? []).find((d) => d.id === selected()) ?? null;
+  const selectedDoc = () => docList().find((d) => d.id === selected()) ?? null;
   const ts = () => libraryTimestamp(props.lib.name);
 
   const onListKey = (e: KeyboardEvent) => {
@@ -283,8 +298,11 @@ function LibraryDetail(props: { lib: LibraryInfo; onDeleted: () => void }) {
       const next = e.key === "ArrowDown" ? Math.min(list.length - 1, i + 1) : Math.max(0, i - 1);
       setSelected(list[next].id);
       document.getElementById(`df-doc-${list[next].id}`)?.focus();
-    } else if (e.key === "Enter" && i >= 0) {
-      void api.openPath(list[i].path);
+    } else if (e.key === "Enter") {
+      // Open the row that has focus (not just the selected one).
+      const id = Number((e.target as HTMLElement).id?.replace("df-doc-", ""));
+      const doc = list.find((d) => d.id === id) ?? list[i];
+      if (doc) openFile(doc.path);
     }
   };
 
@@ -344,7 +362,7 @@ function LibraryDetail(props: { lib: LibraryInfo; onDeleted: () => void }) {
               class="df-btn df-btn-quiet df-btn-icon"
               aria-label="Show in folder"
               title="Show in folder"
-              onClick={() => void api.revealInFinder(props.lib.path)}
+              onClick={() => reveal(props.lib.path)}
             >
               <FolderOpen size={15} />
             </button>
@@ -432,7 +450,7 @@ function LibraryDetail(props: { lib: LibraryInfo; onDeleted: () => void }) {
                       class="df-doc-row"
                       aria-selected={selected() === d.id}
                       onClick={() => setSelected(d.id)}
-                      onDblClick={() => void api.openPath(d.path)}
+                      onDblClick={() => openFile(d.path)}
                     >
                       <div style={{ "min-width": 0 }}>
                         <div class="df-slip-title">{d.title}</div>
@@ -464,8 +482,8 @@ function LibraryDetail(props: { lib: LibraryInfo; onDeleted: () => void }) {
           </Show>
         </div>
       </div>
-      <Show when={selectedDoc()}>
-        {(d) => <Inspector doc={d()} folder={props.lib.path} onClose={() => setSelected(null)} />}
+      <Show when={selectedDoc()} keyed>
+        {(d) => <Inspector doc={d} folder={props.lib.path} onClose={() => setSelected(null)} />}
       </Show>
     </div>
   );
@@ -483,15 +501,17 @@ export default function LibraryView() {
   void refreshLibraries();
 
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let seq = 0;
   createEffect(
     on(globalQ, (q) => {
       clearTimeout(timer);
+      const mine = ++seq;
       if (q.trim().length < 2) return setGlobalHits([]);
       timer = setTimeout(() => {
         api
           .searchLibrary(q, null, 40)
-          .then(setGlobalHits)
-          .catch(() => setGlobalHits([]));
+          .then((h) => mine === seq && setGlobalHits(h))
+          .catch(() => mine === seq && setGlobalHits([]));
       }, 250);
     }),
   );
@@ -583,7 +603,7 @@ export default function LibraryView() {
           </Show>
         </div>
         <Show
-          when={current()}
+          when={current()?.path}
           keyed
           fallback={
             <div class="df-page">
@@ -591,9 +611,9 @@ export default function LibraryView() {
             </div>
           }
         >
-          {(lib) => (
+          {(path) => (
             <LibraryDetail
-              lib={lib}
+              lib={libs().find((l) => l.path === path)!}
               onDeleted={() => {
                 uiStore.showLibrary(null);
                 void refreshLibraries();

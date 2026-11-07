@@ -84,13 +84,20 @@ fn main_root(doc: &Html) -> Option<ElementRef<'_>> {
             }
         }
     }
-    // Fallback: the div/section with the most paragraph text.
-    let p_sel = Selector::parse("p").ok()?;
+    // Fallback: the div/section whose *direct* paragraph children hold the
+    // most text. Direct children only, so deeply nested markup stays linear
+    // (counting every descendant paragraph per container is quadratic).
     let c_sel = Selector::parse("div, section, td").ok()?;
     let best = doc
         .select(&c_sel)
+        .take(20_000)
         .map(|e| {
-            let p: usize = e.select(&p_sel).map(text_len).sum();
+            let p: usize = e
+                .children()
+                .filter_map(ElementRef::wrap)
+                .filter(|c| c.value().name() == "p")
+                .map(text_len)
+                .sum();
             (e, p)
         })
         .max_by_key(|(_, p)| *p);
@@ -108,6 +115,7 @@ struct Writer {
     out: String,
     line: String,
     list_depth: usize,
+    depth: usize,
 }
 
 impl Writer {
@@ -138,7 +146,19 @@ impl Writer {
     }
 }
 
+/// Deepest DOM nesting we descend into. Untrusted HTML can nest thousands of
+/// levels, and a stack overflow can't be caught by `catch_unwind`.
+const MAX_DEPTH: usize = 200;
+
 fn walk(node: NodeRef<'_, Node>, w: &mut Writer) {
+    w.depth += 1;
+    if w.depth <= MAX_DEPTH {
+        walk_inner(node, w);
+    }
+    w.depth -= 1;
+}
+
+fn walk_inner(node: NodeRef<'_, Node>, w: &mut Writer) {
     match node.value() {
         Node::Text(t) => w.push_text(t),
         Node::Element(_) => {
@@ -193,6 +213,7 @@ fn walk(node: NodeRef<'_, Node>, w: &mut Writer) {
                         out: String::new(),
                         line: String::new(),
                         list_depth: 0,
+                        depth: 0,
                     };
                     for c in node.children() {
                         walk(c, &mut inner);
@@ -257,6 +278,7 @@ pub fn html_to_markdown(html: &str) -> String {
         out: String::new(),
         line: String::new(),
         list_depth: 0,
+        depth: 0,
     };
     if let Some(root) = main_root(&doc) {
         for c in root.children() {
@@ -313,6 +335,16 @@ mod tests {
         let md = html_to_markdown(&html);
         assert!(md.contains("| A | B |"));
         assert!(md.contains("| 1 | 2 |"));
+    }
+
+    #[test]
+    fn deeply_nested_html_does_not_overflow() {
+        let html = format!(
+            "{}deep text{}",
+            "<div>".repeat(20_000),
+            "</div>".repeat(20_000)
+        );
+        let _ = html_to_markdown(&html);
     }
 
     #[test]

@@ -53,6 +53,9 @@ modules:
       - ar x document-finder.deb
       - tar -xf data.tar.*
       - install -Dm755 usr/bin/* /app/bin/document-finder
+      # Bundled resources (PDFium) live in usr/lib/<productName>; the app
+      # resolves them as <exe>/../lib/Document Finder, i.e. /app/lib/….
+      - mkdir -p /app/lib && cp -a "usr/lib/Document Finder" "/app/lib/Document Finder"
       - desk=$(ls usr/share/applications/*.desktop | head -n1); install -Dm644 "$desk" /app/share/applications/com.webworldwide.DocumentFinder.desktop
       # Tauri 2's bundler (schema 2.11.3, checked 2026-06-30) has no supported
       # desktopTemplate/custom-.desktop-file hook (bundle.linux.{deb,rpm,appimage}

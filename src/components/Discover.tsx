@@ -39,13 +39,23 @@ const EXAMPLES = [
 /** Sources a user can pick (the individual web engines live inside "Web"). */
 const PICKABLE: SourceId[] = DEFAULT_ENABLED_SOURCES;
 
+/** A filename stem that's safe on every OS and keeps non-Latin scripts. */
+export function safeFileStem(name: string): string {
+  let s = name
+    .normalize("NFC")
+    // eslint-disable-next-line no-control-regex -- strip control chars on purpose
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
+    .replace(/[^\p{L}\p{N}\s._-]/gu, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/^\.+|\.+$/g, "")
+    .slice(0, 60);
+  if (/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(s)) s = `${s}-library`;
+  return s || "library";
+}
+
 export async function exportLibrary(folder: string, query: string) {
-  const safe =
-    query
-      .replace(/[^\w\s-]/g, "")
-      .trim()
-      .replace(/\s+/g, "-")
-      .slice(0, 60) || "library";
+  const safe = safeFileStem(query);
   const dest = await save({
     title: "Export for AI",
     defaultPath: `${safe}-ai-pack.zip`,
@@ -63,12 +73,7 @@ export async function exportLibrary(folder: string, query: string) {
 
 /** Export one Markdown file with every document's full text (for RAG). */
 export async function exportMarkdown(folder: string, name: string, ids?: number[]) {
-  const safe =
-    name
-      .replace(/[^\w\s-]/g, "")
-      .trim()
-      .replace(/\s+/g, "-")
-      .slice(0, 60) || "library";
+  const safe = safeFileStem(name);
   const dest = await save({
     title: "Export as Markdown",
     defaultPath: `${safe}.md`,
@@ -174,6 +179,8 @@ function QueryBox() {
         value={query()}
         onInput={(e) => setQuery(e.currentTarget.value)}
         onKeyDown={(e) => {
+          // Ignore the Enter that confirms an IME (CJK) composition.
+          if (e.isComposing || e.keyCode === 229) return;
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey || !e.shiftKey)) {
             e.preventDefault();
             run();
@@ -556,7 +563,12 @@ function RunView() {
               <Show when={s.folder}>
                 <dt>Folder</dt>
                 <dd>
-                  <button class="df-link-btn" onClick={() => void api.revealInFinder(s.folder)}>
+                  <button
+                    class="df-link-btn"
+                    onClick={() =>
+                      void api.revealInFinder(s.folder).catch((e) => uiStore.showToast(String(e)))
+                    }
+                  >
                     <FolderOpen size={12} aria-hidden="true" /> Show in folder
                   </button>
                 </dd>

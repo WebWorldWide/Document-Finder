@@ -738,9 +738,20 @@ fn claude_desktop_config_path() -> Option<PathBuf> {
 }
 
 fn mcp_command() -> Result<String, String> {
-    std::env::current_exe()
-        .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| format!("Couldn't locate the app executable: {e}"))
+    // An AppImage runs from a temporary mount; the stable path is $APPIMAGE.
+    if let Some(appimage) = std::env::var_os("APPIMAGE").filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(appimage).to_string_lossy().to_string());
+    }
+    let exe =
+        std::env::current_exe().map_err(|e| format!("Couldn't locate the app executable: {e}"))?;
+    let s = exe.to_string_lossy().to_string();
+    if s.contains("/AppTranslocation/") {
+        return Err(
+            "Move Document Finder to your Applications folder first, then reopen it and try again."
+                .into(),
+        );
+    }
+    Ok(s)
 }
 
 #[tauri::command]

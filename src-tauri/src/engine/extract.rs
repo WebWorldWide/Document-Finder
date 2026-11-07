@@ -70,7 +70,7 @@ fn pdfium() -> Option<&'static pdfium_render::prelude::Pdfium> {
                     // macOS bundles it in Contents/Frameworks (signed with the app).
                     dirs.push(d.join("../Frameworks"));
                     dirs.push(d.join("../Resources/pdfium"));
-                    dirs.push(d.join("../lib/document-finder/pdfium"));
+                    dirs.push(d.join("../lib/Document Finder/pdfium"));
                     dirs.push(d.join("pdfium"));
                 }
             }

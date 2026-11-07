@@ -98,12 +98,6 @@ pub fn run() {
         .expect("error while running document-finder");
 }
 
-/// The Tauri `identifier` from `tauri.conf.json` — used here to mirror
-/// `app_config_dir()`'s path formula before an `AppHandle` exists. Keep in
-/// sync with `tauri.conf.json`'s `identifier` field (and with the other
-/// hardcoded copies cross-referenced by
-/// `src-tauri/tests/linux_identifiers_in_sync.rs`).
-
 /// Marker file path for the opt-in "safe rendering mode" (see
 /// `maybe_relaunch_in_safe_render_mode`). Lives under the same
 /// `app_config_dir()` Tauri resolves at runtime (`dirs::config_dir()/<id>`),

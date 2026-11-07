@@ -70,6 +70,22 @@ pub struct HostLimiter {
     notify: Notify,
 }
 
+/// Hosts that only redirect to the real document (DOI / handle resolvers).
+/// They must never be blocked — doing so would block every publisher.
+pub fn is_resolver(host: &str) -> bool {
+    matches!(
+        host.trim_start_matches("www."),
+        "doi.org"
+            | "dx.doi.org"
+            | "hdl.handle.net"
+            | "handle.net"
+            | "purl.org"
+            | "n2t.net"
+            | "identifiers.org"
+            | "arks.org"
+    )
+}
+
 pub fn host_of(url: &str) -> String {
     url::Url::parse(url)
         .ok()
@@ -147,7 +163,11 @@ impl HostLimiter {
     }
 
     /// `host` refused a document (401/403, or served a page with no file).
+    /// Resolver/redirector hosts are never charged: they only forward.
     pub fn record_refusal(&self, host: &str) {
+        if is_resolver(host) {
+            return;
+        }
         self.hosts
             .lock()
             .entry(host.to_string())
@@ -157,7 +177,7 @@ impl HostLimiter {
 
     /// True if downloads from `host` should not be attempted.
     pub fn is_blocked(&self, host: &str) -> bool {
-        if host.is_empty() {
+        if host.is_empty() || is_resolver(host) {
             return false;
         }
         let map = self.hosts.lock();
@@ -275,6 +295,17 @@ mod tests {
         let (blocked, good) = l.reputation();
         assert!(blocked.is_empty());
         assert_eq!(good.len(), 2);
+    }
+
+    #[test]
+    fn resolvers_are_never_blocked() {
+        let l = HostLimiter::new();
+        for _ in 0..5 {
+            l.record_refusal("doi.org");
+        }
+        assert!(!l.is_blocked("doi.org"));
+        l.preblock(["doi.org".to_string()]);
+        assert!(!l.is_blocked("doi.org"));
     }
 
     #[test]

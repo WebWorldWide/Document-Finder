@@ -70,6 +70,8 @@ interface State {
   /** Download speed in bytes/s, sampled once a second while running. */
   speedSeries: number[];
   bytes: number;
+  /** Bytes received so far including in-progress files (speed chart). */
+  liveBytes: number;
   folder: string;
   error: string;
 }
@@ -94,6 +96,7 @@ const initial = (): State => ({
   outcomes: [],
   speedSeries: [],
   bytes: 0,
+  liveBytes: 0,
   folder: "",
   error: "",
 });
@@ -107,7 +110,7 @@ function startSampler() {
   stopSampler();
   lastBytes = 0;
   sampler = setInterval(() => {
-    const b = state.bytes;
+    const b = state.liveBytes;
     const delta = Math.max(0, b - lastBytes);
     lastBytes = b;
     setState(
@@ -209,7 +212,10 @@ export function apply(ev: DfEvent) {
     case "download_progress": {
       const i = state.inFlight.findIndex((f) => f.url === ev.payload.url);
       if (i >= 0) {
+        const delta = Math.max(0, ev.payload.downloaded - state.inFlight[i].downloaded);
         setState("inFlight", i, { downloaded: ev.payload.downloaded, total: ev.payload.total });
+        // Live byte count for the speed chart (finished files reconcile below).
+        setState("liveBytes", (b) => b + delta);
       }
       break;
     }
@@ -217,6 +223,8 @@ export function apply(ev: DfEvent) {
       setState(
         produce((s) => {
           const p = ev.payload;
+          // Bytes already counted live while it downloaded don't count twice.
+          const streamed = s.inFlight.find((f) => f.url === p.url)?.downloaded ?? 0;
           s.inFlight = s.inFlight.filter((f) => f.url !== p.url);
           s.done = p.done;
           s.failed = p.failed;
@@ -224,6 +232,7 @@ export function apply(ev: DfEvent) {
           // replaced by the next-best match), so `total` is authoritative.
           s.planned = Math.max(p.total, p.done);
           if (!p.cached) s.bytes += p.bytes;
+          if (!p.cached) s.liveBytes += Math.max(0, p.bytes - streamed);
           s.outcomes.push({ ok: true, source: p.source.split("/")[0], title: p.title });
           s.saved.unshift({
             n: p.done,
@@ -286,6 +295,14 @@ export function apply(ev: DfEvent) {
 /** The three plain-language stages shown in the run view. */
 export function stages(): Record<StageId, StageState> {
   const live = state.status === "running" || state.status === "stopping";
+  if (state.status === "error") {
+    // Show where it stopped, not a row of completed stages.
+    return {
+      search: state.found > 0 ? "done" : "waiting",
+      download: state.done > 0 ? "done" : "waiting",
+      read: state.done > 0 ? "done" : "waiting",
+    };
+  }
   const ended = !live && state.status !== "idle";
   const search: StageState = state.retry
     ? "done"

@@ -171,37 +171,52 @@ jobs:
             printf '%s' "$APPLE_API_PRIVATE_KEY" > "$RUNNER_TEMP/AuthKey.p8"
           fi
 
+      # Tauri treats an env var that merely EXISTS as configured, and GitHub
+      # sets missing secrets to "" — so only export the Apple variables that
+      # actually have values (an empty APPLE_CERTIFICATE breaks the build; an
+      # empty APPLE_ID shadows a valid API key).
       - name: Configure macOS signing
         if: runner.os == 'macOS'
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          S_CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          S_CERT_PW: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          S_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          S_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          S_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          S_APPLE_ID: ${{ secrets.APPLE_ID }}
+          S_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          S_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_SIGNING_IDENTITY_SECRET" ]; then
-            echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY_SECRET" >> "$GITHUB_ENV"
-            echo "Signing with Developer ID and notarizing."
-          else
-            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
-            echo "::warning::Apple signing secrets not set — building ad-hoc signed (NOT notarized)."
-          fi
+          {
+            if [ -n "$S_CERT" ] && [ -n "$S_IDENTITY" ]; then
+              printf 'APPLE_CERTIFICATE<<__DF_EOF__\n%s\n__DF_EOF__\n' "$S_CERT"
+              echo "APPLE_CERTIFICATE_PASSWORD=$S_CERT_PW"
+              echo "APPLE_SIGNING_IDENTITY=$S_IDENTITY"
+              if [ -s "$RUNNER_TEMP/AuthKey.p8" ] && [ -n "$S_API_ISSUER" ] && [ -n "$S_API_KEY" ]; then
+                echo "APPLE_API_ISSUER=$S_API_ISSUER"
+                echo "APPLE_API_KEY=$S_API_KEY"
+                echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
+                echo "::notice::Signing with Developer ID; notarizing with an App Store Connect API key." >&2
+              elif [ -n "$S_APPLE_ID" ] && [ -n "$S_APPLE_PASSWORD" ] && [ -n "$S_TEAM_ID" ]; then
+                echo "APPLE_ID=$S_APPLE_ID"
+                echo "APPLE_PASSWORD=$S_APPLE_PASSWORD"
+                echo "APPLE_TEAM_ID=$S_TEAM_ID"
+                echo "::notice::Signing with Developer ID; notarizing with an Apple ID." >&2
+              else
+                echo "::warning::Signing with Developer ID but NOT notarizing (no notary credentials)." >&2
+              fi
+            else
+              echo "APPLE_SIGNING_IDENTITY=-"
+              echo "::warning::Apple signing secrets not set — building ad-hoc signed (NOT notarized)." >&2
+            fi
+          } >> "$GITHUB_ENV"
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS: APPLE_SIGNING_IDENTITY comes from "Configure macOS signing".
-          # The certificate (base64 .p12) is imported into a temporary keychain
-          # by the Tauri CLI; notarization uses an App Store Connect API key.
-          # All empty (and ignored) on Windows/Linux and on unsigned builds.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Alternative to the API key: Apple ID + app-specific password.
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # macOS signing/notarization variables come from "Configure macOS
+          # signing" via $GITHUB_ENV (only the ones that are set).
         with:
           # Upload to the single pre-created draft by id — no tagName/releaseName
           # here, so the matrix legs can't race to create competing drafts.
@@ -271,6 +286,9 @@ jobs:
           # lib, so a wrong/EOL runtime can never ship a dead-on-arrival bundle.
           echo "Verifying shared-library resolution inside the runtime…"
           ldd_out=$(flatpak-builder --run build-dir com.webworldwide.DocumentFinder.yml ldd /app/bin/document-finder)
+          # PDFium is dlopen'ed at runtime, so plain ldd on the binary can't see it.
+          ldd_out="$ldd_out
+          $(flatpak-builder --run build-dir com.webworldwide.DocumentFinder.yml ldd "/app/lib/Document Finder/pdfium/libpdfium.so")"
           echo "$ldd_out"
           if echo "$ldd_out" | grep -q "not found"; then
             echo "::error::Flatpak runtime is missing a shared library the app needs (see 'not found' above) — bump runtime-version or fix the manifest."

@@ -530,7 +530,9 @@ async fn get_document_response(
                     limiter.penalize(host, ra);
                 }
                 if matches!(status, 401 | 403 | 451) {
-                    limiter.record_refusal(host);
+                    // Charge the host that actually refused (after redirects),
+                    // not a resolver like doi.org that merely forwarded us.
+                    limiter.record_refusal(&super::hostlimit::host_of(r.url().as_str()));
                 }
                 let retryable = status == 429 || (500..=599).contains(&status);
                 if attempt + 1 < ATTEMPTS && retryable {
@@ -766,7 +768,7 @@ where
                 }
             }
         }
-        limiter.record_refusal(&super::hostlimit::host_of(url));
+        limiter.record_refusal(&super::hostlimit::host_of(base.as_str()));
         return DownloadOutcome::Failed(
             "This link opened a web page, not a downloadable document.".to_string(),
         );
@@ -913,7 +915,6 @@ where
         return fail(format!("Couldn't finalize the download: {e}")).await;
     }
     limiter.record_ok(&super::hostlimit::host_of(&target));
-    limiter.record_ok(&super::hostlimit::host_of(url));
     DownloadOutcome::Saved(out)
 }
 

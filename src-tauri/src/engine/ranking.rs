@@ -135,6 +135,28 @@ static GENERIC_TERMS: Lazy<HashSet<String>> = Lazy::new(|| {
         "example",
         "importance",
         "role",
+        "affect",
+        "link",
+        "linked",
+        "associated",
+        "association",
+        "relate",
+        "relation",
+        "versus",
+        "compare",
+        "compared",
+        "contribute",
+        "explain",
+        "why",
+        "what",
+        "way",
+        "mean",
+        "meaning",
+        "work",
+        "happen",
+        "lead",
+        "consequence",
+        "implication",
     ]
     .iter()
     .map(|w| stem(w))
@@ -183,14 +205,7 @@ const SYNONYM_GROUPS: &[&[&str]] = &[
         "paediatric",
         "childhood",
     ],
-    &[
-        "elderly",
-        "older adult",
-        "older people",
-        "aged",
-        "geriatric",
-        "senior",
-    ],
+    &["elderly", "older adult", "older people", "geriatric"],
     &["woman", "women", "female"],
     &["man", "men", "male"],
     &[
@@ -221,14 +236,14 @@ const SYNONYM_GROUPS: &[&[&str]] = &[
     &["kidney", "renal"],
     &["liver", "hepatic"],
     &["lung", "pulmonary"],
-    &["brain", "cerebral", "neural"],
+    &["brain", "cerebral"],
     &["medicine", "medical", "clinical"],
     &["drug", "medication", "pharmaceutical"],
     &["school", "education", "educational"],
     &["student", "pupil", "learner"],
-    &["memory", "memorization", "recall"],
+    &["memory", "memorization"],
     &["sleep", "sleeping"],
-    &["exercise", "physical activity", "training"],
+    &["exercise", "physical activity"],
     &["diet", "dietary", "nutrition"],
     &["water", "aquatic"],
     &["ocean", "marine", "sea"],
@@ -371,9 +386,12 @@ pub fn text_on_topic(text: &str, concepts: &[Concept]) -> bool {
     let counts: Vec<usize> = concepts.iter().map(|c| c.count_in(&toks)).collect();
     let total: usize = counts.iter().sum();
     let words = toks.len().max(1);
+    let n = concepts.len();
+    let present = counts.iter().filter(|c| **c >= 1).count();
     let repeated = counts.iter().filter(|c| **c >= 2).count();
-    counts.iter().all(|c| *c >= 1)
-        && repeated >= required(concepts.len())
+    // Long questions (4+ concepts) may leave one out of the body text.
+    present >= if n >= 4 { n - 1 } else { n }
+        && repeated >= required(n)
         && total >= 3 * concepts.len()
         && total * 10_000 >= MIN_DENSITY_PER_10K * words
 }
@@ -753,8 +771,10 @@ pub fn spell_corrections(keywords: &[String], pool: &[MergedDoc]) -> Vec<(String
             continue;
         }
         let k_df = vocab.get(&k).copied().unwrap_or(0);
-        if k_df * 5 >= n {
-            continue; // a fifth of the results use it: not a typo
+        // Only correct words the results essentially never use. A real but
+        // rare word ("hypotension" beside common "hypertension") must stay.
+        if k_df > 1 || k_df * 5 >= n {
+            continue;
         }
         let max_d = if k.chars().count() <= 5 { 1 } else { 2 };
         let best = vocab
@@ -1247,6 +1267,43 @@ mod tests {
             .unwrap()
             .reject_reason
             .is_some());
+    }
+
+    #[test]
+    fn question_words_are_generic() {
+        let qm = q(&["microplastic", "pollution", "affect", "ocean", "fish"]);
+        let pool = vec![
+            stems("microplastic pollution in marine fish"),
+            stems("effects of microplastic on fish"),
+        ];
+        let labels: Vec<String> = concepts_for(&qm, &pool)
+            .into_iter()
+            .map(|c| c.label)
+            .collect();
+        assert!(!labels.iter().any(|l| l == "affect"), "{labels:?}");
+    }
+
+    #[test]
+    fn real_rare_words_are_not_respelled() {
+        let mut docs: Vec<MergedDoc> = (0..10)
+            .map(|i| {
+                merged(
+                    &format!("Hypertension in the elderly {i}"),
+                    None,
+                    "openalex",
+                    i + 1,
+                )
+            })
+            .collect();
+        docs.push(merged(
+            "Orthostatic hypotension in the elderly",
+            None,
+            "openalex",
+            20,
+        ));
+        docs.push(merged("Hypotension after surgery", None, "openalex", 21));
+        let fixes = spell_corrections(&["hypotension".into(), "elderly".into()], &docs);
+        assert!(fixes.is_empty(), "{fixes:?}");
     }
 
     #[test]

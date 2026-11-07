@@ -28,7 +28,28 @@ function hostTarget() {
   return `linux-${arch}`;
 }
 
-const target = process.argv[2] || process.env.PDFIUM_TARGET || hostTarget();
+// Tauri passes the build target to before-build hooks; prefer it over the
+// host so a cross/universal build bundles the right library.
+function tripleTarget(triple) {
+  if (!triple) return null;
+  const map = {
+    "aarch64-apple-darwin": "mac-arm64",
+    "x86_64-apple-darwin": "mac-x64",
+    "universal-apple-darwin": "mac-univ",
+    "x86_64-pc-windows-msvc": "win-x64",
+    "aarch64-pc-windows-msvc": "win-arm64",
+    "i686-pc-windows-msvc": "win-x86",
+    "x86_64-unknown-linux-gnu": "linux-x64",
+    "aarch64-unknown-linux-gnu": "linux-arm64",
+  };
+  return map[triple] ?? null;
+}
+
+const target =
+  process.argv[2] ||
+  process.env.PDFIUM_TARGET ||
+  tripleTarget(process.env.TAURI_ENV_TARGET_TRIPLE) ||
+  hostTarget();
 const libName = target.startsWith("mac") ? "libpdfium.dylib" : target.startsWith("win") ? "pdfium.dll" : "libpdfium.so";
 const stamp = join(outDir, ".version");
 
@@ -48,7 +69,8 @@ const work = join(tmpdir(), `pdfium-${process.pid}`);
 mkdirSync(work, { recursive: true });
 const tgz = join(work, "pdfium.tgz");
 await pipeline(Readable.fromWeb(res.body), createWriteStream(tgz));
-execFileSync("tar", ["-xzf", tgz, "-C", work]);
+// Relative paths + cwd: GNU tar (Git for Windows) misreads "C:\\…" as host:path.
+execFileSync("tar", ["-xzf", "pdfium.tgz"], { cwd: work });
 
 const libDir = target.startsWith("win") ? join(work, "bin") : join(work, "lib");
 const lib = readdirSync(libDir).find((f) => f === libName);
@@ -59,9 +81,15 @@ if (!lib) {
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 copyFileSync(join(libDir, lib), join(outDir, libName));
-for (const lic of ["LICENSE"]) {
-  if (existsSync(join(work, lic))) copyFileSync(join(work, lic), join(outDir, "PDFIUM-LICENSE.txt"));
+// Ship every third-party notice (PDFium + FreeType, ICU, libpng, …).
+let notices = existsSync(join(work, "LICENSE")) ? readFileSync(join(work, "LICENSE"), "utf8") : "";
+const licDir = join(work, "licenses");
+if (existsSync(licDir)) {
+  for (const f of readdirSync(licDir).sort()) {
+    notices += `\n\n===== ${f} =====\n\n` + readFileSync(join(licDir, f), "utf8");
+  }
 }
+writeFileSync(join(outDir, "PDFIUM-LICENSE.txt"), notices);
 writeFileSync(stamp, `${VERSION} ${target}\n`);
 rmSync(work, { recursive: true, force: true });
 console.log(`pdfium → ${join(outDir, libName)}`);

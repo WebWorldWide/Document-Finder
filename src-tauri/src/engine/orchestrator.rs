@@ -88,6 +88,8 @@ const RERANK_EVERY: Duration = Duration::from_millis(1000);
 /// is dispatched (early IDF statistics are noisy).
 const EARLY_DISPATCH_SHARE: f32 = 0.6;
 const CITATION_BUDGET: Duration = Duration::from_secs(12);
+/// Longest one document may take to read before it's dropped.
+const EXTRACT_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Results requested per (sub-query, source) stream.
 fn per_source_limit(name: &str) -> usize {
@@ -653,6 +655,19 @@ async fn next_job(ctx: &WorkerCtx) -> Option<Queued> {
         // Enough in flight to reach the target: wait — a failure frees a slot.
         if done + in_flight < MAX_DOWNLOADS {
             let mut q = st.queue.lock();
+            // Re-check under the queue lock: every worker woken by the same
+            // notify read the same counts, and in_flight only grows in here.
+            if st.done.load(Ordering::Relaxed) + st.in_flight.load(Ordering::Relaxed)
+                >= MAX_DOWNLOADS
+            {
+                drop(q);
+                tokio::select! {
+                    _ = ctx.dl_cancel.cancelled() => return None,
+                    _ = notified => {}
+                    _ = tokio::time::sleep(Duration::from_millis(400)) => {}
+                }
+                continue;
+            }
             while !q.is_empty() {
                 let job = q.remove(0);
                 // A re-rank may have re-queued a doc another worker already took.
@@ -810,8 +825,10 @@ async fn process(ctx: &WorkerCtx, job: Queued) {
         .unwrap_or_default()
     };
     let mut reused: Option<PathBuf> = None;
+    let mut reused_copy = false;
     for p in reuse_candidates {
         if let Some(dest) = reuse_file(Path::new(&p), &ctx.folder, &slug).await {
+            reused_copy = dest != Path::new(&p);
             reused = Some(dest);
             break;
         }
@@ -853,11 +870,21 @@ async fn process(ctx: &WorkerCtx, job: Queued) {
         .await
     };
 
+    // `created`: this run put the file here (downloaded, or copied in from
+    // another library) — so a later skip must delete it again. A file that
+    // was already in this library before the run is left alone.
     let (path, cached) = match outcome {
         DownloadOutcome::Saved(p) => (p, false),
         DownloadOutcome::Cached(p) => (p, true),
         DownloadOutcome::Cancelled => return skip(ctx, &doc, "stopped"),
         DownloadOutcome::Failed(e) => return fail(ctx, doc, e),
+    };
+    let created = !cached || reused_copy;
+    // Undo this run's file when a document is dropped.
+    let discard = |path: PathBuf| async move {
+        if created {
+            let _ = tokio::fs::remove_file(&path).await;
+        }
     };
     let bytes = tokio::fs::metadata(&path)
         .await
@@ -867,31 +894,11 @@ async fn process(ctx: &WorkerCtx, job: Queued) {
     // Identical file already saved this run under another title/URL?
     let sha = sha256_file(path.clone()).await;
     if let Some(h) = &sha {
-        let dup_of = {
-            let mut hashes = ctx.state.hashes.lock();
-            match hashes.get(h) {
-                Some(t) => Some(t.clone()),
-                None => {
-                    hashes.insert(h.clone(), doc.title.clone());
-                    None
-                }
-            }
-        };
+        let dup_of = ctx.state.hashes.lock().get(h).cloned();
         if let Some(other) = dup_of {
-            if !cached {
-                let _ = tokio::fs::remove_file(&path).await;
-            }
+            discard(path.clone()).await;
             return skip(ctx, &doc, &format!("same file as “{other}”"));
         }
-        let index = Arc::clone(&ctx.index);
-        let rec_urls = urls.clone();
-        let h = h.clone();
-        let abs = path.to_string_lossy().to_string();
-        tokio::spawn(tokio::task::spawn_blocking(move || {
-            if let Some(i) = index.lock().as_ref() {
-                let _ = i.record(&rec_urls, &h, &abs);
-            }
-        }));
     }
     runlog::log(runlog::Event::DownloadOk {
         source: &doc.source,
@@ -909,9 +916,20 @@ async fn process(ctx: &WorkerCtx, job: Queued) {
         if let Ok(_permit) = ctx.extract_sem.clone().acquire_owned().await {
             let p = path.clone();
             let title = doc.title.clone();
-            let res = tokio::task::spawn_blocking(move || extract(&p, &title))
-                .await
-                .unwrap_or_else(|e| Err(anyhow::anyhow!("text extraction crashed: {e}")));
+            // Bounded: a pathological file must not hold the run (or Stop)
+            // hostage. On timeout the blocking thread is abandoned.
+            let reading = tokio::task::spawn_blocking(move || extract(&p, &title));
+            let res = tokio::select! {
+                _ = ctx.cancel.cancelled() => {
+                    discard(path.clone()).await;
+                    return skip(ctx, &doc, "stopped");
+                }
+                r = tokio::time::timeout(EXTRACT_TIMEOUT, reading) => match r {
+                    Ok(joined) => joined
+                        .unwrap_or_else(|e| Err(anyhow::anyhow!("text extraction crashed: {e}"))),
+                    Err(_) => Err(anyhow::anyhow!("Reading this file took too long")),
+                },
+            };
             match res {
                 Ok(ex) => {
                     // Second relevance gate, on the document's real text: a
@@ -921,9 +939,7 @@ async fn process(ctx: &WorkerCtx, job: Queued) {
                     let on_topic = text_on_topic(&ex.markdown, &concepts);
                     if !on_topic {
                         tracing::info!("off-topic after reading, dropped: {}", doc.title);
-                        if !cached {
-                            let _ = tokio::fs::remove_file(&path).await;
-                        }
+                        discard(path.clone()).await;
                         return skip(ctx, &doc, "off-topic");
                     }
                     let md_path = ctx.text_dir.join(format!("{slug}.md"));
@@ -942,15 +958,44 @@ async fn process(ctx: &WorkerCtx, job: Queued) {
                     let concepts = ctx.state.concepts.lock().clone();
                     let meta = format!("{} {}", doc.title, doc.abstract_.as_deref().unwrap_or(""));
                     if !metadata_on_topic(&meta, &concepts) {
-                        if !cached {
-                            let _ = tokio::fs::remove_file(&path).await;
-                        }
+                        discard(path.clone()).await;
                         return skip(ctx, &doc, "no readable text");
                     }
                     extract_error = Some(e.to_string());
                 }
             }
         }
+    }
+
+    // Kept: claim the content hash (later identical files are duplicates) and
+    // record it in the library-wide index for reuse by future searches.
+    if let Some(h) = &sha {
+        let first = {
+            let mut hashes = ctx.state.hashes.lock();
+            match hashes.get(h) {
+                Some(other) => Err(other.clone()),
+                None => {
+                    hashes.insert(h.clone(), doc.title.clone());
+                    Ok(())
+                }
+            }
+        };
+        if let Err(other) = first {
+            discard(path.clone()).await;
+            if let Some(m) = &md_rel {
+                let _ = tokio::fs::remove_file(ctx.folder.join(m)).await;
+            }
+            return skip(ctx, &doc, &format!("same file as “{other}”"));
+        }
+        let index = Arc::clone(&ctx.index);
+        let rec_urls = urls.clone();
+        let h = h.clone();
+        let abs = path.to_string_lossy().to_string();
+        tokio::spawn(tokio::task::spawn_blocking(move || {
+            if let Some(i) = index.lock().as_ref() {
+                let _ = i.record(&rec_urls, &h, &abs);
+            }
+        }));
     }
 
     let local_path = path

@@ -118,3 +118,17 @@ describe("formatRelativeTime", () => {
     expect(out).not.toMatch(/ago|just now/);
   });
 });
+
+import { safeFileStem } from "@/components/Discover";
+
+describe("safeFileStem", () => {
+  it("keeps non-Latin scripts and accents", () => {
+    expect(safeFileStem("Énergie solaire")).toBe("Énergie-solaire");
+    expect(safeFileStem("机器学习 可解释性")).toBe("机器学习-可解释性");
+  });
+  it("strips path characters and Windows reserved names", () => {
+    expect(safeFileStem('a/b\\c:d*e?"f<g>h|i')).toBe("abcdefghi");
+    expect(safeFileStem("CON")).toBe("CON-library");
+    expect(safeFileStem("...")).toBe("library");
+  });
+});
